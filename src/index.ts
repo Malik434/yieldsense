@@ -1,49 +1,84 @@
 import { ethers } from 'ethers';
 import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
 
 // 1. Configuration & Contract ABI
 const RPC_URL = "https://sepolia.base.org"; 
 const KEEPER_ADDRESS = "0x2BA7c3a0aeD57e13fbaf203C51CD700c8d666137";
 // Target Pool: WETH/USDC (Aerodrome)
-const POOL_ADDRESS = "0xcf77a3ba962d46dcb4d0921037f657d22403b7df"; 
+const POOL_ADDRESS = "0xd0b53D9277642d899DF5C87A3966A349A798F224"; 
 const STRATEGY_TVL = 10000; // $10,000 (V)
 const EFFICIENCY_MULTIPLIER = 1.5; // (μ)
 const POOL_FEE = 0.003; // 0.3% (φ)
 
 const KEEPER_ABI = [
     "function lastHarvest() view returns (uint256)",
-    "function executeHarvest() external"
+    "function executeHarvest(bytes32 r, bytes32 s) external" // Added parameters to match the call
 ];
 
-// 2. Optimized Data Fetching (Resolved APR Fetch)
-async function getAerodromeAPR(poolAddress: string): Promise<number> {
-    const poolAddrLower = poolAddress.toLowerCase();
+async function getAPR(poolAddress: string): Promise<number> {
+    const addr = poolAddress.toLowerCase();
+    const stealthHeaders = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) YieldSense/2.0' };
     
-    // Primary Source: Aerodrome Native API (2026 MetaDEX Standard)
-    try {
-        const response = await axios.get(`https://api.aerodrome.finance/v2/pools`);
-        const poolData = response.data.data.find((p: any) => p.address.toLowerCase() === poolAddrLower);
-        if (poolData && poolData.apr) {
-            return parseFloat(poolData.apr) / 100;
+    console.log("🔍 Fetching Multi-Source APR Consensus...");
+
+    const results = await Promise.allSettled([
+        // Source 1: GeckoTerminal (Volume/Liquidity for Calculation)
+        axios.get(`https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`, { headers: stealthHeaders, timeout: 5000 }),
+
+        // Source 2: DexScreener (Alternative Volume/Fee check)
+        axios.get(`https://api.dexscreener.com/latest/dex/pairs/base/${addr}`, { headers: stealthHeaders, timeout: 5000 }),
+
+        // Source 3: DefiLlama (Yield Search by Address)
+        axios.get(`https://yields.llama.fi/pools`, { headers: stealthHeaders, timeout: 12000 })
+    ]);
+
+    const yieldOptions: number[] = [];
+
+    // --- Process GeckoTerminal ---
+    if (results[0].status === 'fulfilled') {
+        const attr = results[0].value.data.data.attributes;
+        // If it's Aerodrome, it might have a direct APR
+        if (attr.apr_7d || attr.apr) {
+            yieldOptions.push(parseFloat(attr.apr_7d || attr.apr) / 100);
+        } else {
+            // For Uniswap V3: Calculate Estimated APR: (Vol24h * Fee) / TVL * 365
+            const vol24h = parseFloat(attr.volume_usd.h24 || "0");
+            const tvl = parseFloat(attr.reserve_in_usd || "1");
+            const fee = parseFloat(attr.pool_fee_percentage || "0.05") / 100;
+            const estimatedAPR = (vol24h * fee) / tvl * 365;
+            if (estimatedAPR > 0) yieldOptions.push(estimatedAPR);
         }
-    } catch (e) {
-        console.warn("Aerodrome Native API unreachable, switching to DefiLlama...");
     }
 
-    // Fallback Source: DefiLlama Yields API (Highly Resilient)
-    try {
-        const response = await axios.get('https://yields.llama.fi/pools');
-        // Filter for Aerodrome on Base
-        const pool = response.data.data.find((p: any) => 
-            p.project === 'aerodrome' && 
-            p.chain === 'Base' && 
-            p.pool.toLowerCase() === poolAddrLower
-        );
-        return pool ? pool.apy / 100 : 0.40; // Default to 40% if not found
-    } catch (error) {
-        console.error("All yield sources failed. Using safety fallback.");
-        return 0.40; // Strict safety fallback
+    // --- Process DexScreener ---
+    if (results[1].status === 'fulfilled') {
+        const pair = results[1].value.data.pairs?.[0];
+        if (pair?.apr) {
+            yieldOptions.push(pair.apr / 100);
+        } else if (pair?.volume?.h24 && pair?.liquidity?.usd) {
+            // Fallback calculation for Uniswap on DexScreener
+            const est = (pair.volume.h24 * 0.0005) / pair.liquidity.usd * 365;
+            if (est > 0) yieldOptions.push(est);
+        }
     }
+
+    // --- Process DefiLlama ---
+    if (results[2].status === 'fulfilled') {
+        const pool = results[2].value.data.data.find((p: any) => p.pool.toLowerCase() === addr);
+        if (pool?.apy) yieldOptions.push(pool.apy / 100);
+    }
+
+    // --- Final Decision ---
+    if (yieldOptions.length > 0) {
+        const finalAPR = yieldOptions.reduce((a, b) => a + b, 0) / yieldOptions.length;
+        console.log(`✅ SUCCESS: Derived Consensus APR: ${(finalAPR * 100).toFixed(2)}%`);
+        return finalAPR;
+    }
+
+    console.warn("⚠️ All Sources empty. Using 32% fallback.");
+    return 0.32;
 }
 
 async function getEthPrice(): Promise<number> {
@@ -63,7 +98,7 @@ async function checkProfitability() {
 
     const [ethPrice, currentAPR, lastHarvest, feeData] = await Promise.all([
         getEthPrice(),
-        getAerodromeAPR(POOL_ADDRESS),
+        getAPR(POOL_ADDRESS),
         keeperContract.lastHarvest(),
         provider.getFeeData()
     ]);
