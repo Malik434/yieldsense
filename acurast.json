@@ -13,17 +13,19 @@
         "intervalInMs": 600000,
         "numberOfExecutions": 10
       },
-      "maxAllowedStartDelayInMs": 10000,
+      "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
-        "maxMemory": 0,
-        "maxNetworkRequests": 0,
-        "maxStorage": 0
+        "maxMemory": 256000000,
+        "maxNetworkRequests": 10,
+        "maxStorage": 1000000
       },
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 100000000000,
-      "includeEnvironmentVariables": [],
+      "includeEnvironmentVariables": [
+        "ACURAST_WORKER_KEY"
+      ],
       "processorWhitelist": []
     }
   }

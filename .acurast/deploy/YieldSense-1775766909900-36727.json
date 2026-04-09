@@ -1,0 +1,66 @@
+{
+  "deployedAt": "2026-04-09T20:35:09.900Z",
+  "assignments": [],
+  "status": "init",
+  "config": {
+    "projectName": "YieldSense",
+    "fileUrl": "dist/bundle.js",
+    "network": "mainnet",
+    "onlyAttestedDevices": true,
+    "assignmentStrategy": {
+      "type": "Single"
+    },
+    "execution": {
+      "type": "interval",
+      "intervalInMs": 600000,
+      "numberOfExecutions": 10
+    },
+    "maxAllowedStartDelayInMs": 60000,
+    "usageLimit": {
+      "maxMemory": 256000000,
+      "maxNetworkRequests": 10,
+      "maxStorage": 1000000
+    },
+    "numberOfReplicas": 1,
+    "requiredModules": [],
+    "minProcessorReputation": 0,
+    "maxCostPerExecution": 3464617279,
+    "includeEnvironmentVariables": [
+      "ACURAST_WORKER_KEY"
+    ],
+    "processorWhitelist": []
+  },
+  "registration": {
+    "script": "ipfs://QmaZxF8ngT7CNuFcYe76qSLwJv4F6KVHHkkrHouhMcYoZW",
+    "allowOnlyVerifiedSources": true,
+    "schedule": {
+      "duration": 589999,
+      "startTime": 1775767209900,
+      "endTime": 1775773209901,
+      "interval": 600000,
+      "maxStartDelay": 60000
+    },
+    "memory": 256000000,
+    "networkRequests": 10,
+    "storage": 1000000,
+    "requiredModules": [],
+    "mutability": "Immutable",
+    "extra": {
+      "requirements": {
+        "assignmentStrategy": {
+          "variant": "Single"
+        },
+        "slots": 1,
+        "reward": 3464617279,
+        "minReputation": 0,
+        "runtime": "NodeJSWithBundle"
+      }
+    }
+  },
+  "deploymentId": [
+    {
+      "acurast": "5DDJeKPEkakcd4ickwnaFmNoGqMtZf4bQLATxxXN6LZiCSzx"
+    },
+    36727
+  ]
+}
