@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // 1. Configuration & Contract ABI
 const RPC_URL = "https://sepolia.base.org"; 
-const KEEPER_ADDRESS = "0xf666ffdd7DdF18F6684aAd7fc782AB17bCC73591";
+const KEEPER_ADDRESS = "0x2BA7c3a0aeD57e13fbaf203C51CD700c8d666137";
 // Target Pool: WETH/USDC (Aerodrome)
 const POOL_ADDRESS = "0xcf77a3ba962d46dcb4d0921037f657d22403b7df"; 
 const STRATEGY_TVL = 10000; // $10,000 (V)

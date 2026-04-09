@@ -23,13 +23,16 @@ contract YieldSenseKeeper {
      * @param r The R component of the P-384 signature.
      * @param s The S component of the P-384 signature.
      */
-    function executeHarvest(bytes32 r, bytes32 s) external {
-        // TODO: Integration with P384.sol library
-        // require(P384.verify(message, r, s, acurastPubKey), "Invalid TEE Signature");
-        
-        require(msg.sender == acurastWorker, "Unauthorized: Only Acurast TEE can trigger");
-        
+    // Change the function signature to use 'bytes' for larger P-384 components
+    function executeHarvest(bytes calldata r, bytes calldata s) external {
+        // Phase 3 Security
+        require(
+            msg.sender == acurastWorker,
+            "Unauthorized: Only Acurast TEE can trigger"
+        );
+
+        // TODO: Add the P384.verify() call here once we import the library
         lastHarvest = block.timestamp;
-        emit HarvestExecuted(block.timestamp, r, s);
+        emit HarvestExecuted(block.timestamp, bytes32(r), bytes32(s)); // Cast for logging
     }
 }
