@@ -69,7 +69,13 @@ export function buildAprConsensus(
   const totalWeight = filtered.reduce((sum, o) => sum + o.confidence, 0);
   const apr = totalWeight > 0 ? weightedApr / totalWeight : median(filtered.map((o) => o.apr as number));
 
-  const confidence = clamp(filtered.reduce((sum, o) => sum + o.confidence, 0) / observations.length, 0, 1);
+  // Confidence should reflect quality of contributing fresh sources.
+  // Dividing by total observations over-penalizes valid 2-of-3 scenarios.
+  const confidence = clamp(
+    filtered.reduce((sum, o) => sum + o.confidence, 0) / filtered.length,
+    0,
+    1
+  );
   return {
     apr,
     confidence,

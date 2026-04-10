@@ -2,7 +2,8 @@ import { ethers } from "ethers";
 import axios from "axios";
 import dotenv from "dotenv";
 import { evaluateDecision } from "./decisionEngine.js";
-import { getRealtimeAprConsensus } from "./realtimeApr.js";
+import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js";
+import type { FallbackMode, YieldEstimateRequest } from "./yieldEngine/types.js";
 import { loadState, saveState } from "./runtimeState.js";
 import { buildPayloadHash, signHarvestPayload } from "./signature.js";
 import { emitTelemetry } from "./telemetry.js";
@@ -10,9 +11,19 @@ import { emitTelemetry } from "./telemetry.js";
 dotenv.config();
 
 const CONFIG = {
+  /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Sepolia). */
   rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
-  keeperAddress: process.env.KEEPER_ADDRESS ?? "0x2BA7c3a0aeD57e13fbaf203C51CD700c8d666137",
-  poolAddress: process.env.POOL_ADDRESS ?? "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+  /**
+   * Optional: RPC for yield math only (logs, pool, gauge). When set, APR uses live mainnet data
+   * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
+   * Example: DATA_RPC_URL=https://mainnet.base.org with RPC_URL=Base Sepolia.
+   */
+  dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "",
+  /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
+  yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
+  keeperAddress: process.env.KEEPER_ADDRESS ?? "0x96Da70B750f8EB6Fc9Bf6CD1c5DFeB62B43C363D",
+  /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
+  poolAddress: process.env.POOL_ADDRESS ?? "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
   poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
@@ -24,11 +35,52 @@ const CONFIG = {
   minAprConfidence: Number(process.env.MIN_APR_CONFIDENCE ?? 0.55),
   aprFreshnessWindowSec: Number(process.env.APR_FRESHNESS_WINDOW_SEC ?? 1200),
   statePath: process.env.STATE_PATH ?? ".yieldsense-state.json",
+  feeWindowSec: Number(process.env.FEE_WINDOW_SEC ?? 604800),
+  feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 80000),
+  logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 3000),
+  rewardEwmaHalfLifeSec: Number(process.env.REWARD_EWMA_HALF_LIFE_SEC ?? 259200),
+  minYieldConfidence: Number(process.env.MIN_YIELD_CONFIDENCE ?? process.env.MIN_APR_CONFIDENCE ?? 0.55),
+  yieldFallbackMode: (process.env.YIELD_FALLBACK_MODE as FallbackMode) || "auto",
+  yieldForwardProjection: process.env.YIELD_FORWARD_PROJECTION === "true",
+  gaugeAddress: process.env.GAUGE_ADDRESS || undefined,
+  lpTokenAddress: process.env.LP_TOKEN_ADDRESS || undefined,
+  rewardTokenAddress: process.env.REWARD_TOKEN_ADDRESS || undefined,
+  strategyDeltaUsd: process.env.STRATEGY_DELTA_USD
+    ? Number(process.env.STRATEGY_DELTA_USD)
+    : undefined,
+  apyCompoundsPerYear: Number(process.env.APY_COMPOUNDS_PER_YEAR ?? 365),
 };
+
+function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
+  return {
+    chainId,
+    poolAddress,
+    gaugeAddress: CONFIG.gaugeAddress,
+    lpTokenAddress: CONFIG.lpTokenAddress,
+    rewardTokenAddress: CONFIG.rewardTokenAddress,
+    feeWindowSec: CONFIG.feeWindowSec,
+    feeMaxBlocks: CONFIG.feeMaxBlocks,
+    logChunkSize: CONFIG.logChunkSize,
+    poolFeeBps: Number(process.env.POOL_FEE_BPS ?? 0),
+    rewardSmoothingHalfLifeSec: CONFIG.rewardEwmaHalfLifeSec,
+    minExecutionConfidence: CONFIG.minYieldConfidence,
+    useForwardProjection: CONFIG.yieldForwardProjection,
+    fallbackMode: CONFIG.yieldFallbackMode,
+    apiPoolAddress: poolAddress,
+    aprFreshnessWindowSec: CONFIG.aprFreshnessWindowSec,
+    minApiConfidence: CONFIG.minAprConfidence,
+    strategyDeltaUsd: CONFIG.strategyDeltaUsd,
+    apyCompoundPeriodsPerYear: CONFIG.apyCompoundsPerYear,
+  };
+}
 
 const KEEPER_ABI = [
   "function lastHarvest() view returns (uint256)",
   "function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v) external",
+];
+
+const LEGACY_KEEPER_ABI = [
+  "function executeHarvest(bytes r, bytes s) external",
 ];
 
 async function getEthPrice(): Promise<number> {
@@ -43,30 +95,88 @@ async function getEthPrice(): Promise<number> {
   }
 }
 
+/**
+ * Empty eth_call + lastHarvest decode failure almost always means KEEPER_ADDRESS is not
+ * YieldSenseKeeper on the execution chain (e.g. Sepolia keeper while RPC_URL is mainnet).
+ */
+async function ensureKeeperOnExecutionChain(
+  provider: ethers.JsonRpcProvider,
+  keeperAddress: string,
+  rpcUrl: string
+): Promise<void> {
+  const code = await provider.getCode(keeperAddress);
+  if (code === "0x") {
+    throw new Error(
+      `KEEPER_ADDRESS ${keeperAddress} has no contract on execution RPC (${rpcUrl}). ` +
+        `Deploy the keeper there or set RPC_URL to that network. ` +
+        `Hybrid (mainnet data, Sepolia harvest): RPC_URL=https://sepolia.base.org DATA_RPC_URL=https://mainnet.base.org ` +
+        `with mainnet POOL_ADDRESS/GAUGE_ADDRESS and KEEPER_ADDRESS = Sepolia keeper.`
+    );
+  }
+}
+
 async function main(): Promise<void> {
-  const provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
-  const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, provider);
+  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
+  const dataProvider =
+    CONFIG.dataRpcUrl.length > 0
+      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
+      : executionProvider;
+
+  await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
+
+  const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, executionProvider);
   const state = await loadState(CONFIG.statePath);
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const [ethPrice, aprConsensus, lastHarvest, feeData] = await Promise.all([
+  const executionChainId = Number((await executionProvider.getNetwork()).chainId);
+  let yieldChainId = CONFIG.yieldChainId;
+  if (yieldChainId == null || !Number.isFinite(yieldChainId)) {
+    yieldChainId = Number((await dataProvider.getNetwork()).chainId);
+  }
+  const hybridMainnetRead = CONFIG.dataRpcUrl.length > 0;
+
+  const elapsedEwma =
+    state.lastRunAt != null ? Math.max(60, nowSec - state.lastRunAt) : 300;
+
+  const [ethPrice, yieldResult, lastHarvest, feeData] = await Promise.all([
     getEthPrice(),
-    getRealtimeAprConsensus(CONFIG.poolAddress, CONFIG.aprFreshnessWindowSec, CONFIG.minAprConfidence),
+    getRobustYieldEstimate(
+      {
+        provider: dataProvider,
+        indexerCheckpointBlock: state.yieldIndexerCheckpointBlock ?? undefined,
+        rewardAprEwmPrev: state.rewardAprEwm ?? undefined,
+      },
+      buildYieldRequest(yieldChainId, CONFIG.poolAddress),
+      { elapsedSecSinceLastEwma: elapsedEwma }
+    ),
     keeperRead.lastHarvest(),
-    provider.getFeeData(),
+    executionProvider.getFeeData(),
   ]);
 
-  if (aprConsensus.apr === null || !aprConsensus.usable) {
+  const aprConsensus = yieldResult.estimate;
+  state.yieldIndexerCheckpointBlock = yieldResult.indexerCheckpointBlock;
+  if (yieldResult.rewardAprEwmNext != null) {
+    state.rewardAprEwm = yieldResult.rewardAprEwmNext;
+  }
+
+  if (!aprConsensus.usable) {
     state.apiFailureStreak += 1;
     state.lastRunAt = nowSec;
-    state.lastDecisionReason = "apr_not_usable";
+    state.lastDecisionReason = "yield_not_usable";
     state.suggestedNextCheckMs = 10 * 60 * 1000;
     await saveState(CONFIG.statePath, state);
     emitTelemetry({
-      event: "apr_not_usable",
+      event: "yield_not_usable",
       timestamp: nowSec,
+      hybridReadMainnetExecuteTestnet: hybridMainnetRead,
+      yieldChainId,
+      executionChainId,
       confidence: aprConsensus.confidence,
-      observations: aprConsensus.observations,
+      feeApr: aprConsensus.feeApr,
+      rewardApr: aprConsensus.rewardApr,
+      totalApr: aprConsensus.totalApr,
+      dataSourcesUsed: aprConsensus.dataSourcesUsed,
+      diagnostics: aprConsensus.diagnostics,
       apiFailureStreak: state.apiFailureStreak,
     });
     return;
@@ -79,7 +189,7 @@ async function main(): Promise<void> {
   const secondsSinceLastExecution = state.lastExecutionAt ? nowSec - state.lastExecutionAt : Number.MAX_SAFE_INTEGER;
 
   const decision = evaluateDecision({
-    apr: aprConsensus.apr,
+    apr: aprConsensus.totalApr,
     tvlUsd: CONFIG.strategyTvl,
     feeRate: CONFIG.poolFee,
     elapsedSec,
@@ -96,9 +206,17 @@ async function main(): Promise<void> {
   emitTelemetry({
     event: "profitability_check",
     timestamp: nowSec,
-    apr: aprConsensus.apr,
+    hybridReadMainnetExecuteTestnet: hybridMainnetRead,
+    yieldChainId,
+    executionChainId,
+    apr: aprConsensus.totalApr,
+    feeApr: aprConsensus.feeApr,
+    rewardApr: aprConsensus.rewardApr,
+    estimatedApy: aprConsensus.estimatedApy,
     confidence: aprConsensus.confidence,
-    observations: aprConsensus.observations,
+    dataSourcesUsed: aprConsensus.dataSourcesUsed,
+    forwardAprEstimate: aprConsensus.forwardAprEstimate,
+    diagnostics: aprConsensus.diagnostics,
     netRewardUsd: decision.netRewardUsd,
     gasCostUsd,
     thresholdUsd: decision.thresholdUsd,
@@ -106,7 +224,7 @@ async function main(): Promise<void> {
     recommendedNextCheckMs: decision.recommendedNextCheckMs,
   });
 
-  state.previousApr = aprConsensus.apr;
+  state.previousApr = aprConsensus.totalApr;
   state.lastDecisionReason = decision.reason;
   state.lastRunAt = nowSec;
   state.suggestedNextCheckMs = decision.recommendedNextCheckMs;
@@ -124,14 +242,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const aprBps = Math.round(aprConsensus.apr * 10_000);
+  const aprBps = Math.round(aprConsensus.totalApr * 10_000);
   const rewardCents = Math.round(decision.netRewardUsd * 100);
   const payloadHash = buildPayloadHash(CONFIG.keeperAddress, CONFIG.poolAddress, aprBps, rewardCents, nowSec);
   const signed = signHarvestPayload(privateKey, payloadHash);
 
-  const wallet = new ethers.Wallet(privateKey, provider);
-  const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
-  const tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
+  const wallet = new ethers.Wallet(privateKey, executionProvider);
+  let tx;
+  try {
+    const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
+    tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
+  } catch (error: any) {
+    // Backward compatibility for older deployed keeper signature.
+    if (error?.code !== "CALL_EXCEPTION") {
+      throw error;
+    }
+    emitTelemetry({
+      event: "keeper_abi_fallback",
+      timestamp: nowSec,
+      reason: "modern_executeHarvest_failed",
+    });
+    const legacyKeeper = new ethers.Contract(CONFIG.keeperAddress, LEGACY_KEEPER_ABI, wallet);
+    tx = await legacyKeeper.executeHarvest(signed.r, signed.s);
+  }
   emitTelemetry({
     event: "harvest_submitted",
     timestamp: nowSec,

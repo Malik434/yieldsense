@@ -7,6 +7,10 @@ export interface WorkerState {
   lastRunAt: number | null;
   lastExecutionAt: number | null;
   suggestedNextCheckMs: number | null;
+  /** Last block through which fee logs were processed successfully */
+  yieldIndexerCheckpointBlock?: number | null;
+  /** EWMA state for reward APR smoothing */
+  rewardAprEwm?: number | null;
 }
 
 export const defaultState: WorkerState = {
@@ -16,6 +20,8 @@ export const defaultState: WorkerState = {
   lastRunAt: null,
   lastExecutionAt: null,
   suggestedNextCheckMs: null,
+  yieldIndexerCheckpointBlock: null,
+  rewardAprEwm: null,
 };
 
 export async function loadState(path: string): Promise<WorkerState> {
