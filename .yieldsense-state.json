@@ -1,0 +1,8 @@
+{
+  "previousApr": null,
+  "apiFailureStreak": 1,
+  "lastDecisionReason": "apr_not_usable",
+  "lastRunAt": 1775817462,
+  "lastExecutionAt": null,
+  "suggestedNextCheckMs": 600000
+}

@@ -1,154 +1,166 @@
-import { ethers } from 'ethers';
-import axios from 'axios';
-import dotenv from 'dotenv';
+import { ethers } from "ethers";
+import axios from "axios";
+import dotenv from "dotenv";
+import { evaluateDecision } from "./decisionEngine.js";
+import { getRealtimeAprConsensus } from "./realtimeApr.js";
+import { loadState, saveState } from "./runtimeState.js";
+import { buildPayloadHash, signHarvestPayload } from "./signature.js";
+import { emitTelemetry } from "./telemetry.js";
+
 dotenv.config();
 
-// 1. Configuration & Contract ABI
-const RPC_URL = "https://sepolia.base.org"; 
-const KEEPER_ADDRESS = "0x2BA7c3a0aeD57e13fbaf203C51CD700c8d666137";
-// Target Pool: WETH/USDC (Aerodrome)
-const POOL_ADDRESS = "0xd0b53D9277642d899DF5C87A3966A349A798F224"; 
-const STRATEGY_TVL = 10000; // $10,000 (V)
-const EFFICIENCY_MULTIPLIER = 1.5; // (μ)
-const POOL_FEE = 0.003; // 0.3% (φ)
+const CONFIG = {
+  rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
+  keeperAddress: process.env.KEEPER_ADDRESS ?? "0x2BA7c3a0aeD57e13fbaf203C51CD700c8d666137",
+  poolAddress: process.env.POOL_ADDRESS ?? "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+  strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
+  efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
+  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
+  estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "200000"),
+  minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
+  maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
+  cooldownSec: Number(process.env.COOLDOWN_SEC ?? 300),
+  maxApiFailureStreak: Number(process.env.MAX_API_FAILURE_STREAK ?? 3),
+  minAprConfidence: Number(process.env.MIN_APR_CONFIDENCE ?? 0.55),
+  aprFreshnessWindowSec: Number(process.env.APR_FRESHNESS_WINDOW_SEC ?? 1200),
+  statePath: process.env.STATE_PATH ?? ".yieldsense-state.json",
+};
 
 const KEEPER_ABI = [
-    "function lastHarvest() view returns (uint256)",
-    "function executeHarvest(bytes32 r, bytes32 s) external" // Added parameters to match the call
+  "function lastHarvest() view returns (uint256)",
+  "function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v) external",
 ];
 
-async function getAPR(poolAddress: string): Promise<number> {
-    const addr = poolAddress.toLowerCase();
-    const stealthHeaders = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) YieldSense/2.0' };
-    
-    console.log("🔍 Fetching Multi-Source APR Consensus...");
-
-    const results = await Promise.allSettled([
-        // Source 1: GeckoTerminal (Volume/Liquidity for Calculation)
-        axios.get(`https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`, { headers: stealthHeaders, timeout: 5000 }),
-
-        // Source 2: DexScreener (Alternative Volume/Fee check)
-        axios.get(`https://api.dexscreener.com/latest/dex/pairs/base/${addr}`, { headers: stealthHeaders, timeout: 5000 }),
-
-        // Source 3: DefiLlama (Yield Search by Address)
-        axios.get(`https://yields.llama.fi/pools`, { headers: stealthHeaders, timeout: 12000 })
-    ]);
-
-    const yieldOptions: number[] = [];
-
-    // --- Process GeckoTerminal ---
-    if (results[0].status === 'fulfilled') {
-        const attr = results[0].value.data.data.attributes;
-        // If it's Aerodrome, it might have a direct APR
-        if (attr.apr_7d || attr.apr) {
-            yieldOptions.push(parseFloat(attr.apr_7d || attr.apr) / 100);
-        } else {
-            // For Uniswap V3: Calculate Estimated APR: (Vol24h * Fee) / TVL * 365
-            const vol24h = parseFloat(attr.volume_usd.h24 || "0");
-            const tvl = parseFloat(attr.reserve_in_usd || "1");
-            const fee = parseFloat(attr.pool_fee_percentage || "0.05") / 100;
-            const estimatedAPR = (vol24h * fee) / tvl * 365;
-            if (estimatedAPR > 0) yieldOptions.push(estimatedAPR);
-        }
-    }
-
-    // --- Process DexScreener ---
-    if (results[1].status === 'fulfilled') {
-        const pair = results[1].value.data.pairs?.[0];
-        if (pair?.apr) {
-            yieldOptions.push(pair.apr / 100);
-        } else if (pair?.volume?.h24 && pair?.liquidity?.usd) {
-            // Fallback calculation for Uniswap on DexScreener
-            const est = (pair.volume.h24 * 0.0005) / pair.liquidity.usd * 365;
-            if (est > 0) yieldOptions.push(est);
-        }
-    }
-
-    // --- Process DefiLlama ---
-    if (results[2].status === 'fulfilled') {
-        const pool = results[2].value.data.data.find((p: any) => p.pool.toLowerCase() === addr);
-        if (pool?.apy) yieldOptions.push(pool.apy / 100);
-    }
-
-    // --- Final Decision ---
-    if (yieldOptions.length > 0) {
-        const finalAPR = yieldOptions.reduce((a, b) => a + b, 0) / yieldOptions.length;
-        console.log(`✅ SUCCESS: Derived Consensus APR: ${(finalAPR * 100).toFixed(2)}%`);
-        return finalAPR;
-    }
-
-    console.warn("⚠️ All Sources empty. Using 32% fallback.");
-    return 0.32;
-}
-
 async function getEthPrice(): Promise<number> {
-    try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-        return response.data.ethereum.usd;
-    } catch (error) {
-        return 3500; // Fallback price
-    }
+  try {
+    const response = await axios.get(
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      { timeout: 4000 }
+    );
+    return Number(response.data?.ethereum?.usd ?? 3500);
+  } catch {
+    return 3500;
+  }
 }
 
-// 3. Main Logic Execution
-async function checkProfitability() {
-    console.log("--- YieldSense Logic Check: Start ---");
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    const keeperContract = new ethers.Contract(KEEPER_ADDRESS, KEEPER_ABI, provider);
+async function main(): Promise<void> {
+  const provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
+  const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, provider);
+  const state = await loadState(CONFIG.statePath);
+  const nowSec = Math.floor(Date.now() / 1000);
 
-    const [ethPrice, currentAPR, lastHarvest, feeData] = await Promise.all([
-        getEthPrice(),
-        getAPR(POOL_ADDRESS),
-        keeperContract.lastHarvest(),
-        provider.getFeeData()
-    ]);
+  const [ethPrice, aprConsensus, lastHarvest, feeData] = await Promise.all([
+    getEthPrice(),
+    getRealtimeAprConsensus(CONFIG.poolAddress, CONFIG.aprFreshnessWindowSec, CONFIG.minAprConfidence),
+    keeperRead.lastHarvest(),
+    provider.getFeeData(),
+  ]);
 
-    const currentTime = Math.floor(Date.now() / 1000);
-    const timeSinceLast = currentTime - Number(lastHarvest);
-    
-    const gasPrice = feeData.gasPrice || BigInt(0);
-    const estGasUnits = BigInt(200000); 
-    const gasCostUSD = parseFloat(ethers.formatEther(gasPrice * estGasUnits)) * ethPrice;
+  if (aprConsensus.apr === null || !aprConsensus.usable) {
+    state.apiFailureStreak += 1;
+    state.lastRunAt = nowSec;
+    state.lastDecisionReason = "apr_not_usable";
+    state.suggestedNextCheckMs = 10 * 60 * 1000;
+    await saveState(CONFIG.statePath, state);
+    emitTelemetry({
+      event: "apr_not_usable",
+      timestamp: nowSec,
+      confidence: aprConsensus.confidence,
+      observations: aprConsensus.observations,
+      apiFailureStreak: state.apiFailureStreak,
+    });
+    return;
+  }
 
-    // Formula: (V * r * t) / secondsInYear
-    const secondsInYear = 31536000;
-    const accumulatedReward = (STRATEGY_TVL * currentAPR * timeSinceLast) / secondsInYear;
-    const netReward = accumulatedReward * (1 - POOL_FEE);
+  state.apiFailureStreak = 0;
+  const gasPrice = feeData.gasPrice ?? BigInt(0);
+  const gasCostUsd = Number(ethers.formatEther(gasPrice * CONFIG.estGasUnits)) * ethPrice;
+  const elapsedSec = nowSec - Number(lastHarvest);
+  const secondsSinceLastExecution = state.lastExecutionAt ? nowSec - state.lastExecutionAt : Number.MAX_SAFE_INTEGER;
 
-    console.log(`Pool APR: ${(currentAPR * 100).toFixed(2)}% | Last Harvest: ${timeSinceLast}s ago`);
-    console.log(`Net Reward: $${netReward.toFixed(4)} | Gas Cost: $${gasCostUSD.toFixed(4)}`);
+  const decision = evaluateDecision({
+    apr: aprConsensus.apr,
+    tvlUsd: CONFIG.strategyTvl,
+    feeRate: CONFIG.poolFee,
+    elapsedSec,
+    gasCostUsd,
+    efficiencyMultiplier: CONFIG.efficiencyMultiplier,
+    minNetRewardUsd: CONFIG.minRewardUsd,
+    maxGasUsd: CONFIG.maxGasUsd,
+    cooldownSec: CONFIG.cooldownSec,
+    secondsSinceLastExecution,
+    apiFailureStreak: state.apiFailureStreak,
+    maxFailureStreak: CONFIG.maxApiFailureStreak,
+  });
 
-    if (netReward > (gasCostUSD * EFFICIENCY_MULTIPLIER)) {
-        console.log("✅ SUCCESS: Profitability threshold met.");
-        
-        // --- NEW: TRIGGER LOGIC ---
-        try {
-            // In Acurast, the PRIVATE_KEY is provided as a secure environment variable
-            const privateKey = process.env.ACURAST_WORKER_KEY;
-            if (!privateKey) throw new Error("Worker Key missing in environment");
+  emitTelemetry({
+    event: "profitability_check",
+    timestamp: nowSec,
+    apr: aprConsensus.apr,
+    confidence: aprConsensus.confidence,
+    observations: aprConsensus.observations,
+    netRewardUsd: decision.netRewardUsd,
+    gasCostUsd,
+    thresholdUsd: decision.thresholdUsd,
+    reason: decision.reason,
+    recommendedNextCheckMs: decision.recommendedNextCheckMs,
+  });
 
-            const wallet = new ethers.Wallet(privateKey, provider);
-            const signedKeeper = new ethers.Contract(KEEPER_ADDRESS, KEEPER_ABI, wallet);
+  state.previousApr = aprConsensus.apr;
+  state.lastDecisionReason = decision.reason;
+  state.lastRunAt = nowSec;
+  state.suggestedNextCheckMs = decision.recommendedNextCheckMs;
 
-            // Phase 3 Placeholder: Sending random r/s for now
-            // We will replace this with real P-384 signature generation in the next step
-            const dummyR = ethers.randomBytes(32);
-            const dummyS = ethers.randomBytes(32);
+  if (!decision.shouldExecute) {
+    await saveState(CONFIG.statePath, state);
+    return;
+  }
 
-            console.log("Broadcasting harvest to Base Sepolia...");
-            const tx = await signedKeeper.executeHarvest(dummyR, dummyS);
-            console.log(`🚀 Transaction Sent! Hash: ${tx.hash}`);
-            
-            await tx.wait();
-            console.log("🏁 Harvest transaction confirmed on-chain.");
-        } catch (error: any) {
-            console.error("Failed to trigger harvest:", error.message);
-        }
-        // --------------------------
-        
-    } else {
-        console.log("❌ WAIT: Compounding not yet profitable.");
-    }
+  const privateKey = process.env.ACURAST_WORKER_KEY;
+  if (!privateKey) {
+    state.lastDecisionReason = "missing_worker_key";
+    await saveState(CONFIG.statePath, state);
+    emitTelemetry({ event: "execution_skipped", timestamp: nowSec, reason: "missing_worker_key" });
+    return;
+  }
+
+  const aprBps = Math.round(aprConsensus.apr * 10_000);
+  const rewardCents = Math.round(decision.netRewardUsd * 100);
+  const payloadHash = buildPayloadHash(CONFIG.keeperAddress, CONFIG.poolAddress, aprBps, rewardCents, nowSec);
+  const signed = signHarvestPayload(privateKey, payloadHash);
+
+  const wallet = new ethers.Wallet(privateKey, provider);
+  const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
+  const tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
+  emitTelemetry({
+    event: "harvest_submitted",
+    timestamp: nowSec,
+    txHash: tx.hash,
+    payloadHash: signed.payloadHash,
+  });
+  await tx.wait();
+
+  state.lastExecutionAt = nowSec;
+  state.lastDecisionReason = "executed";
+  await saveState(CONFIG.statePath, state);
+
+  emitTelemetry({
+    event: "harvest_confirmed",
+    timestamp: Math.floor(Date.now() / 1000),
+    txHash: tx.hash,
+  });
 }
 
-checkProfitability();
+main().catch(async (error: any) => {
+  const state = await loadState(CONFIG.statePath);
+  state.apiFailureStreak += 1;
+  state.lastRunAt = Math.floor(Date.now() / 1000);
+  state.lastDecisionReason = "runtime_error";
+  await saveState(CONFIG.statePath, state);
+  emitTelemetry({
+    event: "runtime_error",
+    timestamp: state.lastRunAt,
+    message: error?.message ?? String(error),
+  });
+  process.exitCode = 1;
+});

@@ -2,15 +2,16 @@
 pragma solidity ^0.8.20;
 
 /**
- * @dev YieldSenseKeeper with P-384 verification placeholder.
- * In a production TEE environment, we verify the Hardware Attestation.
+ * @dev YieldSenseKeeper with replay-safe signature validation.
+ * This ECDSA fallback is used until P-384 attestation verification is integrated.
  */
 contract YieldSenseKeeper {
     address public owner;
     address public acurastWorker;
     uint256 public lastHarvest;
+    mapping(bytes32 => bool) public usedPayload;
 
-    event HarvestExecuted(uint256 timestamp, bytes32 r, bytes32 s);
+    event HarvestExecuted(uint256 timestamp, bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v);
 
     constructor(address _worker) {
         owner = msg.sender;
@@ -18,21 +19,18 @@ contract YieldSenseKeeper {
         lastHarvest = block.timestamp; // Fix the 56-year gap
     }
 
-    /**
-     * @notice Executes harvest only if signed by the Acurast TEE.
-     * @param r The R component of the P-384 signature.
-     * @param s The S component of the P-384 signature.
-     */
-    // Change the function signature to use 'bytes' for larger P-384 components
-    function executeHarvest(bytes calldata r, bytes calldata s) external {
-        // Phase 3 Security
+    function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v) external {
         require(
             msg.sender == acurastWorker,
             "Unauthorized: Only Acurast TEE can trigger"
         );
+        require(!usedPayload[payloadHash], "Replay blocked: payload already used");
 
-        // TODO: Add the P384.verify() call here once we import the library
+        address recovered = ecrecover(payloadHash, v, r, s);
+        require(recovered == acurastWorker, "Invalid worker signature");
+
+        usedPayload[payloadHash] = true;
         lastHarvest = block.timestamp;
-        emit HarvestExecuted(block.timestamp, bytes32(r), bytes32(s)); // Cast for logging
+        emit HarvestExecuted(block.timestamp, payloadHash, r, s, v);
     }
 }

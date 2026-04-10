@@ -19,6 +19,9 @@ export default {
   },
   resolve: {
     extensions: [".ts", ".js"],
+    extensionAlias: {
+      ".js": [".js", ".ts"],
+    },
   },
   output: {
     filename: "bundle.js",

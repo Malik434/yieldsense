@@ -4,9 +4,10 @@ YieldSense is an automated yield harvesting and profitability checker designed t
 
 ## Features
 
-- **Smart Profitability Checking**: Calculates real-time accumulated rewards using dynamic APR and ETH pricing.
-- **Resilient Data Fetching**: Retrieves APR data primarily from the Aerodrome Native API, with an automatic fallback to DefiLlama, and strict safety fallbacks.
-- **Gas Optimization**: Compares estimated gas costs against expected yield, enforcing an efficiency multiplier (default 1.5x) before triggering transactions.
+- **Realtime APR Consensus**: Aggregates APR from GeckoTerminal, DexScreener, and DefiLlama with freshness and confidence gating.
+- **Smart Profitability Checking**: Calculates accumulated rewards using dynamic APR and ETH pricing, then applies deterministic execution guardrails.
+- **Adaptive Runtime Loop**: Emits a recommended next-check interval based on APR regime and gas environment for Acurast-friendly scheduling.
+- **Gas Optimization**: Compares estimated gas costs against expected yield and enforces an efficiency multiplier (default 1.5x) before triggering transactions.
 - **Acurast TEE Ready**: Configured to be bundled via Webpack for seamless deployment to Acurast workers.
 - **Cross-Ecosystem Utility**: Includes a utility (`deriveAddress.ts`) to convert Substrate SS58 worker addresses to EVM addresses for cross-chain compatibility.
 
@@ -33,15 +34,21 @@ npm install
 
 ## Configuration
 
-Before running the bot, you may need to adjust the constants at the top of `src/index.ts` to fit your specific strategy:
+Before running the bot, configure environment variables for your strategy and deployment:
 
 ```typescript
-const RPC_URL = "https://sepolia.base.org"; 
-const KEEPER_ADDRESS = "...";
-const POOL_ADDRESS = "..."; 
-const STRATEGY_TVL = 10000; // Expected TVL in USD
-const EFFICIENCY_MULTIPLIER = 1.5; // Threshold multiplier for gas costs
-const POOL_FEE = 0.003; // Aerodrome pool fee percentage
+RPC_URL=https://sepolia.base.org
+KEEPER_ADDRESS=...
+POOL_ADDRESS=...
+STRATEGY_TVL_USD=10000
+EFFICIENCY_MULTIPLIER=1.5
+POOL_FEE_RATE=0.003
+MIN_APR_CONFIDENCE=0.55
+APR_FRESHNESS_WINDOW_SEC=1200
+MIN_NET_REWARD_USD=1
+MAX_GAS_USD=30
+COOLDOWN_SEC=300
+STATE_PATH=.yieldsense-state.json
 ```
 
 ### Environment Variables
@@ -49,6 +56,12 @@ const POOL_FEE = 0.003; // Aerodrome pool fee percentage
 To execute harvest transactions, the application requires the following environment variable to be set (typically provided securely by the Acurast execution environment):
 
 - `ACURAST_WORKER_KEY`: The private key of the wallet triggering the transaction.
+
+The worker emits structured JSON telemetry for:
+- APR consensus and source health
+- Profitability decision reason
+- Suggested next check interval
+- Harvest submission and confirmation
 
 ## Build & Run
 
