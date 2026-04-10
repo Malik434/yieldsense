@@ -49,6 +49,21 @@ const CONFIG = {
     ? Number(process.env.STRATEGY_DELTA_USD)
     : undefined,
   apyCompoundsPerYear: Number(process.env.APY_COMPOUNDS_PER_YEAR ?? 365),
+  /**
+   * When true: skip yield-usable + profitability checks and submit executeHarvest on the execution RPC
+   * immediately (for signing/broadcast integration tests). Blocked on mainnet unless
+   * FORCE_TEST_ALLOW_MAINNET=true.
+   */
+  forceTestHarvest: process.env.FORCE_TEST_HARVEST === "true",
+  forceTestAllowMainnet: process.env.FORCE_TEST_ALLOW_MAINNET === "true",
+  forceTestAprBps:
+    process.env.FORCE_TEST_APR_BPS != null && process.env.FORCE_TEST_APR_BPS !== ""
+      ? Number(process.env.FORCE_TEST_APR_BPS)
+      : undefined,
+  forceTestRewardCents:
+    process.env.FORCE_TEST_REWARD_CENTS != null && process.env.FORCE_TEST_REWARD_CENTS !== ""
+      ? Number(process.env.FORCE_TEST_REWARD_CENTS)
+      : undefined,
 };
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
@@ -159,7 +174,7 @@ async function main(): Promise<void> {
     state.rewardAprEwm = yieldResult.rewardAprEwmNext;
   }
 
-  if (!aprConsensus.usable) {
+  if (!aprConsensus.usable && !CONFIG.forceTestHarvest) {
     state.apiFailureStreak += 1;
     state.lastRunAt = nowSec;
     state.lastDecisionReason = "yield_not_usable";
@@ -182,56 +197,95 @@ async function main(): Promise<void> {
     return;
   }
 
-  state.apiFailureStreak = 0;
-  const gasPrice = feeData.gasPrice ?? BigInt(0);
-  const gasCostUsd = Number(ethers.formatEther(gasPrice * CONFIG.estGasUnits)) * ethPrice;
-  const elapsedSec = nowSec - Number(lastHarvest);
-  const secondsSinceLastExecution = state.lastExecutionAt ? nowSec - state.lastExecutionAt : Number.MAX_SAFE_INTEGER;
+  const BASE_SEPOLIA_CHAIN_ID = 84532;
+  if (CONFIG.forceTestHarvest) {
+    const onSepolia = executionChainId === BASE_SEPOLIA_CHAIN_ID;
+    if (!onSepolia && !CONFIG.forceTestAllowMainnet) {
+      state.lastRunAt = nowSec;
+      state.lastDecisionReason = "force_test_wrong_chain";
+      state.suggestedNextCheckMs = 60_000;
+      await saveState(CONFIG.statePath, state);
+      emitTelemetry({
+        event: "force_test_blocked",
+        timestamp: nowSec,
+        executionChainId,
+        reason: "execution_chain_not_base_sepolia",
+        hint: "Set RPC_URL to https://sepolia.base.org or set FORCE_TEST_ALLOW_MAINNET=true (dangerous).",
+      });
+      return;
+    }
+  }
 
-  const decision = evaluateDecision({
-    apr: aprConsensus.totalApr,
-    tvlUsd: CONFIG.strategyTvl,
-    feeRate: CONFIG.poolFee,
-    elapsedSec,
-    gasCostUsd,
-    efficiencyMultiplier: CONFIG.efficiencyMultiplier,
-    minNetRewardUsd: CONFIG.minRewardUsd,
-    maxGasUsd: CONFIG.maxGasUsd,
-    cooldownSec: CONFIG.cooldownSec,
-    secondsSinceLastExecution,
-    apiFailureStreak: state.apiFailureStreak,
-    maxFailureStreak: CONFIG.maxApiFailureStreak,
-  });
+  let decision: ReturnType<typeof evaluateDecision> | null = null;
 
-  emitTelemetry({
-    event: "profitability_check",
-    timestamp: nowSec,
-    hybridReadMainnetExecuteTestnet: hybridMainnetRead,
-    yieldChainId,
-    executionChainId,
-    apr: aprConsensus.totalApr,
-    feeApr: aprConsensus.feeApr,
-    rewardApr: aprConsensus.rewardApr,
-    estimatedApy: aprConsensus.estimatedApy,
-    confidence: aprConsensus.confidence,
-    dataSourcesUsed: aprConsensus.dataSourcesUsed,
-    forwardAprEstimate: aprConsensus.forwardAprEstimate,
-    diagnostics: aprConsensus.diagnostics,
-    netRewardUsd: decision.netRewardUsd,
-    gasCostUsd,
-    thresholdUsd: decision.thresholdUsd,
-    reason: decision.reason,
-    recommendedNextCheckMs: decision.recommendedNextCheckMs,
-  });
+  if (!CONFIG.forceTestHarvest) {
+    state.apiFailureStreak = 0;
+    const gasPrice = feeData.gasPrice ?? BigInt(0);
+    const gasCostUsd = Number(ethers.formatEther(gasPrice * CONFIG.estGasUnits)) * ethPrice;
+    const elapsedSec = nowSec - Number(lastHarvest);
+    const secondsSinceLastExecution = state.lastExecutionAt ? nowSec - state.lastExecutionAt : Number.MAX_SAFE_INTEGER;
 
-  state.previousApr = aprConsensus.totalApr;
-  state.lastDecisionReason = decision.reason;
-  state.lastRunAt = nowSec;
-  state.suggestedNextCheckMs = decision.recommendedNextCheckMs;
+    decision = evaluateDecision({
+      apr: aprConsensus.totalApr,
+      tvlUsd: CONFIG.strategyTvl,
+      feeRate: CONFIG.poolFee,
+      elapsedSec,
+      gasCostUsd,
+      efficiencyMultiplier: CONFIG.efficiencyMultiplier,
+      minNetRewardUsd: CONFIG.minRewardUsd,
+      maxGasUsd: CONFIG.maxGasUsd,
+      cooldownSec: CONFIG.cooldownSec,
+      secondsSinceLastExecution,
+      apiFailureStreak: state.apiFailureStreak,
+      maxFailureStreak: CONFIG.maxApiFailureStreak,
+    });
 
-  if (!decision.shouldExecute) {
-    await saveState(CONFIG.statePath, state);
-    return;
+    emitTelemetry({
+      event: "profitability_check",
+      timestamp: nowSec,
+      hybridReadMainnetExecuteTestnet: hybridMainnetRead,
+      yieldChainId,
+      executionChainId,
+      apr: aprConsensus.totalApr,
+      feeApr: aprConsensus.feeApr,
+      rewardApr: aprConsensus.rewardApr,
+      estimatedApy: aprConsensus.estimatedApy,
+      confidence: aprConsensus.confidence,
+      dataSourcesUsed: aprConsensus.dataSourcesUsed,
+      forwardAprEstimate: aprConsensus.forwardAprEstimate,
+      diagnostics: aprConsensus.diagnostics,
+      netRewardUsd: decision.netRewardUsd,
+      gasCostUsd,
+      thresholdUsd: decision.thresholdUsd,
+      reason: decision.reason,
+      recommendedNextCheckMs: decision.recommendedNextCheckMs,
+    });
+
+    state.previousApr = aprConsensus.totalApr;
+    state.lastDecisionReason = decision.reason;
+    state.lastRunAt = nowSec;
+    state.suggestedNextCheckMs = decision.recommendedNextCheckMs;
+
+    if (!decision.shouldExecute) {
+      await saveState(CONFIG.statePath, state);
+      return;
+    }
+  } else {
+    state.apiFailureStreak = 0;
+    state.previousApr = aprConsensus.totalApr;
+    state.lastDecisionReason = "force_test_harvest";
+    state.lastRunAt = nowSec;
+    state.suggestedNextCheckMs = 60_000;
+    emitTelemetry({
+      event: "force_test_bypass",
+      timestamp: nowSec,
+      hybridReadMainnetExecuteTestnet: hybridMainnetRead,
+      yieldChainId,
+      executionChainId,
+      yieldUsable: aprConsensus.usable,
+      totalApr: aprConsensus.totalApr,
+      note: "Profitability and yield-usable gates skipped; submitting executeHarvest.",
+    });
   }
 
   const privateKey = process.env.ACURAST_WORKER_KEY;
@@ -242,8 +296,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const aprBps = Math.round(aprConsensus.totalApr * 10_000);
-  const rewardCents = Math.round(decision.netRewardUsd * 100);
+  const aprBps = CONFIG.forceTestHarvest
+    ? CONFIG.forceTestAprBps != null && Number.isFinite(CONFIG.forceTestAprBps)
+      ? CONFIG.forceTestAprBps
+      : Math.round(aprConsensus.totalApr * 10_000)
+    : Math.round(aprConsensus.totalApr * 10_000);
+  const rewardCents = CONFIG.forceTestHarvest
+    ? CONFIG.forceTestRewardCents != null && Number.isFinite(CONFIG.forceTestRewardCents)
+      ? CONFIG.forceTestRewardCents
+      : 0
+    : Math.round(decision!.netRewardUsd * 100);
   const payloadHash = buildPayloadHash(CONFIG.keeperAddress, CONFIG.poolAddress, aprBps, rewardCents, nowSec);
   const signed = signHarvestPayload(privateKey, payloadHash);
 
@@ -270,6 +332,7 @@ async function main(): Promise<void> {
     timestamp: nowSec,
     txHash: tx.hash,
     payloadHash: signed.payloadHash,
+    ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
   });
   await tx.wait();
 

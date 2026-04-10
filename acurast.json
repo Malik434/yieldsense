@@ -4,7 +4,7 @@
       "projectName": "YieldSense",
       "fileUrl": "dist/bundle.js",
       "network": "mainnet",
-      "onlyAttestedDevices": true,
+      "onlyAttestedDevices": false,
       "assignmentStrategy": {
         "type": "Single"
       },
