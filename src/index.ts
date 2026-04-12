@@ -6,6 +6,11 @@ import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js"
 import type { FallbackMode, YieldEstimateRequest } from "./yieldEngine/types.js";
 import { loadState, saveState } from "./runtimeState.js";
 import { buildPayloadHash, signHarvestPayload } from "./signature.js";
+import {
+  fulfillEthereumHarvest,
+  getAcurastStd,
+  signHarvestPayloadWithAcurastHardware,
+} from "./acurastHardware.js";
 import { emitTelemetry } from "./telemetry.js";
 
 dotenv.config();
@@ -288,11 +293,17 @@ async function main(): Promise<void> {
     });
   }
 
+  const acurastStd = getAcurastStd();
   const privateKey = process.env.ACURAST_WORKER_KEY;
-  if (!privateKey) {
+  if (!acurastStd && !privateKey) {
     state.lastDecisionReason = "missing_worker_key";
     await saveState(CONFIG.statePath, state);
-    emitTelemetry({ event: "execution_skipped", timestamp: nowSec, reason: "missing_worker_key" });
+    emitTelemetry({
+      event: "execution_skipped",
+      timestamp: nowSec,
+      reason: "missing_worker_key",
+      hint: "Run on an Acurast processor (hardware _STD_ signing) or set ACURAST_WORKER_KEY for local execution.",
+    });
     return;
   }
 
@@ -307,34 +318,67 @@ async function main(): Promise<void> {
       : 0
     : Math.round(decision!.netRewardUsd * 100);
   const payloadHash = buildPayloadHash(CONFIG.keeperAddress, CONFIG.poolAddress, aprBps, rewardCents, nowSec);
-  const signed = signHarvestPayload(privateKey, payloadHash);
 
-  const wallet = new ethers.Wallet(privateKey, executionProvider);
-  let tx;
-  try {
-    const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
-    tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
-  } catch (error: any) {
-    // Backward compatibility for older deployed keeper signature.
-    if (error?.code !== "CALL_EXCEPTION") {
-      throw error;
-    }
-    emitTelemetry({
-      event: "keeper_abi_fallback",
-      timestamp: nowSec,
-      reason: "modern_executeHarvest_failed",
+  const maxFeePerGas = feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0);
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0);
+
+  let txHash: string;
+
+  if (acurastStd) {
+    const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
+    const signed = signHarvestPayloadWithAcurastHardware(acurastStd, payloadHash, hwAddress);
+    const submitted = await fulfillEthereumHarvest(acurastStd, {
+      rpcUrl: CONFIG.rpcUrl,
+      keeperAddress: CONFIG.keeperAddress,
+      payloadHash: signed.payloadHash,
+      r: signed.r,
+      s: signed.s,
+      v: signed.v,
+      gasLimit: CONFIG.estGasUnits.toString(),
+      maxFeePerGas: maxFeePerGas.toString(),
+      maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
     });
-    const legacyKeeper = new ethers.Contract(CONFIG.keeperAddress, LEGACY_KEEPER_ABI, wallet);
-    tx = await legacyKeeper.executeHarvest(signed.r, signed.s);
+    txHash = submitted.hash;
+    emitTelemetry({
+      event: "harvest_submitted",
+      timestamp: nowSec,
+      txHash,
+      payloadHash: signed.payloadHash,
+      signingMode: "acurast_hardware_secp256k1",
+      ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+    });
+    await executionProvider.waitForTransaction(txHash);
+  } else {
+    const signed = signHarvestPayload(privateKey!, payloadHash);
+    const wallet = new ethers.Wallet(privateKey!, executionProvider);
+    let tx;
+    try {
+      const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
+      tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
+    } catch (error: any) {
+      // Backward compatibility for older deployed keeper signature.
+      if (error?.code !== "CALL_EXCEPTION") {
+        throw error;
+      }
+      emitTelemetry({
+        event: "keeper_abi_fallback",
+        timestamp: nowSec,
+        reason: "modern_executeHarvest_failed",
+      });
+      const legacyKeeper = new ethers.Contract(CONFIG.keeperAddress, LEGACY_KEEPER_ABI, wallet);
+      tx = await legacyKeeper.executeHarvest(signed.r, signed.s);
+    }
+    txHash = tx.hash;
+    emitTelemetry({
+      event: "harvest_submitted",
+      timestamp: nowSec,
+      txHash,
+      payloadHash: signed.payloadHash,
+      signingMode: "local_private_key",
+      ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+    });
+    await tx.wait();
   }
-  emitTelemetry({
-    event: "harvest_submitted",
-    timestamp: nowSec,
-    txHash: tx.hash,
-    payloadHash: signed.payloadHash,
-    ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
-  });
-  await tx.wait();
 
   state.lastExecutionAt = nowSec;
   state.lastDecisionReason = "executed";
@@ -343,7 +387,7 @@ async function main(): Promise<void> {
   emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
-    txHash: tx.hash,
+    txHash,
   });
 }
 

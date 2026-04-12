@@ -23,9 +23,7 @@
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 100000000000,
-      "includeEnvironmentVariables": [
-        "ACURAST_WORKER_KEY"
-      ],
+      "includeEnvironmentVariables": [],
       "processorWhitelist": []
     }
   }
