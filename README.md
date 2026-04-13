@@ -118,6 +118,30 @@ If you need to derive an EVM address from an Acurast SS58 worker address, you ca
 npx tsx src/deriveAddress.ts
 ```
 
+## Security Architecture
+
+YieldSense separates data ingestion, decisioning, and signing so sensitive key material remains inside the trusted execution boundary at all times.
+
+```mermaid
+flowchart TD
+  A[External RPC/API Providers] --> B[YieldSense Worker Runtime]
+  B --> C[Validation and Guardrails<br/>- confidence checks<br/>- gas and net reward thresholds<br/>- cooldown + freshness windows]
+  C --> D{Profitable and Safe?}
+  D -- No --> E[Skip Harvest + Emit Telemetry]
+  D -- Yes --> F[Build executeHarvest Transaction]
+  F --> G[Acurast TEE Signer<br/>ACURAST_WORKER_KEY stays in TEE]
+  G --> H[Broadcast to Base Sepolia]
+  H --> I[On-chain Keeper Contract]
+  I --> J[Harvest Confirmed + Telemetry]
+```
+
+### Security Controls
+
+- **TEE key isolation**: `ACURAST_WORKER_KEY` is only used inside the Acurast execution environment and is never logged by the app.
+- **Deterministic execution guards**: Harvests are blocked unless profitability and risk thresholds (`EFFICIENCY_MULTIPLIER`, `MAX_GAS_USD`, `MIN_NET_REWARD_USD`, `COOLDOWN_SEC`) are satisfied.
+- **Data quality gating**: Low-confidence or stale APR inputs are filtered with confidence and freshness constraints before execution.
+- **Fail-safe behavior**: When checks fail, the worker emits telemetry and exits without signing or sending a transaction.
+
 ## License
 
 ISC
