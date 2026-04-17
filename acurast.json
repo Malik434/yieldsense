@@ -11,7 +11,7 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 600000,
-        "numberOfExecutions": 10
+        "numberOfExecutions": 3
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -22,7 +22,7 @@
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
-      "maxCostPerExecution": 100000000000,
+      "maxCostPerExecution": 3200158999,
       "includeEnvironmentVariables": [],
       "processorWhitelist": []
     }
