@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 interface IAcurastConsumer {
-    function verifyAcurastSignature(bytes32 digest, bytes calldata signature) external view returns (bool);
+    function verifyAcurastSignature(bytes32 digest, bytes memory signature) external view returns (bool);
 }
 
 /**
@@ -182,8 +183,8 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
 
     // --- HELPERS ---
 
-    function verifyAcurastSignature(bytes32 digest, bytes calldata signature) public view override returns (bool) {
-        bytes32 ethHash = ECDSA.toEthSignedMessageHash(digest);
+    function verifyAcurastSignature(bytes32 digest, bytes memory signature) public view override returns (bool) {
+        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         return ECDSA.recover(ethHash, signature) == acurastSigner;
     }
 

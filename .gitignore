@@ -6,3 +6,5 @@ build/
 YieldSense.pdf
 .cursor/
 .acurast/
+artifacts/
+cache/
