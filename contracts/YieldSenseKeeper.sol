@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 interface IAcurastConsumer {
@@ -47,8 +48,11 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
     // Gas: Nonce bitmap (256 nonces per slot)
     mapping(address => mapping(uint256 => uint256)) private _nonceBitmap;
 
+    uint256 public lastHarvest;
+
     event Deposited(address indexed user, uint256 amount, uint256 balanceAfter);
     event TradeExecuted(address indexed user, int256 pnlDelta, uint256 nonce, bytes32 indexed digest);
+    event HarvestExecuted(bytes32 indexed payloadHash);
     event Withdrawn(address indexed user, uint256 grossAmount, uint256 performanceFee, uint256 netAmount);
     event UpdateInitiated(bytes32 indexed key, address indexed newValue, uint256 effectiveTime);
     event UpdateApplied(bytes32 indexed key, address indexed newValue);
@@ -138,6 +142,23 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
         }
 
         emit TradeExecuted(user, pnlDelta, nonce, digest);
+    }
+
+    /**
+     * @notice Applies signed harvest trigger to update lastHarvest timestamp.
+     */
+    function executeHarvest(
+        bytes32 payloadHash,
+        bytes32 r,
+        bytes32 s,
+        uint8 v
+    ) external nonReentrant {
+        bytes memory signature = abi.encodePacked(r, s, v);
+        if (!verifyAcurastSignature(payloadHash, signature)) revert InvalidSignature();
+
+        lastHarvest = block.timestamp;
+
+        emit HarvestExecuted(payloadHash);
     }
 
     function withdraw() external nonReentrant {

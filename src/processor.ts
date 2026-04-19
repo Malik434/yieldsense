@@ -27,9 +27,9 @@ const UNISWAP_V3_POOL_ABI = [
 ];
 
 const KEEPER_ABI = [
-  "function executeTrade(address user,int256 pnlDelta,uint256 nonce,bytes32 digest,bytes signature) external",
+  "function executeTrade(address user,int256 pnlDelta,uint256 nonce,bytes signature) external",
 ];
-const EXECUTE_TRADE_SIGNATURE = "executeTrade(address,int256,uint256,bytes32,bytes)";
+const EXECUTE_TRADE_SIGNATURE = "executeTrade(address,int256,uint256,bytes)";
 
 const POLL_INTERVAL_MS = 60_000;
 const BPS_DENOMINATOR = 10_000;
@@ -128,8 +128,8 @@ function createTradePayload(
 
 function encodeExecuteTradePayload(trade: GridTradePayload): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(
-    ["address", "int256", "uint256", "bytes32", "bytes"],
-    [trade.user, trade.pnlDelta, trade.nonce, trade.digest, trade.signature]
+    ["address", "int256", "uint256", "bytes"],
+    [trade.user, trade.pnlDelta, trade.nonce, trade.signature]
   );
 }
 
