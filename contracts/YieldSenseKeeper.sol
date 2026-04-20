@@ -67,11 +67,18 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
     error TimelockNotExpired();
     error NoUpdatePending();
 
-    constructor(address asset_, address acurastSigner_) Ownable(msg.sender) {
+    constructor(
+        address asset_, 
+        address acurastSigner_,
+        address yieldSource_,
+        address counterparty_
+    ) Ownable(msg.sender) {
         if (asset_ == address(0) || acurastSigner_ == address(0)) revert InvalidAddress();
         asset = IERC20(asset_);
         feeRecipient = msg.sender;
         acurastSigner = acurastSigner_;
+        yieldSource = yieldSource_;
+        counterparty = counterparty_;
     }
 
     // --- TIMELOCK SETTERS ---
@@ -126,7 +133,7 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
         _useNonce(user, nonce);
 
         // Compute digest internally
-        bytes32 digest = keccak256(abi.encode(block.chainid, address(this), user, pnlDelta, nonce));
+        bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(this), user, pnlDelta, nonce));
         
         if (!verifyAcurastSignature(digest, signature)) revert InvalidSignature();
 

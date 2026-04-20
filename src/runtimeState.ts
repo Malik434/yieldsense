@@ -11,6 +11,9 @@ export interface WorkerState {
   yieldIndexerCheckpointBlock?: number | null;
   /** EWMA state for reward APR smoothing */
   rewardAprEwm?: number | null;
+  /** Grid keeper stats */
+  gridTradesExecuted?: number;
+  lastGridTradeAt?: number | null;
 }
 
 export const defaultState: WorkerState = {
@@ -22,6 +25,8 @@ export const defaultState: WorkerState = {
   suggestedNextCheckMs: null,
   yieldIndexerCheckpointBlock: null,
   rewardAprEwm: null,
+  gridTradesExecuted: 0,
+  lastGridTradeAt: null,
 };
 
 export async function loadState(path: string): Promise<WorkerState> {

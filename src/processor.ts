@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { getAcurastStd } from "./acurastHardware.js";
+import { loadState, saveState } from "./runtimeState.js";
 
 type GridLevel = {
   id: string;
@@ -192,6 +193,9 @@ async function monitorAndExecute(): Promise<void> {
     );
   }
 
+  let stateUpdated = false;
+  let state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
+
   for (const trade of pendingTrades) {
     const txHash = await submitTradeViaAcurast(rpcUrl, keeperAddress, trade);
     console.log(
@@ -202,6 +206,14 @@ async function monitorAndExecute(): Promise<void> {
         txHash,
       })
     );
+    
+    state.gridTradesExecuted = (state.gridTradesExecuted || 0) + 1;
+    state.lastGridTradeAt = Math.floor(Date.now() / 1000);
+    stateUpdated = true;
+  }
+
+  if (stateUpdated) {
+    await saveState(process.env.STATE_PATH ?? ".yieldsense-state.json", state);
   }
 }
 

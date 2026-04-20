@@ -66,6 +66,8 @@ YieldSense solves all three by combining:
 - **Legacy API Consensus** (`src/realtimeApr.ts`) — GeckoTerminal, DexScreener, DefiLlama with outlier filtering.
 - **Grid Keeper Worker** (`src/processor.ts`) — price polling, grid trigger logic, stop-loss rules, `executeTrade` submission.
 - **Smart Contract** (`contracts/YieldSenseKeeper.sol`) — deposit/withdraw/executeTrade vault with performance fee, nonce bitmap, 2-day timelock on admin addresses.
+- **Testnet Environment** (`hardhat.config.cjs`) — Hardhat deployment scripts (`deployMockAndKeeper.cjs`), OpenZeppelin dependencies, and `MockERC20` contract for easy local/Sepolia testing.
+- **Web3 Dashboard** (`frontend/`) — Fully designed, premium Next.js UI using Wagmi/Viem to interact with the Vault (deposit/withdraw/approve) and monitor worker telemetry.
 - **Telemetry** (`src/telemetry.ts`) — structured JSON stdout events.
 - **SS58 → EVM Address Utility** (`src/deriveAddress.ts`).
 - **Test Suite** (`src/**/*.test.ts`) — unit tests for APR consensus, decision engine, signature, runtime state.
@@ -79,9 +81,6 @@ YieldSense solves all three by combining:
 
 ### ❌ Not Yet Implemented
 
-- **Hardhat / Foundry project** for `YieldSenseKeeper.sol` — no compilation scripts, deployment scripts, or on-chain tests exist.
-- **OpenZeppelin dependency** for the contract — `@openzeppelin/contracts` is not in `package.json`; it must be added before compiling.
-- **Frontend / Dashboard** — Architecture designed and implementation planned (Next.js + Vanilla CSS) in the `frontend/` directory.
 - **Subgraph integration** — `DataSourceTag` includes `"subgraph:aerodrome"` but no subgraph indexer is implemented.
 - **Chainlink / TWAP oracle** — similarly typed (`"oracle:twap"`, `"oracle:chainlink"`) but not implemented.
 - **Multi-user vault accounting** — the contract supports multiple users but the worker only monitors a single `USER_ADDRESS` / `KEEPER_ADDRESS` pair.

@@ -22,6 +22,7 @@
     "ethers": "^6.16.0"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
     "@nomicfoundation/hardhat-toolbox": "^7.0.0",
     "hardhat": "^2.20.0",
     "ts-loader": "^9.5.7",

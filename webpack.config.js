@@ -6,7 +6,10 @@ const __dirname = path.dirname(__filename);
 
 export default {
   mode: "production",
-  entry: "./src/index.ts",
+  entry: {
+    index: "./src/index.ts",
+    processor: "./src/processor.ts"
+  },
   target: "node", // Important for Acurast environment
   module: {
     rules: [
@@ -24,7 +27,7 @@ export default {
     },
   },
   output: {
-    filename: "bundle.js",
+    filename: "[name].bundle.js",
     path: path.resolve(__dirname, "dist"),
     libraryTarget: "commonjs",
   },

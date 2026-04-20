@@ -17,6 +17,8 @@ interface WorkerState {
     variance: number;
     lastTimestamp: number;
   } | null;
+  gridTradesExecuted?: number;
+  lastGridTradeAt?: number | null;
   error?: string;
   defaultState?: boolean;
 }
@@ -166,6 +168,14 @@ export default function Dashboard() {
               <span style={{ color: 'var(--warning)', textAlign: 'right', maxWidth: '60%' }}>
                 {state?.defaultState ? '---' : state?.lastDecisionReason || 'None'}
               </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+              <span className="text-secondary">Grid Trades Executed:</span>
+              <span style={{ color: 'var(--primary)' }}>{state?.gridTradesExecuted || 0}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span className="text-secondary">Last Grid Trade:</span>
+              <span>{state?.defaultState ? '---' : formatTimeAgo(state?.lastGridTradeAt || null)}</span>
             </div>
           </div>
         </div>
