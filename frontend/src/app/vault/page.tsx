@@ -1,34 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { formatUnits, parseUnits, maxUint256 } from 'viem';
+import Link from 'next/link';
 import { ASSET_ADDRESS, KEEPER_ADDRESS, ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
 
 export default function VaultPage() {
   const { address, isConnected } = useAccount();
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
-  
+
   const [depositAmount, setDepositAmount] = useState('');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Dynamically fetch the actual asset address from the deployed Keeper
+  const { data: dynamicAssetAddress } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'asset',
+  });
+  const actualAssetAddress = (dynamicAssetAddress as `0x${string}`) || ASSET_ADDRESS;
 
   // Read Allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
-    address: ASSET_ADDRESS,
+    address: actualAssetAddress,
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: address ? [address, KEEPER_ADDRESS] : undefined,
-    query: { enabled: !!address }
+    query: { enabled: !!address && !!actualAssetAddress }
   });
 
   // Read User Balance (Asset)
   const { data: assetBalance, refetch: refetchBalance } = useReadContract({
-    address: ASSET_ADDRESS,
+    address: actualAssetAddress,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address }
+    query: { enabled: !!address && !!actualAssetAddress }
   });
 
   // Read Active Vault Liquidity (Keeper)
@@ -45,7 +59,7 @@ export default function VaultPage() {
   const handleApprove = async () => {
     try {
       await writeContractAsync({
-        address: ASSET_ADDRESS,
+        address: actualAssetAddress,
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [KEEPER_ADDRESS, maxUint256],
@@ -59,10 +73,10 @@ export default function VaultPage() {
   const handleRevoke = async () => {
     try {
       await writeContractAsync({
-        address: ASSET_ADDRESS,
+        address: actualAssetAddress,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [KEEPER_ADDRESS, 0n],
+        args: [KEEPER_ADDRESS, BigInt(0)],
       });
       refetchAllowance();
     } catch (e) {
@@ -101,29 +115,36 @@ export default function VaultPage() {
     }
   };
 
-  const isApproved = allowance && allowance > 0n;
-  const balanceVal = userData ? (userData as any)[0] : 0n;
-  const initialDepositVal = userData ? (userData as any)[1] : 0n;
+  const isApproved = allowance && allowance > BigInt(0);
+  const balanceVal = userData ? (userData as any)[0] : BigInt(0);
+  const initialDepositVal = userData ? (userData as any)[1] : BigInt(0);
+
+  if (!mounted) return null;
 
   return (
     <main className="container">
-      <header className="header">
-        <h1>YieldSense Vault</h1>
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <Link href="/" style={{ textDecoration: 'none', background: 'var(--surface-hover)', padding: '8px 16px', borderRadius: '8px', color: 'var(--text-primary)', border: '1px solid var(--border)', fontSize: '0.9rem' }}>
+            ← Back to Dashboard
+          </Link>
+          <h1 style={{ margin: 0 }}>YieldSense Vault</h1>
+        </div>
         {!isConnected ? (
-          <button 
+          <button
             className="status-indicator"
-            style={{ cursor: 'pointer', background: 'var(--primary)', border: 'none' }}
+            style={{ cursor: 'pointer', background: 'var(--primary)', color: '#fff', border: 'none', fontWeight: 'bold' }}
             onClick={() => connect({ connector: injected() })}
           >
             Connect MetaMask
           </button>
         ) : (
-          <button 
+          <button
             className="status-indicator"
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', background: 'var(--success)', color: '#fff', border: 'none', fontWeight: 'bold' }}
             onClick={() => disconnect()}
           >
-            <span className="dot healthy"></span>
+            <span className="dot" style={{ background: '#fff' }}></span>
             {address?.slice(0, 6)}...{address?.slice(-4)}
           </button>
         )}
@@ -139,7 +160,7 @@ export default function VaultPage() {
           {/* Liquidity Management Card */}
           <div className="card">
             <h2 className="card-title">Manage Liquidity</h2>
-            
+
             <div className="mt-4 mb-4">
               <span className="text-secondary">Wallet Asset Balance: </span>
               <strong>{assetBalance ? formatUnits(assetBalance as bigint, 18) : '0'}</strong>
@@ -148,7 +169,7 @@ export default function VaultPage() {
             {!isApproved ? (
               <div className="p-6" style={{ background: 'var(--surface-hover)', borderRadius: '8px', textAlign: 'center' }}>
                 <p className="mb-4">You need to grant the YieldSense Keeper access to your assets.</p>
-                <button 
+                <button
                   onClick={handleApprove}
                   style={{ background: 'var(--primary)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
                 >
@@ -158,22 +179,22 @@ export default function VaultPage() {
             ) : (
               <div>
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-                  <input 
-                    type="number" 
+                  <input
+                    type="number"
                     placeholder="Amount to deposit"
                     value={depositAmount}
                     onChange={(e) => setDepositAmount(e.target.value)}
                     style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
                   />
-                  <button 
+                  <button
                     onClick={handleDeposit}
                     style={{ background: 'var(--success)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
                   >
                     Deposit
                   </button>
                 </div>
-                
-                <button 
+
+                <button
                   onClick={handleRevoke}
                   style={{ background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', padding: '5px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem' }}
                 >
@@ -186,7 +207,7 @@ export default function VaultPage() {
           {/* Vault Status Card */}
           <div className="card">
             <h2 className="card-title">Your Active Vault</h2>
-            
+
             <div className="grid grid-cols-2 mt-4">
               <div>
                 <div className="text-secondary" style={{ fontSize: '0.9rem' }}>Current Balance</div>
@@ -206,18 +227,18 @@ export default function VaultPage() {
               <p className="text-secondary" style={{ fontSize: '0.85rem', marginBottom: '15px' }}>
                 * A 10% performance fee is automatically deducted from your yields upon withdrawal. This fee covers the protocol operations and the Acurast Job execution gas costs.
               </p>
-              
-              <button 
+
+              <button
                 onClick={handleWithdraw}
-                disabled={balanceVal === 0n}
-                style={{ 
-                  width: '100%', 
-                  background: balanceVal === 0n ? 'var(--surface-hover)' : 'var(--primary)', 
-                  color: balanceVal === 0n ? 'var(--text-secondary)' : '#fff', 
-                  border: 'none', 
-                  padding: '12px', 
-                  borderRadius: '8px', 
-                  cursor: balanceVal === 0n ? 'not-allowed' : 'pointer',
+                disabled={balanceVal === BigInt(0)}
+                style={{
+                  width: '100%',
+                  background: balanceVal === BigInt(0) ? 'var(--surface-hover)' : 'var(--primary)',
+                  color: balanceVal === BigInt(0) ? 'var(--text-secondary)' : '#fff',
+                  border: 'none',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  cursor: balanceVal === BigInt(0) ? 'not-allowed' : 'pointer',
                   fontWeight: 'bold'
                 }}
               >

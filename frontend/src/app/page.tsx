@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 // Define the interface based on runtimeState.ts
 interface WorkerState {
@@ -96,8 +97,13 @@ export default function Dashboard() {
 
   return (
     <main className="container">
-      <header className="header">
-        <h1>YieldSense Dashboard</h1>
+      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <h1>YieldSense Dashboard</h1>
+          <Link href="/vault" style={{ textDecoration: 'none', background: 'var(--surface-hover)', padding: '8px 16px', borderRadius: '8px', color: 'var(--text-primary)', border: '1px solid var(--border)', fontSize: '0.9rem' }}>
+            Go to Vault →
+          </Link>
+        </div>
         <div className="status-indicator">
           <span className={`dot ${getStatusClass()}`}></span>
           {getStatusText()}

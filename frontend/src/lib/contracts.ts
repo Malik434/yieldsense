@@ -57,6 +57,13 @@ export const ERC20_ABI = [
 
 export const KEEPER_ABI = [
   {
+    "inputs": [],
+    "name": "asset",
+    "outputs": [{ "internalType": "contract IERC20", "name": "", "type": "address" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [{ "internalType": "uint256", "name": "amount", "type": "uint256" }],
     "name": "deposit",
     "outputs": [],
