@@ -8,3 +8,8 @@ YieldSense.pdf
 .acurast/
 artifacts/
 cache/
+
+# Next.js
+.next/
+out/
+.env*.local
