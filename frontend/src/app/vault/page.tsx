@@ -1,0 +1,232 @@
+'use client';
+
+import { useState } from 'react';
+import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract } from 'wagmi';
+import { injected } from 'wagmi/connectors';
+import { formatUnits, parseUnits, maxUint256 } from 'viem';
+import { ASSET_ADDRESS, KEEPER_ADDRESS, ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
+
+export default function VaultPage() {
+  const { address, isConnected } = useAccount();
+  const { connect } = useConnect();
+  const { disconnect } = useDisconnect();
+  
+  const [depositAmount, setDepositAmount] = useState('');
+
+  // Read Allowance
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: ASSET_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: address ? [address, KEEPER_ADDRESS] : undefined,
+    query: { enabled: !!address }
+  });
+
+  // Read User Balance (Asset)
+  const { data: assetBalance, refetch: refetchBalance } = useReadContract({
+    address: ASSET_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address }
+  });
+
+  // Read Active Vault Liquidity (Keeper)
+  const { data: userData, refetch: refetchUserData } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'userData',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address }
+  });
+
+  const { writeContractAsync } = useWriteContract();
+
+  const handleApprove = async () => {
+    try {
+      await writeContractAsync({
+        address: ASSET_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [KEEPER_ADDRESS, maxUint256],
+      });
+      refetchAllowance();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRevoke = async () => {
+    try {
+      await writeContractAsync({
+        address: ASSET_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [KEEPER_ADDRESS, 0n],
+      });
+      refetchAllowance();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeposit = async () => {
+    if (!depositAmount) return;
+    try {
+      const amount = parseUnits(depositAmount, 18); // assuming 18 decimals for USDC/Asset
+      await writeContractAsync({
+        address: KEEPER_ADDRESS,
+        abi: KEEPER_ABI,
+        functionName: 'deposit',
+        args: [amount],
+      });
+      refetchUserData();
+      refetchBalance();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    try {
+      await writeContractAsync({
+        address: KEEPER_ADDRESS,
+        abi: KEEPER_ABI,
+        functionName: 'withdraw',
+      });
+      refetchUserData();
+      refetchBalance();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const isApproved = allowance && allowance > 0n;
+  const balanceVal = userData ? (userData as any)[0] : 0n;
+  const initialDepositVal = userData ? (userData as any)[1] : 0n;
+
+  return (
+    <main className="container">
+      <header className="header">
+        <h1>YieldSense Vault</h1>
+        {!isConnected ? (
+          <button 
+            className="status-indicator"
+            style={{ cursor: 'pointer', background: 'var(--primary)', border: 'none' }}
+            onClick={() => connect({ connector: injected() })}
+          >
+            Connect MetaMask
+          </button>
+        ) : (
+          <button 
+            className="status-indicator"
+            style={{ cursor: 'pointer' }}
+            onClick={() => disconnect()}
+          >
+            <span className="dot healthy"></span>
+            {address?.slice(0, 6)}...{address?.slice(-4)}
+          </button>
+        )}
+      </header>
+
+      {!isConnected ? (
+        <div className="card text-center mt-8 p-6" style={{ textAlign: 'center' }}>
+          <h2>Connect Your Wallet</h2>
+          <p className="text-secondary mt-4">Connect your Web3 wallet to manage your liquidity in the YieldSense Auto-Harvester.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2">
+          {/* Liquidity Management Card */}
+          <div className="card">
+            <h2 className="card-title">Manage Liquidity</h2>
+            
+            <div className="mt-4 mb-4">
+              <span className="text-secondary">Wallet Asset Balance: </span>
+              <strong>{assetBalance ? formatUnits(assetBalance as bigint, 18) : '0'}</strong>
+            </div>
+
+            {!isApproved ? (
+              <div className="p-6" style={{ background: 'var(--surface-hover)', borderRadius: '8px', textAlign: 'center' }}>
+                <p className="mb-4">You need to grant the YieldSense Keeper access to your assets.</p>
+                <button 
+                  onClick={handleApprove}
+                  style={{ background: 'var(--primary)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
+                >
+                  Grant Access
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                  <input 
+                    type="number" 
+                    placeholder="Amount to deposit"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+                  />
+                  <button 
+                    onClick={handleDeposit}
+                    style={{ background: 'var(--success)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    Deposit
+                  </button>
+                </div>
+                
+                <button 
+                  onClick={handleRevoke}
+                  style={{ background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', padding: '5px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  Revoke Access
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Vault Status Card */}
+          <div className="card">
+            <h2 className="card-title">Your Active Vault</h2>
+            
+            <div className="grid grid-cols-2 mt-4">
+              <div>
+                <div className="text-secondary" style={{ fontSize: '0.9rem' }}>Current Balance</div>
+                <div className="card-value text-primary" style={{ fontSize: '2rem' }}>
+                  {formatUnits(balanceVal, 18)}
+                </div>
+              </div>
+              <div>
+                <div className="text-secondary" style={{ fontSize: '0.9rem' }}>Initial Deposit</div>
+                <div className="card-value" style={{ fontSize: '2rem' }}>
+                  {formatUnits(initialDepositVal, 18)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 p-6" style={{ borderTop: '1px solid var(--border)' }}>
+              <p className="text-secondary" style={{ fontSize: '0.85rem', marginBottom: '15px' }}>
+                * A 10% performance fee is automatically deducted from your yields upon withdrawal. This fee covers the protocol operations and the Acurast Job execution gas costs.
+              </p>
+              
+              <button 
+                onClick={handleWithdraw}
+                disabled={balanceVal === 0n}
+                style={{ 
+                  width: '100%', 
+                  background: balanceVal === 0n ? 'var(--surface-hover)' : 'var(--primary)', 
+                  color: balanceVal === 0n ? 'var(--text-secondary)' : '#fff', 
+                  border: 'none', 
+                  padding: '12px', 
+                  borderRadius: '8px', 
+                  cursor: balanceVal === 0n ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                Withdraw All Liquidity & Yields
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
