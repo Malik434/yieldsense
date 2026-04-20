@@ -19,13 +19,13 @@ export default function VaultPage() {
     setMounted(true);
   }, []);
 
-  // Dynamically fetch the actual asset address from the deployed Keeper
+  // Use the ASSET_ADDRESS from .env.local if available, otherwise fetch dynamically
   const { data: dynamicAssetAddress } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'asset',
   });
-  const actualAssetAddress = (dynamicAssetAddress as `0x${string}`) || ASSET_ADDRESS;
+  const actualAssetAddress = ASSET_ADDRESS || (dynamicAssetAddress as `0x${string}`);
 
   // Read Allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -63,6 +63,7 @@ export default function VaultPage() {
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [KEEPER_ADDRESS, maxUint256],
+        gas: BigInt(100000), // Hardcoded to bypass RPC estimation bug
       });
       refetchAllowance();
     } catch (e) {
@@ -77,6 +78,7 @@ export default function VaultPage() {
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [KEEPER_ADDRESS, BigInt(0)],
+        gas: BigInt(100000),
       });
       refetchAllowance();
     } catch (e) {
@@ -93,6 +95,7 @@ export default function VaultPage() {
         abi: KEEPER_ABI,
         functionName: 'deposit',
         args: [amount],
+        gas: BigInt(300000),
       });
       refetchUserData();
       refetchBalance();
@@ -107,6 +110,7 @@ export default function VaultPage() {
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
         functionName: 'withdraw',
+        gas: BigInt(300000),
       });
       refetchUserData();
       refetchBalance();

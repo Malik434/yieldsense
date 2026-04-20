@@ -1,0 +1,35 @@
+const hre = require("hardhat");
+
+async function main() {
+  const [deployer] = await hre.ethers.getSigners();
+  console.log("Deploying contracts with the account:", deployer.address);
+
+  // 1. Deploy Mock ERC20
+  const MockERC20 = await hre.ethers.getContractFactory("MockERC20");
+  const mockToken = await MockERC20.deploy("Mock Asset", "mASSET");
+  await mockToken.waitForDeployment();
+  const mockAddress = await mockToken.getAddress();
+  console.log("✅ MockERC20 deployed to:", mockAddress);
+
+  // 2. Deploy YieldSenseKeeper
+  // The constructor requires (address asset_, address acurastSigner_)
+  const acurastSigner = process.env.USER_ADDRESS || deployer.address;
+  
+  const YieldSenseKeeper = await hre.ethers.getContractFactory("YieldSenseKeeper");
+  const keeper = await YieldSenseKeeper.deploy(mockAddress, acurastSigner);
+  await keeper.waitForDeployment();
+  const keeperAddress = await keeper.getAddress();
+  
+  console.log("✅ YieldSenseKeeper deployed to:", keeperAddress);
+  
+  console.log("\n=========================================");
+  console.log("🚀 COPY THESE INTO: frontend/.env.local");
+  console.log("=========================================");
+  console.log(`NEXT_PUBLIC_KEEPER_ADDRESS=${keeperAddress}`);
+  console.log(`NEXT_PUBLIC_ASSET_ADDRESS=${mockAddress}`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
