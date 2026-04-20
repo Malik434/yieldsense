@@ -65,7 +65,7 @@ YieldSense solves all three by combining:
 - **Runtime State** (`src/runtimeState.ts`) — persistent JSON state (APR, failure streak, EWM checkpoint).
 - **Legacy API Consensus** (`src/realtimeApr.ts`) — GeckoTerminal, DexScreener, DefiLlama with outlier filtering.
 - **Grid Keeper Worker** (`src/processor.ts`) — price polling, grid trigger logic, stop-loss rules, `executeTrade` submission.
-- **Smart Contract** (`contracts/YieldSenseKeeper.sol`) — deposit/withdraw/executeTrade vault with performance fee, nonce bitmap, 2-day timelock on admin addresses.
+- **Smart Contract** (`contracts/YieldSenseKeeper.sol`) — deposit/withdraw/executeTrade vault with performance fee, nonce bitmap, 2-day timelock on admin addresses. **P-256 TEE Attestation Gate** via OpenZeppelin `P256.sol` using the RIP-7212 precompile on Base. Dual-layer security: P-256 for hardware attestation verification, secp256k1 for runtime ECDSA signatures.
 - **Testnet Environment** (`hardhat.config.cjs`) — Hardhat deployment scripts (`deployMockAndKeeper.cjs`), OpenZeppelin dependencies, and `MockERC20` contract for easy local/Sepolia testing.
 - **Web3 Dashboard** (`frontend/`) — Fully designed, premium Next.js UI using Wagmi/Viem to interact with the Vault (deposit/withdraw/approve) and monitor worker telemetry.
 - **Telemetry** (`src/telemetry.ts`) — structured JSON stdout events.
@@ -76,7 +76,7 @@ YieldSense solves all three by combining:
 ### ⚠️ Partially Implemented
 
 - **Forward APR Projection** (`src/yieldEngine/compute/forwardAerodrome.ts`) — stub exists and is wired up; accuracy depends on correct epoch data from gauge.
-- **Grid Keeper Webpack Build** — `src/processor.ts` exists and is referenced in `acurast.config.ts` as `dist/processor.js`, but there is **no second Webpack entry point** in `webpack.config.js` to produce it. The file must be bundled separately.
+- **Grid Keeper Webpack Build** — `src/processor.ts` is now bundled as a second Webpack entry point producing `dist/processor.bundle.cjs`. ✅ Fixed.
 - **Stop-loss Decryption** (`src/processor.ts`) — production TEE decryption path is a comment placeholder; the code assumes the TEE runtime pre-decrypts `STOP_LOSS_SECRET_JSON` before process start.
 
 ### ❌ Not Yet Implemented

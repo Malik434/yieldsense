@@ -151,16 +151,33 @@ async function fetchDefiLlama(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
+    // Strip 0x prefix for substring matching (DefiLlama pool IDs sometimes embed the address)
+    const addrNoPrefix = addr.startsWith("0x") ? addr.slice(2) : addr;
     const response = await axios.get("https://yields.llama.fi/pools", {
       timeout: 12000,
       headers: { "User-Agent": USER_AGENT },
     });
-    const pools = response.data?.data ?? [];
-    const pool = pools.find((p: any) => String(p?.pool ?? "").toLowerCase() === addr);
+    const pools: any[] = response.data?.data ?? [];
+
+    // DefiLlama pool IDs are UUIDs for most protocols (e.g. Aerodrome).
+    // Match strategy (in order of reliability):
+    //   1. Exact match on pool ID (protocols that use address as ID)
+    //   2. Pool ID contains the address (some protocols embed it)
+    //   3. underlyingTokens array contains the address (lending markets)
+    const pool = pools.find((p: any) => {
+      const poolId = String(p?.pool ?? "").toLowerCase();
+      if (poolId === addr) return true;
+      if (poolId.includes(addrNoPrefix)) return true;
+      const underlying: string[] = (p?.underlyingTokens ?? []).map((t: string) =>
+        t.toLowerCase()
+      );
+      return underlying.includes(addr);
+    });
+
     if (pool?.apy !== undefined && pool?.apy !== null) {
       return { source: "defiLlama", apr: Number(pool.apy) / 100, timestamp, confidence: 0.75 };
     }
-    return { source: "defiLlama", apr: null, timestamp, confidence: 0, error: "Pool not found" };
+    return { source: "defiLlama", apr: null, timestamp, confidence: 0, error: "Pool not found in DefiLlama yields" };
   } catch (error: any) {
     return { source: "defiLlama", apr: null, timestamp, confidence: 0, error: error.message };
   }

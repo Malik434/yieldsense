@@ -182,11 +182,20 @@ export async function getRobustYieldEstimate(
 
   if ((!usable || confidence < req.minExecutionConfidence) && req.fallbackMode !== "off") {
     const apiPool = req.apiPoolAddress ?? req.poolAddress;
+    const defiLlamaOpts =
+      req.defiLlamaProject || req.defiLlamaToken0
+        ? {
+            project: req.defiLlamaProject,
+            token0: req.defiLlamaToken0,
+            token1: req.defiLlamaToken1,
+          }
+        : undefined;
     const fb = await apiFallbackTotalApr(
       apiPool,
       req.aprFreshnessWindowSec,
       req.minApiConfidence,
-      compounds
+      compounds,
+      defiLlamaOpts
     );
     if (fb && fb.estimate.totalApr > 0) {
       const blendW = Math.max(0, 1 - confidence);

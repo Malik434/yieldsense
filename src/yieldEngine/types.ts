@@ -71,6 +71,15 @@ export interface YieldEstimateRequest {
   /** strategy capital delta for liquidity sensitivity (USD) */
   strategyDeltaUsd?: number;
   apyCompoundPeriodsPerYear?: number;
+  /**
+   * Optional DefiLlama direct-lookup hints.
+   * When provided, the API fallback will attempt a token-based DefiLlama search
+   * in addition to the Gecko / DexScreener consensus, improving fallback quality
+   * for Aerodrome LP pools and Moonwell lending markets.
+   */
+  defiLlamaProject?: string;   // e.g. "aerodrome", "moonwell"
+  defiLlamaToken0?: string;    // underlying token0 address
+  defiLlamaToken1?: string;    // underlying token1 address (LP pools)
 }
 
 export interface YieldEngineContext {

@@ -13,3 +13,4 @@ cache/
 .next/
 out/
 .env*.local
+proposal_text.md

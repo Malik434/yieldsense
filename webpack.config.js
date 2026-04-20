@@ -30,5 +30,9 @@ export default {
     filename: "[name].bundle.cjs",
     path: path.resolve(__dirname, "dist"),
     libraryTarget: "commonjs",
+    clean: {
+      // Only clean the bundle outputs — leave hand-written dist/*.js files alone
+      keep: /^(?!(?:index|processor)\.bundle)/,
+    },
   },
 };
