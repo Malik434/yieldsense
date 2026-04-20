@@ -22,7 +22,10 @@ export function buildPayloadHash(
 
 export function signHarvestPayload(privateKey: string, payloadHash: string): HarvestSignaturePayload {
   const wallet = new ethers.Wallet(privateKey);
-  const signature = wallet.signingKey.sign(payloadHash);
+  // The contract verifies via: ECDSA.recover(toEthSignedMessageHash(digest), signature)
+  // So we must sign the EIP-191 prefixed hash to match.
+  const ethSignedHash = ethers.hashMessage(ethers.getBytes(payloadHash));
+  const signature = wallet.signingKey.sign(ethSignedHash);
   return {
     payloadHash,
     r: signature.r,

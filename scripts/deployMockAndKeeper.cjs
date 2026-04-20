@@ -13,7 +13,8 @@ async function main() {
 
   // 2. Deploy YieldSenseKeeper
   // The constructor requires (asset, acurastSigner, yieldSource, counterparty)
-  const acurastSigner = process.env.USER_ADDRESS || deployer.address;
+  // acurastSigner = deployer, since the Hardhat account IS the ACURAST_WORKER_KEY
+  const acurastSigner = deployer.address;
   const yieldSource = deployer.address;
   const counterparty = deployer.address;
   

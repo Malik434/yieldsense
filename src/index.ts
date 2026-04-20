@@ -368,7 +368,7 @@ async function main(): Promise<void> {
     let tx;
     try {
       const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
-      tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v);
+      tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v, { gasLimit: 300000 });
     } catch (error: any) {
       // Backward compatibility for older deployed keeper signature.
       if (error?.code !== "CALL_EXCEPTION") {
