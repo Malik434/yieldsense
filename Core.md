@@ -81,7 +81,7 @@ YieldSense solves all three by combining:
 
 - **Hardhat / Foundry project** for `YieldSenseKeeper.sol` — no compilation scripts, deployment scripts, or on-chain tests exist.
 - **OpenZeppelin dependency** for the contract — `@openzeppelin/contracts` is not in `package.json`; it must be added before compiling.
-- **Frontend / Dashboard** — no UI has been built.
+- **Frontend / Dashboard** — Architecture designed and implementation planned (Next.js + Vanilla CSS) in the `frontend/` directory.
 - **Subgraph integration** — `DataSourceTag` includes `"subgraph:aerodrome"` but no subgraph indexer is implemented.
 - **Chainlink / TWAP oracle** — similarly typed (`"oracle:twap"`, `"oracle:chainlink"`) but not implemented.
 - **Multi-user vault accounting** — the contract supports multiple users but the worker only monitors a single `USER_ADDRESS` / `KEEPER_ADDRESS` pair.
@@ -316,6 +316,22 @@ If you have an Acurast SS58 worker address and need the corresponding EVM addres
 # Edit src/deriveAddress.ts to paste your SS58 address, then:
 npx tsx src/deriveAddress.ts
 ```
+
+### Run Frontend Dashboard
+
+Once the frontend is implemented, you can run the local dashboard to visualize the worker state:
+
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Install dependencies
+npm install
+
+# Run the Next.js development server
+npm run dev
+```
+Access the dashboard at `http://localhost:3000`. The frontend uses Next.js API routes to automatically read and display the worker state from `.yieldsense-state.json`.
 
 ---
 
