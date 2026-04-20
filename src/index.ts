@@ -158,9 +158,19 @@ async function main(): Promise<void> {
   const elapsedEwma =
     state.lastRunAt != null ? Math.max(60, nowSec - state.lastRunAt) : 300;
 
-  const [ethPrice, yieldResult, lastHarvest, feeData] = await Promise.all([
-    getEthPrice(),
-    getRobustYieldEstimate(
+  const ethPricePromise = getEthPrice();
+  const lastHarvestPromise = keeperRead.lastHarvest();
+  const feeDataPromise = executionProvider.getFeeData();
+
+  let yieldResult;
+  if (CONFIG.forceTestHarvest) {
+    yieldResult = {
+      estimate: { usable: true, totalApr: 0.1, feeApr: 0.05, rewardApr: 0.05, confidence: 1, dataSourcesUsed: [], diagnostics: {}, estimatedApy: 0.1, forwardAprEstimate: null },
+      indexerCheckpointBlock: null,
+      rewardAprEwmNext: null
+    };
+  } else {
+    yieldResult = await getRobustYieldEstimate(
       {
         provider: dataProvider,
         indexerCheckpointBlock: state.yieldIndexerCheckpointBlock ?? undefined,
@@ -168,9 +178,13 @@ async function main(): Promise<void> {
       },
       buildYieldRequest(yieldChainId, CONFIG.poolAddress),
       { elapsedSecSinceLastEwma: elapsedEwma }
-    ),
-    keeperRead.lastHarvest(),
-    executionProvider.getFeeData(),
+    );
+  }
+
+  const [ethPrice, lastHarvest, feeData] = await Promise.all([
+    ethPricePromise,
+    lastHarvestPromise,
+    feeDataPromise,
   ]);
 
   const aprConsensus = yieldResult.estimate;

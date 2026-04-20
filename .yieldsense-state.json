@@ -1,10 +1,12 @@
 {
   "previousApr": 2.142932156884446,
-  "apiFailureStreak": 0,
-  "lastDecisionReason": "executed",
-  "lastRunAt": 1775850506,
+  "apiFailureStreak": 5,
+  "lastDecisionReason": "runtime_error",
+  "lastRunAt": 1776721818,
   "lastExecutionAt": 1775850506,
   "suggestedNextCheckMs": 60000,
   "yieldIndexerCheckpointBlock": 44530580,
-  "rewardAprEwm": null
+  "rewardAprEwm": null,
+  "gridTradesExecuted": 0,
+  "lastGridTradeAt": null
 }

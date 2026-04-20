@@ -27,7 +27,7 @@ export default {
     },
   },
   output: {
-    filename: "[name].bundle.js",
+    filename: "[name].bundle.cjs",
     path: path.resolve(__dirname, "dist"),
     libraryTarget: "commonjs",
   },
