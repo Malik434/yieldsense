@@ -11,6 +11,7 @@ import { AprGauge } from '@/components/AprGauge';
 import { PnlChart } from '@/components/PnlChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { WithdrawModule } from '@/components/WithdrawModule';
+import { TestingSuite } from '@/components/TestingSuite';
 import {
   ShieldCheck,
   Layers,
@@ -18,6 +19,7 @@ import {
   LogOut,
   AlertCircle,
   ChevronRight,
+  Droplets
 } from 'lucide-react';
 
 interface WorkerState {
@@ -43,6 +45,7 @@ interface ConsensusData {
 }
 
 const SECTIONS = [
+  { id: 'testing-suite', label: 'TESTNET', icon: <Droplets size={12} /> },
   { id: 'command-center', label: 'STRATEGY', icon: <Layers size={12} /> },
   { id: 'live-alpha', label: 'LIVE ALPHA', icon: <TrendingUp size={12} /> },
   { id: 'exit-flow', label: 'EXIT', icon: <LogOut size={12} /> },
@@ -210,6 +213,17 @@ export default function CommandCenter() {
               </span>
             )}
           </div>
+        </div>
+
+        {/* ─── SECTION 0: TESTING SUITE (TESTNET ONLY) ─── */}
+        <SectionHeading
+          id="testing-suite"
+          label="00 · TESTNET ONBOARDING"
+          sublabel="Request mock assets and view live TEE execution logs"
+        />
+
+        <div className="mb-12">
+          <TestingSuite />
         </div>
 
         {/* ─── SECTION 1: STRATEGY COMMAND CENTER ─── */}

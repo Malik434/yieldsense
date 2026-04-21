@@ -14,6 +14,15 @@ export interface WorkerState {
   /** Grid keeper stats */
   gridTradesExecuted?: number;
   lastGridTradeAt?: number | null;
+  /** Hardware execution logs */
+  hardwareLogs?: HardwareLog[];
+}
+
+export interface HardwareLog {
+  timestamp: number;
+  type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC';
+  message: string;
+  txHash?: string;
 }
 
 export const defaultState: WorkerState = {
@@ -27,6 +36,7 @@ export const defaultState: WorkerState = {
   rewardAprEwm: null,
   gridTradesExecuted: 0,
   lastGridTradeAt: null,
+  hardwareLogs: [],
 };
 
 export async function loadState(path: string): Promise<WorkerState> {

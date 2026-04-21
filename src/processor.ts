@@ -2,6 +2,13 @@ import { ethers } from "ethers";
 import { getAcurastStd, storageGet, storageSet } from "./acurastHardware.js";
 import { loadState, saveState } from "./runtimeState.js";
 
+interface HardwareLog {
+  timestamp: number;
+  type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC';
+  message: string;
+  txHash?: string;
+}
+
 type GridLevel = {
   id: string;
   referencePrice: number;
@@ -122,6 +129,17 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
     if (std) {
       storageSet(std, `strategy:${userAddress.toLowerCase()}`, params);
       console.log(JSON.stringify({ event: "strategy_params_stored", user: userAddress, stopLoss: params.stopLossPrice }));
+      // Append to hardware logs in state
+      let state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
+      if (!state.hardwareLogs) state.hardwareLogs = [];
+      state.hardwareLogs.push({
+        timestamp: Date.now(),
+        type: 'STORAGE_SYNC',
+        message: `_STD_.storage synced for ${userAddress.substring(0, 6)}...`
+      });
+      // Keep only last 10 logs
+      if (state.hardwareLogs.length > 10) state.hardwareLogs.shift();
+      await saveState(process.env.STATE_PATH ?? ".yieldsense-state.json", state);
     }
   } catch (err) {
     console.error(JSON.stringify({ event: "strategy_params_fetch_error", message: String(err) }));
@@ -293,9 +311,19 @@ async function monitorAndExecute(): Promise<void> {
         txHash,
       })
     );
-    
+
     state.gridTradesExecuted = (state.gridTradesExecuted || 0) + 1;
     state.lastGridTradeAt = Math.floor(Date.now() / 1000);
+
+    if (!state.hardwareLogs) state.hardwareLogs = [];
+    state.hardwareLogs.push({
+      timestamp: Date.now(),
+      type: 'EXECUTION',
+      message: `Grid Trade executed for ${trade.user.substring(0, 6)}...`,
+      txHash
+    });
+    if (state.hardwareLogs.length > 10) state.hardwareLogs.shift();
+
     stateUpdated = true;
   }
 
@@ -314,7 +342,7 @@ async function startLoop(): Promise<void> {
     await fetchAndStoreStrategyParams(userAddress, frontendUrl);
   }
 
-  for (;;) {
+  for (; ;) {
     try {
       await monitorAndExecute();
     } catch (error) {

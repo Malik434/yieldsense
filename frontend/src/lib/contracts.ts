@@ -86,5 +86,44 @@ export const KEEPER_ABI = [
     ],
     "stateMutability": "view",
     "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
+      { "indexed": false, "internalType": "int256", "name": "pnlDelta", "type": "int256" },
+      { "indexed": false, "internalType": "uint256", "name": "nonce", "type": "uint256" },
+      { "indexed": true, "internalType": "bytes32", "name": "digest", "type": "bytes32" }
+    ],
+    "name": "TradeExecuted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "bytes32", "name": "payloadHash", "type": "bytes32" }
+    ],
+    "name": "HarvestExecuted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "balanceAfter", "type": "uint256" }
+    ],
+    "name": "Deposited",
+    "type": "event"
+  }
+] as const;
+
+export const MOCK_USDC_ABI = [
+  {
+    "inputs": [{ "internalType": "uint256", "name": "amount", "type": "uint256" }],
+    "name": "mint",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   }
 ] as const;
