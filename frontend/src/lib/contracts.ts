@@ -120,10 +120,19 @@ export const KEEPER_ABI = [
 
 export const MOCK_USDC_ABI = [
   {
-    "inputs": [{ "internalType": "uint256", "name": "amount", "type": "uint256" }],
+    "inputs": [
+      { "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ],
     "name": "mint",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "decimals",
+    "outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
+    "stateMutability": "view",
     "type": "function"
   }
 ] as const;

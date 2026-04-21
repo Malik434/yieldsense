@@ -10,8 +10,8 @@ YieldSense is an automated yield harvesting and profitability checker designed t
 - **Adaptive Runtime Loop**: Emits a recommended next-check interval based on APR regime and gas environment for Acurast-friendly scheduling.
 - **Gas Optimization**: Compares estimated gas costs against expected yield and enforces an efficiency multiplier (default 1.5x) before triggering transactions.
 - **Acurast TEE Ready**: Configured to be bundled via Webpack for seamless deployment to Acurast workers.
-- **Web3 Vault Dashboard**: A fully functional Next.js UI (`frontend/`) to visualize Acurast worker telemetry, manage liquidity, and safely grant smart contract approvals via MetaMask.
-- **Testnet Ready**: Includes `MockERC20.sol` and a Hardhat deployment script to rapidly spin up test environments on Base Sepolia.
+- **Web3 Vault Dashboard**: A fully functional Next.js UI (`frontend/`) to visualize Acurast worker telemetry, manage liquidity, and safely grant smart contract approvals via MetaMask. Includes the "TEE Handshake" flow using EIP-712 signatures for MEV-protected strategy parameter encryption.
+- **Testnet Ready**: Includes `MockUSDC.sol` and a Hardhat deployment script to rapidly spin up test environments on Base Sepolia.
 - **Cross-Ecosystem Utility**: Includes a utility (`deriveAddress.ts`) to convert Substrate SS58 worker addresses to EVM addresses for cross-chain compatibility.
 
 ## Prerequisites
@@ -32,9 +32,10 @@ npm install
 
 - `src/index.ts`: The main application logic. Fetches data, calculates profitability, and broadcasts transactions.
 - `src/yieldEngine/`: Modular yield estimation (`getRobustYieldEstimate`), RPC fee / gauge indexers, smoothing, confidence, optional forward projection stub.
-- `frontend/`: The Next.js dashboard and Web3 dApp for interacting with the Vault and viewing worker status.
+- `frontend/`: The Next.js dashboard and Web3 dApp for interacting with the Vault, completing the "TEE Handshake", and viewing live hardware execution logs.
 - `contracts/YieldSenseKeeper.sol`: The Vault smart contract that executes the Acurast-signed payload.
-- `scripts/deployMockAndKeeper.cjs`: Hardhat script for rapidly deploying the Keeper and Mock ERC20 tokens to Base Sepolia.
+- `contracts/MockUSDC.sol`: Mintable testnet asset for the Base Sepolia Testing Suite.
+- `scripts/deployMockAndKeeper.cjs`: Hardhat script for rapidly deploying the Keeper and Mock USDC token to Base Sepolia.
 - `src/deriveAddress.ts`: Utility script to decode a Polkadot/Acurast SS58 address into an EVM-compatible hex address.
 - `webpack.config.js`: Bundles the application into a single file (`dist/bundle.js`) optimized for the Node environment.
 - `tsconfig.json`: TypeScript configuration (configured for ES modules and modern Node environments).
@@ -101,6 +102,10 @@ The worker emits structured JSON telemetry for:
 - Suggested next check interval
 - Harvest submission and confirmation
 
+## Live Testing & Deployment
+
+For a detailed step-by-step walkthrough on how to deploy the platform and test the EIP-712 TEE Handshake workflow, please refer to the [PARTICIPANTS_README.md](./PARTICIPANTS_README.md).
+
 ## Build & Run
 
 To compile the application into a single CommonJS bundle for deployment:
@@ -109,10 +114,10 @@ To compile the application into a single CommonJS bundle for deployment:
 npm run build
 ```
 
-This will output `bundle.js` into the `dist/` directory. You can run the bundle locally to test the logic:
+This will output `index.bundle.cjs` into the `dist/` directory. You can run the bundle locally to test the logic:
 
 ```bash
-node dist/bundle.js
+node dist/index.bundle.cjs
 ```
 
 ## Utilities

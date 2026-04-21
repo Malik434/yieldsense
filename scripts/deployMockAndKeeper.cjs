@@ -4,12 +4,12 @@ async function main() {
   const [deployer] = await hre.ethers.getSigners();
   console.log("Deploying contracts with the account:", deployer.address);
 
-  // 1. Deploy Mock ERC20
-  const MockERC20 = await hre.ethers.getContractFactory("MockERC20");
-  const mockToken = await MockERC20.deploy("Mock Asset", "mASSET", { gasLimit: 3000000 });
+  // 1. Deploy MockUSDC with 6 decimals (matching real USDC)
+  const MockUSDC = await hre.ethers.getContractFactory("MockUSDC");
+  const mockToken = await MockUSDC.deploy(6, { gasLimit: 3000000 });
   await mockToken.waitForDeployment();
   const mockAddress = await mockToken.getAddress();
-  console.log("✅ MockERC20 deployed to:", mockAddress);
+  console.log("✅ MockUSDC deployed to:", mockAddress);
 
   // 2. Deploy YieldSenseKeeper
   // acurastSigner = deployer, since the Hardhat account IS the ACURAST_WORKER_KEY
@@ -25,10 +25,10 @@ async function main() {
   console.log("✅ YieldSenseKeeper deployed to:", keeperAddress);
 
   // 3. Approve Keeper to pull funds from Yield Source (Deployer) for Grid Trades
-  console.log("Approving Keeper to spend MockERC20 from deployer...");
+  console.log("Approving Keeper to spend MockUSDC from deployer...");
   const tx1 = await mockToken.approve(keeperAddress, hre.ethers.MaxUint256, { gasLimit: 100000 });
   await tx1.wait();
-  console.log("✅ Keeper approved for MockERC20 transfers.");
+  console.log("✅ Keeper approved for MockUSDC transfers.");
 
   // 4. Attest the deployer as a trusted TEE processor (for testnet bootstrapping)
   console.log("Attesting deployer as trusted TEE processor...");

@@ -72,12 +72,12 @@ YieldSense solves all three by combining:
 - **SS58 → EVM Address Utility** (`src/deriveAddress.ts`).
 - **Test Suite** (`src/**/*.test.ts`) — unit tests for APR consensus, decision engine, signature, runtime state.
 - **Pool Smoke Tests** (`src/poolSmoke.ts`) — live API smoke tests against multiple pool addresses.
+- **Grid Keeper Webpack Build** — `src/processor.ts` is fully bundled.
+- **Stop-loss / Strategy Sync** (`src/processor.ts`) — The TEE securely fetches EIP-712 signed parameters from the Next.js API relay and persists them locally into `_STD_.storage`, enabling autonomous MEV-protected execution.
 
 ### ⚠️ Partially Implemented
 
 - **Forward APR Projection** (`src/yieldEngine/compute/forwardAerodrome.ts`) — stub exists and is wired up; accuracy depends on correct epoch data from gauge.
-- **Grid Keeper Webpack Build** — `src/processor.ts` is now bundled as a second Webpack entry point producing `dist/processor.bundle.cjs`. ✅ Fixed.
-- **Stop-loss Decryption** (`src/processor.ts`) — production TEE decryption path is a comment placeholder; the code assumes the TEE runtime pre-decrypts `STOP_LOSS_SECRET_JSON` before process start.
 
 ### ❌ Not Yet Implemented
 
@@ -552,57 +552,22 @@ executeTrade(user, pnlDelta, nonce, signature):
 
 ## 8. Known Issues / Limitations
 
-### Contract Issues
-
-1. **`Ownable` constructor call — will not compile as-is.**
-   `YieldSenseKeeper.sol` calls `Ownable(msg.sender)` in its constructor, but only imports `Ownable2Step`. The fix is to either also import `Ownable` from OpenZeppelin or change the constructor call to `Ownable2Step(msg.sender)`.
-
-2. **`@openzeppelin/contracts` not in `package.json`.**
-   The contract imports OpenZeppelin but it is not listed as a dependency. You must add it via a Hardhat/Foundry project separately from the Node worker.
-
-3. **`executeTrade` ABI mismatch between `processor.ts` and the contract.**
-   `processor.ts` encodes `executeTrade(address, int256, uint256, bytes32, bytes)` — passing `digest` as a parameter. The deployed contract computes `digest` internally from `(chainId, address(this), user, pnlDelta, nonce)` and does not accept it as a parameter. The on-chain ABI is `executeTrade(address, int256, uint256, bytes)`. This will cause a call revert. The off-chain encoding or the contract signature must be reconciled.
-
-4. **No `executeHarvest` function in `YieldSenseKeeper.sol`.**
-   `src/index.ts` calls `executeHarvest(payloadHash, r, s, v)` on the keeper contract, but this function does not exist in the current `YieldSenseKeeper.sol` (which only has `executeTrade`, `deposit`, `withdraw`). There appear to be two separate contract versions — the harvest keeper referenced in `index.ts` and the trade/vault keeper in `contracts/`. These need to be unified or clearly separated.
-
 ### Worker Issues
 
-5. **No Webpack entry for `processor.ts`.**
-   `acurast.config.ts` expects `dist/processor.js` but `webpack.config.js` only bundles `src/index.ts` → `dist/bundle.js`. A second Webpack entry or a separate build script is needed.
-
-6. **`Date.now()` as nonce in `processor.ts`.**
+1. **`Date.now()` as nonce in `processor.ts`.**
    Using millisecond timestamps as nonces is susceptible to collision if two executions happen within the same millisecond. Consider a monotonic counter or a cryptographic random nonce.
 
-7. **`lastHarvest()` assumed on `YieldSenseKeeper`.**
-   `src/index.ts` reads `keeperRead.lastHarvest()` via the keeper ABI. This function does not exist in the provided `YieldSenseKeeper.sol`. The code will throw a `BAD_DATA` error at runtime unless a different keeper contract (with `lastHarvest()`) is deployed at `KEEPER_ADDRESS`.
-
-8. **Stop-loss decryption is a stub.**
-   `processor.ts` comments that `STOP_LOSS_SECRET_JSON` "is decrypted by the TEE runtime before process start" — but no TEE decryption API call is actually made. In practice, if Acurast does not automatically decrypt environment variables, the raw encrypted blob will be passed to `JSON.parse()` and throw.
-
-### General Limitations
-
-9. **No contract deployment tooling.** There is no Hardhat or Foundry setup. The contract cannot be compiled or deployed without adding one.
-10. **Single-user assumption in workers.** Both workers are configured for one `USER_ADDRESS` / one pool. Multi-user operation would require looping over users or a registry contract.
-11. **ETH price fallback is hardcoded.** If CoinGecko is unreachable, ETH price defaults to `$3500`. This could cause incorrect gas cost estimates.
-12. **No retry logic for RPC failures.** The worker exits with `process.exitCode = 1` on any unhandled error. Acurast will reschedule according to its job config, but transient RPC errors will count as full failures.
+2. **Single-user assumption in workers.** Both workers are configured for one `USER_ADDRESS` / one pool. Multi-user operation would require looping over users or a registry contract.
+3. **ETH price fallback is hardcoded.** If CoinGecko is unreachable, ETH price defaults to `$3500`. This could cause incorrect gas cost estimates.
+4. **No retry logic for RPC failures.** The worker exits with `process.exitCode = 1` on any unhandled error. Acurast will reschedule according to its job config, but transient RPC errors will count as full failures.
 
 ---
 
 ## 9. Next Steps / Roadmap
 
-### Critical (Blockers)
-
-- [ ] **Fix `YieldSenseKeeper.sol` compilation** — import `Ownable` or adjust to `Ownable2Step`, add `@openzeppelin/contracts` to a Foundry/Hardhat project.
-- [ ] **Reconcile `executeHarvest` vs `executeTrade`** — decide whether one contract handles both harvest and trade flows, or split into two separate contracts. Update ABIs in both workers accordingly.
-- [ ] **Add Webpack entry for `processor.ts`** — produce `dist/processor.js` as a second bundle target.
-
 ### High Priority
 
-- [ ] **Contract deployment scripts** — write Hardhat or Foundry deployment scripts for `YieldSenseKeeper.sol` on Base Sepolia and Mainnet.
-- [ ] **Contract test suite** — write Foundry/Hardhat tests covering: deposit, executeTrade (valid + replay + invalid sig), withdraw with fee, timelock flow.
 - [ ] **Fix nonce generation in `processor.ts`** — replace `Date.now()` with a cryptographic random or per-user on-chain nonce read.
-- [ ] **Reconcile `lastHarvest()` ABI** — either add `lastHarvest()` to the contract or remove the read from `index.ts` and use `state.lastExecutionAt` exclusively.
 
 ### Medium Priority
 
@@ -611,11 +576,9 @@ executeTrade(user, pnlDelta, nonce, signature):
 - [ ] **Subgraph indexer** — implement `DataSourceTag` `"subgraph:aerodrome"` for faster historical fee data without scanning all Swap logs.
 - [ ] **Chainlink / TWAP oracle** — implement oracle-based token pricing as a fallback when CoinGecko is unavailable.
 - [ ] **Retry / backoff on RPC errors** — wrap `eth_getLogs` and `eth_call` with exponential backoff.
-- [ ] **`.env.example` file** — add a committed example env file so new developers have a starting point.
 
 ### Low Priority / Enhancements
 
-- [ ] **Dashboard / Frontend** — a simple UI showing current APR, last harvest, worker state, and telemetry.
 - [ ] **Multi-pool harvest** — extend the harvest worker to manage multiple pools in a single run.
 - [ ] **Hardened forward projection** — implement epoch-aware reward projection in `forwardAerodrome.ts` once Aerodrome epoch data is reliably available.
 - [ ] **Telemetry sink** — pipe structured JSON telemetry to an external service (e.g. Datadog, custom webhook) instead of only stdout.

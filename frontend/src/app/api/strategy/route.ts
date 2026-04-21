@@ -20,7 +20,7 @@ const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS ?? '';
 const DOMAIN = {
   name: 'YieldSense',
   version: '1',
-  chainId: 8453, // Base Mainnet
+  chainId: 84532, // Base Sepolia
   verifyingContract: KEEPER_ADDRESS as `0x${string}`,
 };
 

@@ -62,7 +62,7 @@ export function DepositModule() {
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
         functionName: 'deposit',
-        args: [parseUnits(depositAmount, 18)],
+        args: [parseUnits(depositAmount, 6)],
         gas: BigInt(300000),
       });
       setTxState('success');
@@ -75,7 +75,7 @@ export function DepositModule() {
   };
 
   const isApproved = allowance && (allowance as bigint) > BigInt(0);
-  const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 18) : '0';
+  const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
   const isLoading = txState === 'approving' || txState === 'depositing';
 
   if (!isConnected) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useAccount, useWriteContract, useReadContract } from 'wagmi';
+import { useAccount, useWriteContract } from 'wagmi';
 import { parseUnits } from 'viem';
 import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2 } from 'lucide-react';
 import { MOCK_USDC_ABI, ASSET_ADDRESS } from '@/lib/contracts';
@@ -14,7 +14,7 @@ interface HardwareLog {
 }
 
 export function TestingSuite() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const [logs, setLogs] = useState<HardwareLog[]>([]);
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
@@ -55,7 +55,7 @@ export function TestingSuite() {
         address: ASSET_ADDRESS,
         abi: MOCK_USDC_ABI,
         functionName: 'mint',
-        args: [parseUnits('1000', 18)],
+        args: [parseUnits('1000', 6)],
         gas: BigInt(200000),
       });
       setMintSuccess(true);

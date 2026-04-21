@@ -25,8 +25,8 @@ export function WithdrawModule() {
   const balance = userData ? (userData as any)[0] as bigint : BigInt(0);
   const initialDeposit = userData ? (userData as any)[1] as bigint : BigInt(0);
 
-  const balanceNum = parseFloat(formatUnits(balance, 18));
-  const depositNum = parseFloat(formatUnits(initialDeposit, 18));
+  const balanceNum = parseFloat(formatUnits(balance, 6));
+  const depositNum = parseFloat(formatUnits(initialDeposit, 6));
   const profit = Math.max(balanceNum - depositNum, 0);
   const PERF_FEE_BPS = 0.10;
   const performanceFee = profit > 0 ? profit * PERF_FEE_BPS : 0;
