@@ -19,6 +19,12 @@ export interface AcurastStd {
       ) => void;
     };
   };
+  /** Persistent key-value store local to this Acurast processor device. */
+  storage: {
+    get: (key: string) => string | null;
+    set: (key: string, value: string) => void;
+    remove: (key: string) => void;
+  };
 }
 
 export function getAcurastStd(): AcurastStd | undefined {
@@ -28,6 +34,24 @@ export function getAcurastStd(): AcurastStd | undefined {
     return undefined;
   }
   return std;
+}
+
+/**
+ * Safely get a JSON value from `_STD_.storage`, returning `fallback` on miss or parse error.
+ */
+export function storageGet<T>(std: AcurastStd, key: string, fallback: T): T {
+  try {
+    const raw = std.storage.get(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Safely set a JSON value in `_STD_.storage`. */
+export function storageSet(std: AcurastStd, key: string, value: unknown): void {
+  std.storage.set(key, JSON.stringify(value));
 }
 
 /**

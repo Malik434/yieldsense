@@ -1,9 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useAccount, useReadContract } from 'wagmi';
+import { formatUnits } from 'viem';
+import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
+import { Header } from '@/components/Header';
+import { DepositModule } from '@/components/DepositModule';
+import { ConfidentialStrategyBox } from '@/components/ConfidentialStrategyBox';
+import { AprGauge } from '@/components/AprGauge';
+import { PnlChart } from '@/components/PnlChart';
+import { TransactionHistory } from '@/components/TransactionHistory';
+import { WithdrawModule } from '@/components/WithdrawModule';
+import {
+  ShieldCheck,
+  Layers,
+  TrendingUp,
+  LogOut,
+  AlertCircle,
+  ChevronRight,
+} from 'lucide-react';
 
-// Define the interface based on runtimeState.ts
 interface WorkerState {
   previousApr: number | null;
   apiFailureStreak: number;
@@ -12,178 +28,267 @@ interface WorkerState {
   lastExecutionAt: number | null;
   suggestedNextCheckMs: number;
   yieldIndexerCheckpointBlock: number | null;
-  rewardAprEwm: {
-    mean: number;
-    variance: number;
-    lastTimestamp: number;
-  } | null;
+  rewardAprEwm: { mean: number; variance: number; lastTimestamp: number } | null;
   gridTradesExecuted?: number;
   lastGridTradeAt?: number | null;
   error?: string;
   defaultState?: boolean;
 }
 
-export default function Dashboard() {
-  const [state, setState] = useState<WorkerState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+interface ConsensusData {
+  geckoTerminal: number;
+  dexScreener: number;
+  rpc: number;
+  consensus: number;
+}
 
+const SECTIONS = [
+  { id: 'command-center', label: 'STRATEGY', icon: <Layers size={12} /> },
+  { id: 'live-alpha', label: 'LIVE ALPHA', icon: <TrendingUp size={12} /> },
+  { id: 'exit-flow', label: 'EXIT', icon: <LogOut size={12} /> },
+];
+
+function SectionHeading({ id, label, sublabel }: { id: string; label: string; sublabel: string }) {
+  return (
+    <div id={id} className="section-divider">
+      <span
+        className="font-mono font-bold tracking-widest px-4 py-1.5 rounded-lg"
+        style={{
+          fontSize: 11,
+          color: '#00ff9f',
+          letterSpacing: '0.2em',
+          background: 'rgba(0,255,159,0.04)',
+          border: '1px solid rgba(0,255,159,0.12)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+      <span className="font-mono text-xs" style={{ color: '#334155', whiteSpace: 'nowrap' }}>
+        {sublabel}
+      </span>
+    </div>
+  );
+}
+
+export default function CommandCenter() {
+  const { address } = useAccount();
+  const [workerState, setWorkerState] = useState<WorkerState | null>(null);
+  const [consensus, setConsensus] = useState<ConsensusData | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Fetch worker state from Acurast processor
   const fetchState = async () => {
     try {
       const res = await fetch('/api/state');
-      const data = await res.json();
-      setState(data);
-      setLastRefreshed(new Date());
-    } catch (err) {
-      console.error('Failed to fetch state', err);
-    } finally {
-      setLoading(false);
-    }
+      if (res.ok) {
+        const data = await res.json();
+        setWorkerState(data);
+      }
+    } catch {}
+  };
+
+  // Fetch consensus APR
+  const fetchConsensus = async () => {
+    try {
+      const res = await fetch('/api/consensus');
+      if (res.ok) {
+        const data = await res.json();
+        setConsensus(data);
+      }
+    } catch {}
   };
 
   useEffect(() => {
+    setMounted(true);
     fetchState();
-    // Poll every 10 seconds
-    const interval = setInterval(fetchState, 10000);
-    return () => clearInterval(interval);
+    fetchConsensus();
+    const stateInterval = setInterval(fetchState, 10000);
+    const consensusInterval = setInterval(fetchConsensus, 30000);
+    return () => {
+      clearInterval(stateInterval);
+      clearInterval(consensusInterval);
+    };
   }, []);
 
-  const formatPercent = (val: number | null) => {
-    if (val === null) return 'N/A';
-    return `${(val / 100).toFixed(2)}%`;
-  };
+  // Read vault user data
+  const { data: userData } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'userData',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  });
 
-  const formatTimeAgo = (timestampMs: number | null) => {
-    if (!timestampMs) return 'Never';
-    const seconds = Math.floor((Date.now() - timestampMs) / 1000);
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ago`;
-  };
+  const balance = userData ? parseFloat(formatUnits((userData as any)[0] as bigint, 18)) : 0;
+  const initialDeposit = userData ? parseFloat(formatUnits((userData as any)[1] as bigint, 18)) : 0;
 
-  const isHealthy = state && state.apiFailureStreak === 0 && !state.defaultState;
-  const isWarning = state && state.apiFailureStreak > 0 && state.apiFailureStreak < 3;
-  const isError = !state || state.apiFailureStreak >= 3 || state.defaultState;
+  const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
+  const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
 
-  const getStatusClass = () => {
-    if (isHealthy) return 'healthy';
-    if (isWarning) return 'warning';
-    return 'error';
-  };
+  const prevApr = consensus?.consensus ?? workerState?.previousApr ?? null;
+  const ewmMean = workerState?.rewardAprEwm?.mean ?? null;
 
-  const getStatusText = () => {
-    if (isHealthy) return 'Worker Active';
-    if (isWarning) return 'API Retrying';
-    if (state?.defaultState) return 'No State File Found';
-    return 'Worker Halted / Circuit Breaker';
-  };
-
-  if (loading && !state) {
-    return (
-      <main className="container">
-        <header className="header">
-          <h1>YieldSense Dashboard</h1>
-          <div className="skeleton" style={{ width: '120px', height: '32px' }}></div>
-        </header>
-        <div className="grid grid-cols-4">
-          <div className="card skeleton" style={{ height: '120px' }}></div>
-          <div className="card skeleton" style={{ height: '120px' }}></div>
-          <div className="card skeleton" style={{ height: '120px' }}></div>
-          <div className="card skeleton" style={{ height: '120px' }}></div>
-        </div>
-      </main>
-    );
-  }
+  if (!mounted) return null;
 
   return (
-    <main className="container">
-      <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <h1>YieldSense Dashboard</h1>
-          <Link href="/vault" style={{ textDecoration: 'none', background: 'var(--surface-hover)', padding: '8px 16px', borderRadius: '8px', color: 'var(--text-primary)', border: '1px solid var(--border)', fontSize: '0.9rem' }}>
-            Go to Vault →
-          </Link>
-        </div>
-        <div className="status-indicator">
-          <span className={`dot ${getStatusClass()}`}></span>
-          {getStatusText()}
-        </div>
-      </header>
+    <div style={{ minHeight: '100vh', background: 'var(--background)' }}>
+      <Header isHealthy={!!isHealthy} isWarning={!!isWarning} />
 
-      <div className="grid grid-cols-4">
-        {/* Total APR Card */}
-        <div className="card">
-          <div className="card-title">Total APR</div>
-          <div className="card-value text-primary">
-            {state?.defaultState ? '---' : formatPercent(state?.previousApr || null)}
-          </div>
-        </div>
-
-        {/* Reward APR (EWMA) */}
-        <div className="card">
-          <div className="card-title">Reward APR (Smoothed)</div>
-          <div className="card-value" style={{ color: 'var(--text-primary)' }}>
-            {state?.defaultState ? '---' : formatPercent(state?.rewardAprEwm?.mean || null)}
-          </div>
-        </div>
-
-        {/* Last Execution */}
-        <div className="card">
-          <div className="card-title">Last Harvest Execution</div>
-          <div className="card-value" style={{ color: 'var(--success)' }}>
-            {state?.defaultState ? '---' : formatTimeAgo(state?.lastExecutionAt || null)}
-          </div>
-        </div>
-
-        {/* API Failure Streak */}
-        <div className="card">
-          <div className="card-title">API Failure Streak</div>
-          <div className="card-value" style={{ color: state?.apiFailureStreak === 0 ? 'var(--text-secondary)' : 'var(--danger)' }}>
-            {state?.defaultState ? '---' : state?.apiFailureStreak || 0}
-          </div>
+      {/* Sticky section nav */}
+      <div
+        className="sticky z-40 top-16 w-full flex justify-center"
+        style={{ padding: '0' }}
+      >
+        <div
+          className="flex items-center gap-1 px-2 py-1.5 mt-3 rounded-xl"
+          style={{
+            background: 'rgba(13,17,23,0.9)',
+            border: '1px solid rgba(255,255,255,0.06)',
+            backdropFilter: 'blur(12px)',
+          }}
+        >
+          {SECTIONS.map((s, i) => (
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-[10px] font-semibold tracking-widest transition-all"
+              style={{ color: '#475569' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#00ff9f'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(0,255,159,0.06)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#475569'; (e.currentTarget as HTMLAnchorElement).style.background = 'transparent'; }}
+            >
+              {s.icon}
+              {s.label}
+              {i < SECTIONS.length - 1 && <ChevronRight size={10} style={{ color: '#1e293b', marginLeft: 4 }} />}
+            </a>
+          ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 mt-8">
-        {/* Worker Info */}
-        <div className="card">
-          <div className="card-title">Worker Runtime Info</div>
-          <div className="mt-4" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.95rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="text-secondary">Last Run:</span>
-              <span>{state?.defaultState ? '---' : formatTimeAgo(state?.lastRunAt || null)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="text-secondary">Next Check In:</span>
-              <span>{state?.suggestedNextCheckMs ? `${state.suggestedNextCheckMs / 1000}s` : '---'}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="text-secondary">Indexer Checkpoint:</span>
-              <span>{state?.yieldIndexerCheckpointBlock || '---'}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="text-secondary">Last Decision Reason:</span>
-              <span style={{ color: 'var(--warning)', textAlign: 'right', maxWidth: '60%' }}>
-                {state?.defaultState ? '---' : state?.lastDecisionReason || 'None'}
+      <main className="max-w-7xl mx-auto px-6 pb-24" style={{ paddingTop: '2rem' }}>
+
+        {/* Hero status bar */}
+        <div
+          className="rounded-xl px-5 py-3 flex items-center justify-between mb-8"
+          style={{
+            background: isHealthy
+              ? 'rgba(0,255,159,0.04)'
+              : isWarning
+              ? 'rgba(245,158,11,0.04)'
+              : 'rgba(255,68,102,0.04)',
+            border: `1px solid ${isHealthy ? 'rgba(0,255,159,0.15)' : isWarning ? 'rgba(245,158,11,0.15)' : 'rgba(255,68,102,0.15)'}`,
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{
+                background: isHealthy ? '#00ff9f' : isWarning ? '#f59e0b' : '#ff4466',
+                boxShadow: `0 0 8px ${isHealthy ? '#00ff9f' : isWarning ? '#f59e0b' : '#ff4466'}`,
+                animation: 'pulse-ring 1.5s ease-out infinite',
+              }}
+            />
+            <span className="font-mono text-xs font-semibold tracking-widest" style={{ color: '#e2e8f0' }}>
+              {isHealthy ? 'PROCESSOR ACTIVE — STRATEGY RUNNING' : isWarning ? 'API RETRYING — STRATEGY PAUSED' : 'NO STATE DETECTED — CONNECT WALLET TO START'}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="font-mono text-xs" style={{ color: '#475569' }}>
+              GRID TRADES:{' '}
+              <span style={{ color: '#a78bfa' }}>{workerState?.gridTradesExecuted ?? 0}</span>
+            </span>
+            <span className="font-mono text-xs" style={{ color: '#475569' }}>
+              CHECKPOINT:{' '}
+              <span style={{ color: '#64748b' }}>{workerState?.yieldIndexerCheckpointBlock ?? '—'}</span>
+            </span>
+            {workerState?.lastDecisionReason && (
+              <span
+                className="font-mono text-xs px-2 py-0.5 rounded"
+                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: '#f59e0b', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                {workerState.lastDecisionReason}
               </span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
-              <span className="text-secondary">Grid Trades Executed:</span>
-              <span style={{ color: 'var(--primary)' }}>{state?.gridTradesExecuted || 0}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="text-secondary">Last Grid Trade:</span>
-              <span>{state?.defaultState ? '---' : formatTimeAgo(state?.lastGridTradeAt || null)}</span>
-            </div>
+            )}
           </div>
         </div>
-      </div>
 
-      <footer className="mt-8 text-secondary" style={{ fontSize: '0.8rem', textAlign: 'center' }}>
-        Last refreshed: {lastRefreshed?.toLocaleTimeString() || '...'}
-      </footer>
-    </main>
+        {/* ─── SECTION 1: STRATEGY COMMAND CENTER ─── */}
+        <SectionHeading
+          id="command-center"
+          label="01 · STRATEGY COMMAND CENTER"
+          sublabel="Deposit funds and configure your confidential parameters"
+        />
+
+        <div
+          className="grid gap-6"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}
+        >
+          <DepositModule />
+          <ConfidentialStrategyBox />
+        </div>
+
+        {/* ─── SECTION 2: LIVE ALPHA DASHBOARD ─── */}
+        <SectionHeading
+          id="live-alpha"
+          label="02 · LIVE ALPHA DASHBOARD"
+          sublabel="Real-time verified yield and performance tracking"
+        />
+
+        {/* APR + PnL row */}
+        <div
+          className="grid gap-6 mb-6"
+          style={{ gridTemplateColumns: '320px 1fr' }}
+        >
+          <AprGauge
+            previousApr={prevApr}
+            rewardAprEwm={ewmMean}
+            consensusData={consensus ?? undefined}
+          />
+          <PnlChart
+            currentBalance={balance}
+            initialDeposit={initialDeposit}
+          />
+        </div>
+
+        <TransactionHistory />
+
+        {/* ─── SECTION 3: EXIT FLOW ─── */}
+        <SectionHeading
+          id="exit-flow"
+          label="03 · EXIT FLOW"
+          sublabel="Withdraw liquidity with transparent fee breakdown"
+        />
+
+        <div style={{ maxWidth: 560 }}>
+          <WithdrawModule />
+        </div>
+
+        {/* Footer */}
+        <footer className="mt-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={13} style={{ color: '#334155' }} />
+            <span className="font-mono text-xs" style={{ color: '#334155' }}>
+              YieldSense · Powered by Acurast TEE · Deployed on Base
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <a
+              href={`https://base.blockscout.com/address/${KEEPER_ADDRESS}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-[10px] transition-all"
+              style={{ color: '#334155' }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = '#00d4ff')}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = '#334155')}
+            >
+              View Contract ↗
+            </a>
+            <span className="font-mono text-[10px]" style={{ color: '#1e293b' }}>
+              Keeper: {KEEPER_ADDRESS?.slice(0, 8)}...{KEEPER_ADDRESS?.slice(-6)}
+            </span>
+          </div>
+        </footer>
+      </main>
+    </div>
   );
 }

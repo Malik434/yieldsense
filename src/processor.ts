@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { getAcurastStd } from "./acurastHardware.js";
+import { getAcurastStd, storageGet, storageSet } from "./acurastHardware.js";
 import { loadState, saveState } from "./runtimeState.js";
 
 type GridLevel = {
@@ -13,6 +13,17 @@ type GridLevel = {
 type StopLossRule = {
   user: string;
   stopLossPrice: number;
+};
+
+/** Confidential strategy parameters submitted by the user from the frontend. */
+type UserStrategyParams = {
+  stopLossPrice: number;   // in USDC
+  gridUpper: number;       // upper bound
+  gridLower: number;       // lower bound
+  rebalanceInterval: number; // in hours
+  signer: string;          // user wallet address
+  signature: string;       // EIP-712 signature from wallet
+  timestamp: number;       // Unix ms when signed
 };
 
 type GridTradePayload = {
@@ -58,6 +69,72 @@ function decodeStopLossRules(): StopLossRule[] {
     throw new Error("STOP_LOSS_SIGNED_PAYLOAD verification failed");
   }
   return parsed.rules;
+}
+
+/**
+ * Fetches the user's confidential strategy params from the Next.js API relay,
+ * verifies the EIP-712 signature, and stores them in `_STD_.storage`.
+ *
+ * The frontend signs params with `eth_signTypedData_v4` so the processor can
+ * trustlessly verify they came from the vault owner before storing.
+ */
+async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: string): Promise<void> {
+  const std = getAcurastStd();
+
+  try {
+    const resp = await fetch(`${frontendUrl}/api/strategy?address=${userAddress}`);
+    if (!resp.ok) return;
+
+    const params = (await resp.json()) as UserStrategyParams;
+    if (!params?.signer || !params?.signature) return;
+
+    // Reconstruct the EIP-712 digest and verify the wallet signature
+    const domain = {
+      name: "YieldSense",
+      version: "1",
+      chainId: 8453, // Base Mainnet
+      verifyingContract: process.env.KEEPER_ADDRESS ?? "",
+    };
+    const types = {
+      StrategyParams: [
+        { name: "stopLossPrice", type: "string" },
+        { name: "gridUpper", type: "string" },
+        { name: "gridLower", type: "string" },
+        { name: "rebalanceInterval", type: "string" },
+        { name: "timestamp", type: "uint256" },
+      ],
+    };
+    const value = {
+      stopLossPrice: String(params.stopLossPrice),
+      gridUpper: String(params.gridUpper),
+      gridLower: String(params.gridLower),
+      rebalanceInterval: String(params.rebalanceInterval),
+      timestamp: params.timestamp,
+    };
+
+    const recoveredSigner = ethers.verifyTypedData(domain, types, value, params.signature);
+    if (recoveredSigner.toLowerCase() !== params.signer.toLowerCase()) {
+      console.error(JSON.stringify({ event: "strategy_params_invalid_signature", expected: params.signer, got: recoveredSigner }));
+      return;
+    }
+
+    // Signature valid — persist to _STD_.storage
+    if (std) {
+      storageSet(std, `strategy:${userAddress.toLowerCase()}`, params);
+      console.log(JSON.stringify({ event: "strategy_params_stored", user: userAddress, stopLoss: params.stopLossPrice }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ event: "strategy_params_fetch_error", message: String(err) }));
+  }
+}
+
+/**
+ * Loads strategy params for a user from `_STD_.storage`, falling back to env vars.
+ */
+function loadStrategyParams(userAddress: string): UserStrategyParams | null {
+  const std = getAcurastStd();
+  if (!std) return null;
+  return storageGet<UserStrategyParams | null>(std, `strategy:${userAddress.toLowerCase()}`, null);
 }
 
 function calculatePriceFromSqrtX96(sqrtPriceX96: bigint): number {
@@ -175,6 +252,16 @@ async function monitorAndExecute(): Promise<void> {
   const grids = parseJsonEnv<GridLevel[]>("GRID_CONFIG_JSON", []);
   const stopLossRules = decodeStopLossRules();
 
+  // --- Load strategy params from _STD_.storage (set by fetchAndStoreStrategyParams) ---
+  const storedParams = loadStrategyParams(userAddress);
+  if (storedParams) {
+    // Override stop-loss from user's signed frontend submission
+    const existingRule = stopLossRules.find(r => r.user.toLowerCase() === userAddress.toLowerCase());
+    if (!existingRule && storedParams.stopLossPrice > 0) {
+      stopLossRules.push({ user: userAddress, stopLossPrice: storedParams.stopLossPrice });
+    }
+  }
+
   const activeGrids = grids.filter((grid) => {
     const stopLoss = stopLossRules.find((rule) => rule.user.toLowerCase() === userAddress.toLowerCase());
     if (!stopLoss) return true;
@@ -218,6 +305,15 @@ async function monitorAndExecute(): Promise<void> {
 }
 
 async function startLoop(): Promise<void> {
+  const userAddress = process.env.USER_ADDRESS ?? "";
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
+
+  // On first run, pull the latest signed strategy from the frontend relay
+  // and commit it to _STD_.storage so subsequent executions are fully autonomous.
+  if (userAddress) {
+    await fetchAndStoreStrategyParams(userAddress, frontendUrl);
+  }
+
   for (;;) {
     try {
       await monitorAndExecute();
