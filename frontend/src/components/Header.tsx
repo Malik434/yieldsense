@@ -65,7 +65,7 @@ export function Header({ isHealthy, isWarning }: HeaderProps) {
           }}
         >
           <Circle size={7} style={{ fill: '#4f8fff', color: '#4f8fff' }} />
-          BASE MAINNET
+          BASE Testnet
         </div>
 
         {/* Right: TEE + Wallet */}
