@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.7.4",
     "@netlify/plugin-nextjs": "^5.15.9",
     "@tanstack/react-query": "^5.99.2",
     "autoprefixer": "^10.5.0",

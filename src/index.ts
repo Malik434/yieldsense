@@ -208,7 +208,7 @@ async function main(): Promise<void> {
     state.lastDecisionReason = "yield_not_usable";
     state.suggestedNextCheckMs = 10 * 60 * 1000;
     await saveState(CONFIG.statePath, state);
-    emitTelemetry({
+    await emitTelemetry({
       event: "yield_not_usable",
       timestamp: nowSec,
       hybridReadMainnetExecuteTestnet: hybridMainnetRead,
@@ -233,7 +233,7 @@ async function main(): Promise<void> {
       state.lastDecisionReason = "force_test_wrong_chain";
       state.suggestedNextCheckMs = 60_000;
       await saveState(CONFIG.statePath, state);
-      emitTelemetry({
+      await emitTelemetry({
         event: "force_test_blocked",
         timestamp: nowSec,
         executionChainId,
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
       maxFailureStreak: CONFIG.maxApiFailureStreak,
     });
 
-    emitTelemetry({
+    await emitTelemetry({
       event: "profitability_check",
       timestamp: nowSec,
       hybridReadMainnetExecuteTestnet: hybridMainnetRead,
@@ -304,7 +304,7 @@ async function main(): Promise<void> {
     state.lastDecisionReason = "force_test_harvest";
     state.lastRunAt = nowSec;
     state.suggestedNextCheckMs = 60_000;
-    emitTelemetry({
+    await emitTelemetry({
       event: "force_test_bypass",
       timestamp: nowSec,
       hybridReadMainnetExecuteTestnet: hybridMainnetRead,
@@ -321,7 +321,7 @@ async function main(): Promise<void> {
   if (!acurastStd && !privateKey) {
     state.lastDecisionReason = "missing_worker_key";
     await saveState(CONFIG.statePath, state);
-    emitTelemetry({
+    await emitTelemetry({
       event: "execution_skipped",
       timestamp: nowSec,
       reason: "missing_worker_key",
@@ -362,7 +362,7 @@ async function main(): Promise<void> {
       maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
     });
     txHash = submitted.hash;
-    emitTelemetry({
+    await emitTelemetry({
       event: "harvest_submitted",
       timestamp: nowSec,
       txHash,
@@ -383,7 +383,7 @@ async function main(): Promise<void> {
       if (error?.code !== "CALL_EXCEPTION") {
         throw error;
       }
-      emitTelemetry({
+      await emitTelemetry({
         event: "keeper_abi_fallback",
         timestamp: nowSec,
         reason: "modern_executeHarvest_failed",
@@ -397,7 +397,7 @@ async function main(): Promise<void> {
       }
     }
     txHash = tx.hash;
-    emitTelemetry({
+    await emitTelemetry({
       event: "harvest_submitted",
       timestamp: nowSec,
       txHash,
@@ -412,7 +412,7 @@ async function main(): Promise<void> {
   state.lastDecisionReason = "executed";
   await saveState(CONFIG.statePath, state);
 
-  emitTelemetry({
+  await emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
     txHash,
@@ -425,7 +425,7 @@ main().catch(async (error: any) => {
   state.lastRunAt = Math.floor(Date.now() / 1000);
   state.lastDecisionReason = "runtime_error";
   await saveState(CONFIG.statePath, state);
-  emitTelemetry({
+  await emitTelemetry({
     event: "runtime_error",
     timestamp: state.lastRunAt,
     message: error?.message ?? String(error),
