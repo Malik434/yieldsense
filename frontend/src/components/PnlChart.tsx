@@ -12,6 +12,9 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { Activity, TrendingUp, TrendingDown } from 'lucide-react';
+import { useAccount, usePublicClient } from 'wagmi';
+import { KEEPER_ADDRESS } from '@/lib/contracts';
+import { parseAbiItem, formatUnits } from 'viem';
 
 interface PnlDataPoint {
   time: string;
@@ -22,24 +25,6 @@ interface PnlDataPoint {
 interface PnlChartProps {
   currentBalance: number;
   initialDeposit: number;
-}
-
-function generateMockHistory(currentBalance: number, initialDeposit: number): PnlDataPoint[] {
-  const points: PnlDataPoint[] = [];
-  const now = Date.now();
-  const count = 14;
-
-  for (let i = count; i >= 0; i--) {
-    const t = now - i * 6 * 60 * 60 * 1000; // Every 6h
-    const label = new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit' });
-    const progress = 1 - i / count;
-    const noise = (Math.random() - 0.45) * 0.008 * initialDeposit;
-    const balance = i === 0
-      ? currentBalance
-      : initialDeposit + (currentBalance - initialDeposit) * progress + noise;
-    points.push({ time: label, balance: parseFloat(balance.toFixed(4)), deposit: initialDeposit });
-  }
-  return points;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -70,18 +55,92 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function PnlChart({ currentBalance, initialDeposit }: PnlChartProps) {
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
   const [data, setData] = useState<PnlDataPoint[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchHistory = async () => {
+    if (!address || !publicClient) {
+      // Demo data when no wallet connected
+      setData([
+        { time: '12:00', balance: 1.0, deposit: 1.0 },
+        { time: '18:00', balance: 1.02, deposit: 1.0 },
+        { time: '00:00', balance: 1.05, deposit: 1.0 },
+        { time: '06:00', balance: 1.083, deposit: 1.0 },
+      ]);
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      // Get current block to stay within the 10,000 block scan limit
+      const latestBlock = await publicClient.getBlockNumber();
+      const fromBlock = latestBlock > BigInt(9500) ? latestBlock - BigInt(9500) : BigInt(0);
+
+      // 1. Fetch ProfitCredited events (Harvests)
+      const profitLogs = await publicClient.getLogs({
+        address: KEEPER_ADDRESS,
+        event: parseAbiItem('event ProfitCredited(uint256 amount)'),
+        fromBlock: fromBlock,
+      });
+
+      // 2. Fetch TradeExecuted events (Grid Trades)
+      const tradeLogs = await publicClient.getLogs({
+        address: KEEPER_ADDRESS,
+        event: parseAbiItem('event TradeExecuted(address indexed user, int256 pnlDelta, uint256 nonce, bytes32 indexed digest)'),
+        args: { user: address },
+        fromBlock: fromBlock,
+      });
+
+      // 3. Merge and sort by block number
+      const allEvents = [
+        ...profitLogs.map(l => ({ type: 'profit', block: l.blockNumber, amount: (l as any).args.amount })),
+        ...tradeLogs.map(l => ({ type: 'trade', block: l.blockNumber, amount: (l as any).args.pnlDelta }))
+      ].sort((a, b) => Number(a.block - b.block));
+
+      // 4. Reconstruct history
+      let runningBalance = initialDeposit;
+      const history: PnlDataPoint[] = [{
+        time: 'Start',
+        balance: initialDeposit,
+        deposit: initialDeposit
+      }];
+
+      for (const event of allEvents) {
+        const delta = parseFloat(formatUnits(event.amount, 6));
+        runningBalance += delta;
+
+        history.push({
+          time: `Block ${event.block}`,
+          balance: parseFloat(runningBalance.toFixed(4)),
+          deposit: initialDeposit
+        });
+      }
+
+      // Add current point
+      history.push({
+        time: 'Now',
+        balance: currentBalance,
+        deposit: initialDeposit
+      });
+
+      setData(history);
+    } catch (err) {
+      console.error('Failed to fetch chart history:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
-    if (currentBalance > 0 || initialDeposit > 0) {
-      setData(generateMockHistory(currentBalance || initialDeposit, initialDeposit || 1));
-    } else {
-      // Demo data when no wallet connected
-      setData(generateMockHistory(1.083, 1.0));
-    }
-  }, [currentBalance, initialDeposit]);
+    fetchHistory();
+
+    const interval = setInterval(fetchHistory, 15000);
+    return () => clearInterval(interval);
+  }, [address, currentBalance, initialDeposit, publicClient]);
 
   const pnl = currentBalance - initialDeposit;
   const pnlPct = initialDeposit > 0 ? ((pnl / initialDeposit) * 100).toFixed(2) : '0.00';
@@ -97,6 +156,10 @@ export function PnlChart({ currentBalance, initialDeposit }: PnlChartProps) {
           <span className="neon-label">PERFORMANCE TRACKER</span>
         </div>
         <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-2 transition-opacity ${isRefreshing ? 'opacity-100' : 'opacity-0'}`}>
+            <div className="w-1.5 h-1.5 rounded-full bg-[#00ff9f] animate-pulse" />
+            <span className="font-mono text-[9px]" style={{ color: '#00ff9f' }}>SYNCING...</span>
+          </div>
           {isProfit ? (
             <TrendingUp size={14} style={{ color: '#00ff9f' }} />
           ) : (

@@ -404,6 +404,16 @@ STATE_PATH=.yieldsense-state.json
 # FORCE_TEST_APR_BPS=500        # Fixed APR for test payload (50 = 0.5%)
 # FORCE_TEST_REWARD_CENTS=100   # Fixed net reward for test payload ($1.00)
 
+# ── Autocompounder (deployWithAutocompounder.cjs) ─────────────────
+# Address of the deployed AerodromeAutocompounder contract.
+# Set after running: npx hardhat run scripts/deployWithAutocompounder.cjs
+# AUTOCOMPOUNDER_ADDRESS=0x...
+
+# Minimum USDC (6 decimals) to accept from the AERO→USDC swap per harvest.
+# 0 = rely on the autocompounder's internal slippage tolerance (default: 0.5%).
+# Example: 1000000 = require at least $1 USDC per harvest tx.
+# HARVEST_MIN_ASSET_OUT=0
+
 # ── Grid Keeper (processor.ts only) ──────────────────────────────
 # UNISWAP_POOL_ADDRESS=0x...    # Uniswap V3 pool for price feed
 # USER_ADDRESS=0x...            # User address for grid trade attribution

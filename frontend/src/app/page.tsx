@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAccount, useReadContract } from 'wagmi';
+import { useAccount, useReadContract, useBlockNumber } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
 import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
 import { Header } from '@/components/Header';
@@ -88,7 +89,7 @@ export default function CommandCenter() {
         const data = await res.json();
         setWorkerState(data);
       }
-    } catch {}
+    } catch { }
   };
 
   // Fetch consensus APR
@@ -99,7 +100,7 @@ export default function CommandCenter() {
         const data = await res.json();
         setConsensus(data);
       }
-    } catch {}
+    } catch { }
   };
 
   useEffect(() => {
@@ -114,8 +115,12 @@ export default function CommandCenter() {
     };
   }, []);
 
+  // Watch block number to trigger refetches
+  const { data: blockNumber } = useBlockNumber({ watch: true });
+  const queryClient = useQueryClient();
+
   // Read vault user data
-  const { data: userData } = useReadContract({
+  const { data: userData, refetch: refetchUserData, queryKey } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'userData',
@@ -123,8 +128,16 @@ export default function CommandCenter() {
     query: { enabled: !!address },
   });
 
-  const balance = userData ? parseFloat(formatUnits((userData as any)[0] as bigint, 18)) : 0;
-  const initialDeposit = userData ? parseFloat(formatUnits((userData as any)[1] as bigint, 18)) : 0;
+  // Automatically refetch when a new block is mined (covers deposits/harvests)
+  useEffect(() => {
+    if (blockNumber) {
+      refetchUserData();
+    }
+  }, [blockNumber, refetchUserData]);
+
+  // USDC has 6 decimals. The keeper stores balances in asset-native units.
+  const balance = userData ? parseFloat(formatUnits((userData as any)[0] as bigint, 6)) : 0;
+  const initialDeposit = userData ? parseFloat(formatUnits((userData as any)[1] as bigint, 6)) : 0;
 
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
@@ -177,8 +190,8 @@ export default function CommandCenter() {
             background: isHealthy
               ? 'rgba(0,255,159,0.04)'
               : isWarning
-              ? 'rgba(245,158,11,0.04)'
-              : 'rgba(255,68,102,0.04)',
+                ? 'rgba(245,158,11,0.04)'
+                : 'rgba(255,68,102,0.04)',
             border: `1px solid ${isHealthy ? 'rgba(0,255,159,0.15)' : isWarning ? 'rgba(245,158,11,0.15)' : 'rgba(255,68,102,0.15)'}`,
           }}
         >

@@ -2,7 +2,7 @@
   "projects": {
     "YieldSense": {
       "projectName": "YieldSense",
-      "fileUrl": "dist/bundle.js",
+      "fileUrl": "dist/index.bundle.cjs",
       "network": "mainnet",
       "onlyAttestedDevices": false,
       "assignmentStrategy": {
@@ -11,19 +11,28 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 600000,
-        "numberOfExecutions": 3
+        "numberOfExecutions": 40
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
         "maxMemory": 256000000,
-        "maxNetworkRequests": 10,
+        "maxNetworkRequests": 20,
         "maxStorage": 1000000
       },
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 3200158999,
-      "includeEnvironmentVariables": [],
+      "includeEnvironmentVariables": [
+        "RPC_URL",
+        "DATA_RPC_URL",
+        "KEEPER_ADDRESS",
+        "POOL_ADDRESS",
+        "GAUGE_ADDRESS",
+        "ASSET_ADDRESS",
+        "AUTOCOMPOUNDER_ADDRESS",
+        "HARVEST_MIN_ASSET_OUT"
+      ],
       "processorWhitelist": []
     }
   }

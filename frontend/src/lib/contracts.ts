@@ -1,5 +1,6 @@
 export const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS as `0x${string}`;
 export const ASSET_ADDRESS = process.env.NEXT_PUBLIC_ASSET_ADDRESS as `0x${string}`;
+export const AUTOCOMPOUNDER_ADDRESS = process.env.NEXT_PUBLIC_AUTOCOMPOUNDER_ADDRESS as `0x${string}`;
 
 export const ERC20_ABI = [
   {
@@ -114,6 +115,56 @@ export const KEEPER_ABI = [
       { "indexed": false, "internalType": "uint256", "name": "balanceAfter", "type": "uint256" }
     ],
     "name": "Deposited",
+    "type": "event"
+  }
+] as const;
+
+export const AUTOCOMPOUNDER_ABI = [
+  {
+    "inputs": [],
+    "name": "pendingProfit",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingRewards",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "stakedLpBalance",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "lastHarvestAt",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalCompounded",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "uint256", "name": "rewardClaimed", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "rewardSwappedToAsset", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "lpAdded", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "profitUsdc", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "timestamp", "type": "uint256" }
+    ],
+    "name": "HarvestAndCompounded",
     "type": "event"
   }
 ] as const;

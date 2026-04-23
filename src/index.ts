@@ -69,6 +69,12 @@ const CONFIG = {
     process.env.FORCE_TEST_REWARD_CENTS != null && process.env.FORCE_TEST_REWARD_CENTS !== ""
       ? Number(process.env.FORCE_TEST_REWARD_CENTS)
       : undefined,
+  /**
+   * Minimum USDC (6 decimals) to accept from the AERO→USDC swap inside the autocompounder.
+   * Passed as `minAssetOut` to executeHarvest. 0 = rely on the compounder's internal slippage.
+   * Example: 1000000 = accept at least 1.00 USDC per harvest.
+   */
+  harvestMinAssetOut: Number(process.env.HARVEST_MIN_ASSET_OUT ?? 0),
 };
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
@@ -96,10 +102,13 @@ function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateR
 
 const KEEPER_ABI = [
   "function lastHarvest() view returns (uint256)",
-  "function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v) external",
+  // New: minAssetOut added as 5th param for slippage guard on AERO→USDC swap
+  "function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v, uint256 minAssetOut) external",
 ];
 
 const LEGACY_KEEPER_ABI = [
+  // Older deployed keeper without autocompounder — no minAssetOut
+  "function executeHarvest(bytes32 payloadHash, bytes32 r, bytes32 s, uint8 v) external",
   "function executeHarvest(bytes r, bytes s) external",
 ];
 
@@ -368,7 +377,7 @@ async function main(): Promise<void> {
     let tx;
     try {
       const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
-      tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v, { gasLimit: 300000 });
+      tx = await keeperWrite.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v, CONFIG.harvestMinAssetOut, { gasLimit: 350000 });
     } catch (error: any) {
       // Backward compatibility for older deployed keeper signature.
       if (error?.code !== "CALL_EXCEPTION") {
@@ -379,8 +388,13 @@ async function main(): Promise<void> {
         timestamp: nowSec,
         reason: "modern_executeHarvest_failed",
       });
+      // Try the previous ABI (4 args, no minAssetOut) before the oldest 2-arg form
       const legacyKeeper = new ethers.Contract(CONFIG.keeperAddress, LEGACY_KEEPER_ABI, wallet);
-      tx = await legacyKeeper.executeHarvest(signed.r, signed.s);
+      try {
+        tx = await legacyKeeper.executeHarvest(signed.payloadHash, signed.r, signed.s, signed.v, { gasLimit: 300000 });
+      } catch {
+        tx = await legacyKeeper.executeHarvest(signed.r, signed.s);
+      }
     }
     txHash = tx.hash;
     emitTelemetry({
