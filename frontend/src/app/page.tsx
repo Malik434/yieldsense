@@ -142,7 +142,11 @@ export default function CommandCenter() {
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
 
-  const prevApr = consensus?.consensus ?? workerState?.previousApr ?? null;
+  // consensus.consensus is in BPS (e.g. 19044 = 190.44%).
+  // workerState.previousApr is a decimal fraction (e.g. 0.19 = 19%) — convert to BPS before use.
+  const prevApr =
+    consensus?.consensus ??
+    (workerState?.previousApr != null ? Math.round(workerState.previousApr * 10_000) : null);
   const ewmMean = workerState?.rewardAprEwm?.mean ?? null;
 
   if (!mounted) return null;
@@ -300,7 +304,7 @@ export default function CommandCenter() {
           </div>
           <div className="flex items-center gap-4">
             <a
-              href={`https://base.blockscout.com/address/${KEEPER_ADDRESS}`}
+              href={`https://base-sepolia.blockscout.com/address/${KEEPER_ADDRESS}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono text-[10px] transition-all"

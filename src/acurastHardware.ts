@@ -129,12 +129,14 @@ export function signHarvestPayloadWithAcurastHardware(
   return { payloadHash: digestHex, r, s, v };
 }
 
-const EXECUTE_HARVEST_MODERN = "executeHarvest(bytes32,bytes32,bytes32,uint8)";
+const EXECUTE_HARVEST_MODERN = "executeHarvest(bytes32,bytes32,bytes32,uint8,uint256)";
 
-function encodeExecuteHarvestArgs(payloadHash: string, r: string, s: string, v: number): string {
+function encodeExecuteHarvestArgs(
+  payloadHash: string, r: string, s: string, v: number, minAssetOut: bigint
+): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(
-    ["bytes32", "bytes32", "bytes32", "uint8"],
-    [payloadHash, r, s, v]
+    ["bytes32", "bytes32", "bytes32", "uint8", "uint256"],
+    [payloadHash, r, s, v, minAssetOut]
   );
 }
 
@@ -150,12 +152,16 @@ export function fulfillEthereumHarvest(
     r: string;
     s: string;
     v: number;
+    /** Minimum USDC (6 dec) to accept from AERO→USDC swap inside the autocompounder. */
+    minAssetOut: bigint;
     gasLimit: string;
     maxFeePerGas: string;
     maxPriorityFeePerGas: string;
   }
 ): Promise<{ hash: string }> {
-  const payload = encodeExecuteHarvestArgs(params.payloadHash, params.r, params.s, params.v);
+  const payload = encodeExecuteHarvestArgs(
+    params.payloadHash, params.r, params.s, params.v, params.minAssetOut
+  );
   return new Promise((resolve, reject) => {
     std.chains.ethereum.fulfill(
       params.rpcUrl,

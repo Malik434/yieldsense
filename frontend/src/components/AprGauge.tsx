@@ -115,7 +115,17 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
 
   const aprBps = previousApr ?? 0;
   const aprPct = aprBps / 100;
-  const ewmPct = (rewardAprEwm ?? 0) / 100;
+
+  // rewardAprEwm is a decimal fraction (0.19 = 19%) from the yield engine EWMA.
+  // When it hasn't been seeded by the worker yet, fall back to the consensus APR
+  // (which is already in BPS, so divide by 100 to get percent).
+  const ewmPct =
+    rewardAprEwm != null
+      ? rewardAprEwm * 100
+      : consensusData != null
+        ? consensusData.consensus / 100
+        : 0;
+  const ewmIsLive = rewardAprEwm != null;
 
   const sources = consensusData
     ? [
@@ -138,9 +148,9 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
         </span>
       </div>
 
-      {/* Gauge */}
+      {/* Gauge — max scales to the next clean ceiling above the actual APR */}
       <div className="relative flex flex-col items-center">
-        <ArcGauge value={animate ? aprPct : 0} max={80} />
+        <ArcGauge value={animate ? aprPct : 0} max={Math.max(50, Math.ceil(aprPct / 50) * 50)} />
         <div
           className="absolute flex flex-col items-center"
           style={{ bottom: 0 }}
@@ -163,7 +173,9 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
         className="w-full rounded-lg p-3 flex items-center justify-between"
         style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}
       >
-        <span className="font-mono text-xs" style={{ color: '#64748b' }}>SMOOTHED (EWMA)</span>
+        <span className="font-mono text-xs" style={{ color: '#64748b' }}>
+          {ewmIsLive ? 'SMOOTHED (EWMA)' : 'SMOOTHED (CONSENSUS)'}
+        </span>
         <span className="font-mono font-semibold text-sm" style={{ color: '#a78bfa' }}>
           {ewmPct.toFixed(2)}%
         </span>

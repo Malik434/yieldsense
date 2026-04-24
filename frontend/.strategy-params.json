@@ -1,0 +1,11 @@
+{
+  "0x1b77dad014cc99d877fe8cf5152773432d39d7ba": {
+    "stopLossPrice": 0.94,
+    "gridUpper": 1.02,
+    "gridLower": 0.96,
+    "rebalanceInterval": 4,
+    "signer": "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA",
+    "signature": "0xc7ef3a0f551ac4af80a20c12eca5746b3fc971a81f66a5992e4659ac82fa1cc4324cbf713eac743c78eb7c403ded896079408f49d99641ac3497e017efbd89cb1b",
+    "timestamp": 1777058944
+  }
+}

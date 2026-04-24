@@ -94,6 +94,12 @@ export async function applyTelemetryEvent(event: any): Promise<void> {
       patch.lastExecutionAt = event.timestamp;
       patch.apiFailureStreak = 0;
       break;
+    case 'grid_trade_executed':
+      patch.gridTradesExecuted = (currentState.gridTradesExecuted ?? 0) + 1;
+      patch.lastGridTradeAt = event.timestamp;
+      patch.lastDecisionReason = 'grid_trade';
+      patch.apiFailureStreak = 0;
+      break;
     case 'yield_not_usable':
       patch.apiFailureStreak = (currentState.apiFailureStreak ?? 0) + 1;
       patch.lastDecisionReason = 'yield_not_usable';

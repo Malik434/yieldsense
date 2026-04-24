@@ -11,7 +11,7 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 600000,
-        "numberOfExecutions": 40
+        "numberOfExecutions": 5
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -33,7 +33,9 @@
         "AUTOCOMPOUNDER_ADDRESS",
         "HARVEST_MIN_ASSET_OUT"
       ],
-      "processorWhitelist": []
+      "processorWhitelist": [
+        
+      ]
     }
   }
 }

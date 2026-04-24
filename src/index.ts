@@ -27,16 +27,20 @@ const CONFIG = {
   /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
   yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
   keeperAddress: (() => {
-    const addr = process.env.KEEPER_ADDRESS;
-    if (!addr) throw new Error("KEEPER_ADDRESS env var is required");
+    const addr = process.env.KEEPER_ADDRESS?.trim();
+    if (!addr) throw new Error("KEEPER_ADDRESS env var is required — set it to the deployed YieldSenseKeeper address");
     return addr;
   })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
-  poolAddress: process.env.POOL_ADDRESS ?? "0xA69C9BD98725390bFc71D3F1a4f4aB7667f90314",
+  poolAddress: (() => {
+    const addr = process.env.POOL_ADDRESS?.trim();
+    if (!addr) throw new Error("POOL_ADDRESS env var is required — set it to the Aerodrome/Uniswap pool address");
+    return addr;
+  })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
   poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
-  estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "200000"),
+  estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "400000"),
   minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
   maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
   cooldownSec: Number(process.env.COOLDOWN_SEC ?? 300),
@@ -361,6 +365,7 @@ async function main(): Promise<void> {
       r: signed.r,
       s: signed.s,
       v: signed.v,
+      minAssetOut: BigInt(CONFIG.harvestMinAssetOut),
       gasLimit: CONFIG.estGasUnits.toString(),
       maxFeePerGas: maxFeePerGas.toString(),
       maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
@@ -378,6 +383,18 @@ async function main(): Promise<void> {
   } else {
     const signed = signHarvestPayload(privateKey!, payloadHash);
     const wallet = new ethers.Wallet(privateKey!, executionProvider);
+
+    // ETH balance pre-flight — fail fast with a clear message before the RPC rejects the tx
+    const workerBalance = await executionProvider.getBalance(wallet.address);
+    const estimatedGasCost = (feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0)) * BigInt(400_000);
+    if (workerBalance < estimatedGasCost) {
+      throw new Error(
+        `Insufficient ETH for gas: worker ${wallet.address} has ${ethers.formatEther(workerBalance)} ETH, ` +
+        `needs ~${ethers.formatEther(estimatedGasCost)} ETH on ${CONFIG.rpcUrl}. ` +
+        `Fund the worker address with Base Sepolia ETH from https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet`
+      );
+    }
+
     let tx;
     try {
       const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);

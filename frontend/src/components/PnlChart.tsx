@@ -29,8 +29,8 @@ interface PnlChartProps {
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
-  const balance = payload[0]?.value;
-  const deposit = payload[1]?.value;
+  const balance = payload.find((p: any) => p.dataKey === 'balance')?.value ?? 0;
+  const deposit = payload.find((p: any) => p.dataKey === 'deposit')?.value ?? 0;
   const pnl = balance - deposit;
   const pnlPct = deposit > 0 ? ((pnl / deposit) * 100).toFixed(2) : '0.00';
 

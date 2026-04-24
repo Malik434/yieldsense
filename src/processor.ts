@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { getAcurastStd, storageGet, storageSet } from "./acurastHardware.js";
 import { loadState, saveState } from "./runtimeState.js";
+import { emitTelemetry } from "./telemetry.js";
 
 interface HardwareLog {
   timestamp: number;
@@ -99,7 +100,7 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
     const domain = {
       name: "YieldSense",
       version: "1",
-      chainId: 8453, // Base Mainnet
+      chainId: 84532, // Base Sepolia — must match frontend/src/app/api/strategy/route.ts
       verifyingContract: process.env.KEEPER_ADDRESS ?? "",
     };
     const types = {
@@ -128,7 +129,8 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
     // Signature valid — persist to _STD_.storage
     if (std) {
       storageSet(std, `strategy:${userAddress.toLowerCase()}`, params);
-      console.log(JSON.stringify({ event: "strategy_params_stored", user: userAddress, stopLoss: params.stopLossPrice }));
+      // stopLossPrice intentionally omitted from log to prevent confidentiality leak
+      console.log(JSON.stringify({ event: "strategy_params_stored", user: userAddress.substring(0, 8) + "..." }));
       // Append to hardware logs in state
       let state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
       if (!state.hardwareLogs) state.hardwareLogs = [];
@@ -303,17 +305,20 @@ async function monitorAndExecute(): Promise<void> {
 
   for (const trade of pendingTrades) {
     const txHash = await submitTradeViaAcurast(rpcUrl, keeperAddress, trade);
-    console.log(
-      JSON.stringify({
-        event: "grid_trade_executed",
-        user: trade.user,
-        nonce: trade.nonce.toString(),
-        txHash,
-      })
-    );
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // Bridge to Netlify Blobs via telemetry so the frontend can display real trade history
+    await emitTelemetry({
+      event: "grid_trade_executed",
+      timestamp: nowSec,
+      user: trade.user,
+      nonce: trade.nonce.toString(),
+      pnlDelta: trade.pnlDelta.toString(),
+      txHash,
+    });
 
     state.gridTradesExecuted = (state.gridTradesExecuted || 0) + 1;
-    state.lastGridTradeAt = Math.floor(Date.now() / 1000);
+    state.lastGridTradeAt = nowSec;
 
     if (!state.hardwareLogs) state.hardwareLogs = [];
     state.hardwareLogs.push({
