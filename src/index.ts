@@ -26,9 +26,13 @@ const CONFIG = {
   dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "",
   /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
   yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
-  keeperAddress: process.env.KEEPER_ADDRESS ?? "0x96Da70B750f8EB6Fc9Bf6CD1c5DFeB62B43C363D",
+  keeperAddress: (() => {
+    const addr = process.env.KEEPER_ADDRESS;
+    if (!addr) throw new Error("KEEPER_ADDRESS env var is required");
+    return addr;
+  })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
-  poolAddress: process.env.POOL_ADDRESS ?? "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
+  poolAddress: process.env.POOL_ADDRESS ?? "0xA69C9BD98725390bFc71D3F1a4f4aB7667f90314",
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
   poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
