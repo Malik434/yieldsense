@@ -28,8 +28,8 @@ const CONFIG = {
   yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
-    // Testnet fallback: keeper deployed with acurastSigner = TEE hw address.
-    return addr || "0x596560cD5Ed45ab89044304345855c6b29e7fA6e";
+    // Testnet fallback: keeper uses attestedProcessors set — any attested TEE can harvest.
+    return addr || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e";
   })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
   poolAddress: (() => {

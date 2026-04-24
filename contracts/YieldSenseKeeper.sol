@@ -247,12 +247,7 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
         // Compute digest internally
         bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(this), user, pnlDelta, nonce));
         
-        if (!verifyAcurastSignature(digest, signature)) revert InvalidSignature();
-
-        // Attestation gate: recovered signer must be an attested TEE processor
-        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
-        address recoveredSigner = ECDSA.recover(ethHash, signature);
-        if (!attestedProcessors[recoveredSigner]) revert ProcessorNotAttested();
+        if (!verifyAcurastSignature(digest, signature)) revert ProcessorNotAttested();
 
         UserData storage data = userData[user];
         if (pnlDelta > 0) {
@@ -299,12 +294,9 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
         uint256 minAssetOut
     ) external nonReentrant {
         bytes memory signature = abi.encodePacked(r, s, v);
-        if (!verifyAcurastSignature(payloadHash, signature)) revert InvalidSignature();
-
-        // Attestation gate: recovered signer must be an attested TEE processor
-        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(payloadHash);
-        address recoveredSigner = ECDSA.recover(ethHash, signature);
-        if (!attestedProcessors[recoveredSigner]) revert ProcessorNotAttested();
+        // verifyAcurastSignature now checks attestedProcessors — covers both the
+        // "valid signer" and "attested processor" gates in a single ECDSA recover.
+        if (!verifyAcurastSignature(payloadHash, signature)) revert ProcessorNotAttested();
 
         lastHarvest = block.timestamp;
 
@@ -431,9 +423,15 @@ contract YieldSenseKeeper is IAcurastConsumer, ReentrancyGuard, Ownable2Step {
 
     // --- HELPERS ---
 
+    /// @notice Returns true if the signature was produced by any attested processor.
+    /// @dev    Checks the `attestedProcessors` set rather than the single `acurastSigner`
+    ///         so that multiple processors (and processor rotations) are handled without
+    ///         redeployment. The legacy `acurastSigner` field is kept for event-log
+    ///         and interface compatibility, but authorization is set-based.
     function verifyAcurastSignature(bytes32 digest, bytes memory signature) public view override returns (bool) {
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
-        return ECDSA.recover(ethHash, signature) == acurastSigner;
+        address recovered = ECDSA.recover(ethHash, signature);
+        return attestedProcessors[recovered];
     }
 
     function _useNonce(address user, uint256 nonce) internal {

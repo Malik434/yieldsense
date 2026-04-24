@@ -143,16 +143,24 @@ async function main() {
     console.log("✅ Keeper authorized on Autocompounder");
   }
 
-  // ─── 5. Attest the acurastSigner (TEE processor) and set as primaryUser ──────
-  console.log("\nAttesting TEE processor and setting as primaryUser...");
-  // Always attest the configured signer (TEE hw address or deployer fallback).
-  await (await keeper.ownerAttestProcessor(acurastSigner, { gasLimit: 100_000 })).wait();
-  // Also attest the deployer so testnet local-key signing still works.
-  if (acurastSigner.toLowerCase() !== deployer.address.toLowerCase()) {
-    await (await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100_000 })).wait();
+  // ─── 5. Attest all known TEE processor ETH addresses ─────────────────────────
+  // EXTRA_PROCESSOR_ADDRESSES: comma-separated list of additional hw addresses to attest.
+  console.log("\nAttesting TEE processor(s) and setting primaryUser...");
+  const extraAddrs = (process.env.EXTRA_PROCESSOR_ADDRESSES || "")
+    .split(",")
+    .map(a => a.trim())
+    .filter(a => a.length > 0);
+
+  const toAttest = [acurastSigner, ...extraAddrs];
+  for (const addr of toAttest) {
+    if (addr.toLowerCase() === deployer.address.toLowerCase()) continue; // attested below
+    console.log(`  Attesting ${addr}...`);
+    await (await keeper.ownerAttestProcessor(addr, { gasLimit: 100_000 })).wait();
   }
+  // Always attest deployer for testnet local-key signing.
+  await (await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100_000 })).wait();
   await (await keeper.setPrimaryUser(deployer.address, { gasLimit: 100_000 })).wait();
-  console.log("✅ TEE processor attested; deployer attested as primaryUser");
+  console.log("✅ TEE processor(s) attested; deployer attested as primaryUser");
 
   // ─── 6. P-256 attestation root (testnet placeholder) ─────────────────────────
   if (isTestnet) {

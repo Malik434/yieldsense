@@ -30,6 +30,21 @@ const KEEPER_ABI = [
   "function owner() external view returns (address)",
 ];
 
+/** Fetch the latest hw_address_report from the Netlify telemetry store. */
+async function fetchLatestHwAddress(frontendUrl) {
+  try {
+    const url = frontendUrl.replace(/\/$/, "") + "/api/state";
+    const { default: fetch } = await import("node-fetch").catch(() => ({ default: globalThis.fetch }));
+    const res = await (fetch || globalThis.fetch)(url, { timeout: 5000 });
+    const data = await res.json();
+    const logs = data.logs ?? [];
+    const report = logs.find(l => l.event === "hw_address_report" && l.hwAddress);
+    return report?.hwAddress ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
   const network = await hre.ethers.provider.getNetwork();
@@ -37,9 +52,23 @@ async function main() {
   const keeperAddress = process.env.KEEPER_ADDRESS?.trim();
   if (!keeperAddress) throw new Error("KEEPER_ADDRESS env var is required");
 
-  // The processor address to attest: override via PROCESSOR_ADDRESS or derive from worker key
-  const processorAddress = process.env.PROCESSOR_ADDRESS?.trim() || deployer.address;
-  const primaryUser = process.env.PRIMARY_USER?.trim() || processorAddress;
+  // Resolution order for the processor address to attest:
+  //   1. PROCESSOR_ADDRESS env var (explicit override)
+  //   2. Latest hw_address_report from the Netlify telemetry API (auto-discovery)
+  //   3. Deployer address (local dev / testnet fallback)
+  let processorAddress = process.env.PROCESSOR_ADDRESS?.trim();
+  if (!processorAddress) {
+    const frontendUrl = process.env.FRONTEND_URL || "https://yieldsense.huzaifamalik.tech";
+    console.log(`  No PROCESSOR_ADDRESS — fetching latest hw_address_report from ${frontendUrl} ...`);
+    processorAddress = await fetchLatestHwAddress(frontendUrl);
+    if (processorAddress) {
+      console.log(`  Auto-discovered processor address: ${processorAddress}`);
+    } else {
+      console.log("  No hw_address_report found in telemetry — falling back to deployer address.");
+      processorAddress = deployer.address;
+    }
+  }
+  const primaryUser = process.env.PRIMARY_USER?.trim() || deployer.address;
 
   console.log("\n╔════════════════════════════════════════════════════╗");
   console.log("║           YieldSense — Attest Processor            ║");

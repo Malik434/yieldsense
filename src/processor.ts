@@ -101,7 +101,7 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
       name: "YieldSense",
       version: "1",
       chainId: 84532, // Base Sepolia — must match frontend/src/app/api/strategy/route.ts
-      verifyingContract: process.env.KEEPER_ADDRESS || "0x596560cD5Ed45ab89044304345855c6b29e7fA6e",
+      verifyingContract: process.env.KEEPER_ADDRESS || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e",
     };
     const types = {
       StrategyParams: [
@@ -259,8 +259,8 @@ async function submitTradeViaAcurast(
 async function monitorAndExecute(): Promise<void> {
   const rpcUrl = process.env.RPC_URL || "https://sepolia.base.org";
   const poolAddress = process.env.UNISWAP_POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
-  // Keeper deployed with acurastSigner = TEE hw address 0x6F34eBba2c775FFdc5c25A35a7799d16E821F75D
-  const keeperAddress = process.env.KEEPER_ADDRESS || "0x596560cD5Ed45ab89044304345855c6b29e7fA6e";
+  // Keeper uses attestedProcessors set — any attested TEE address can submit trades.
+  const keeperAddress = process.env.KEEPER_ADDRESS || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e";
   const userAddress = process.env.USER_ADDRESS || "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
 
   if (!rpcUrl || !poolAddress || !keeperAddress || !userAddress) {
