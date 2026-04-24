@@ -23,19 +23,19 @@ const CONFIG = {
    * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
    * Example: DATA_RPC_URL=https://mainnet.base.org with RPC_URL=Base Sepolia.
    */
-  dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "",
+  dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "https://mainnet.base.org",
   /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
   yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
-    if (!addr) throw new Error("KEEPER_ADDRESS env var is required — set it to the deployed YieldSenseKeeper address");
-    return addr;
+    // Testnet fallback: keeper deployed with acurastSigner = TEE hw address.
+    return addr || "0x596560cD5Ed45ab89044304345855c6b29e7fA6e";
   })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
   poolAddress: (() => {
     const addr = process.env.POOL_ADDRESS?.trim();
-    if (!addr) throw new Error("POOL_ADDRESS env var is required — set it to the Aerodrome/Uniswap pool address");
-    return addr;
+    // Aerodrome SlipStream WETH/USDC on Base mainnet (used with dataRpcUrl=mainnet).
+    return addr || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
   })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
@@ -357,6 +357,16 @@ async function main(): Promise<void> {
 
   if (acurastStd) {
     const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
+
+    // Report the TEE's Ethereum address on every run so the operator can
+    // attest it on-chain via ownerAttestProcessor(hwAddress).
+    await emitTelemetry({
+      event: "hw_address_report",
+      timestamp: nowSec,
+      hwAddress,
+      note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
+    });
+
     const signed = signHarvestPayloadWithAcurastHardware(acurastStd, payloadHash, hwAddress);
     const submitted = await fulfillEthereumHarvest(acurastStd, {
       rpcUrl: CONFIG.rpcUrl,

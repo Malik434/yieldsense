@@ -110,7 +110,15 @@ async function main() {
 
   // ─── 3. YieldSenseKeeper ─────────────────────────────────────────────────────
   console.log("\nDeploying YieldSenseKeeper...");
-  const acurastSigner = deployer.address; // In production: Acurast TEE EVM address
+  // PROCESSOR_ADDRESS: set this to the Acurast TEE's Ethereum address once known
+  // (appears in telemetry as hw_address_report.hwAddress on first run).
+  // Falls back to deployer so testnet smoke-tests work without a live processor.
+  const acurastSigner = process.env.PROCESSOR_ADDRESS?.trim() || deployer.address;
+  if (process.env.PROCESSOR_ADDRESS?.trim()) {
+    console.log("  acurastSigner (TEE):", acurastSigner);
+  } else {
+    console.log("  acurastSigner (deployer fallback — set PROCESSOR_ADDRESS for production):", acurastSigner);
+  }
   const yieldSource   = autocompounderAddress; // The compounder IS the yield source
   const counterparty  = deployer.address;      // Where losses go in grid trades
 
@@ -135,11 +143,16 @@ async function main() {
     console.log("✅ Keeper authorized on Autocompounder");
   }
 
-  // ─── 5. Attest deployer as TEE processor (testnet bootstrapping) ───────────────
-  console.log("\nAttesting deployer as trusted TEE processor and primary user...");
-  await (await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100_000 })).wait();
+  // ─── 5. Attest the acurastSigner (TEE processor) and set as primaryUser ──────
+  console.log("\nAttesting TEE processor and setting as primaryUser...");
+  // Always attest the configured signer (TEE hw address or deployer fallback).
+  await (await keeper.ownerAttestProcessor(acurastSigner, { gasLimit: 100_000 })).wait();
+  // Also attest the deployer so testnet local-key signing still works.
+  if (acurastSigner.toLowerCase() !== deployer.address.toLowerCase()) {
+    await (await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100_000 })).wait();
+  }
   await (await keeper.setPrimaryUser(deployer.address, { gasLimit: 100_000 })).wait();
-  console.log("✅ Deployer attested and set as primaryUser");
+  console.log("✅ TEE processor attested; deployer attested as primaryUser");
 
   // ─── 6. P-256 attestation root (testnet placeholder) ─────────────────────────
   if (isTestnet) {

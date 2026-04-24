@@ -4,19 +4,19 @@
       "projectName": "YieldSense",
       "fileUrl": "dist/index.bundle.cjs",
       "network": "mainnet",
-      "onlyAttestedDevices": false,
+      "onlyAttestedDevices": true,
       "assignmentStrategy": {
         "type": "Single"
       },
       "execution": {
         "type": "interval",
         "intervalInMs": 600000,
-        "numberOfExecutions": 5
+        "numberOfExecutions": 10
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
         "maxMemory": 256000000,
-        "maxNetworkRequests": 20,
+        "maxNetworkRequests": 30,
         "maxStorage": 1000000
       },
       "numberOfReplicas": 1,
@@ -31,12 +31,15 @@
         "GAUGE_ADDRESS",
         "ASSET_ADDRESS",
         "AUTOCOMPOUNDER_ADDRESS",
-        "HARVEST_MIN_ASSET_OUT"
+        "HARVEST_MIN_ASSET_OUT",
+        "TELEMETRY_URL",
+        "FORCE_TEST_HARVEST",
+        "YIELD_FALLBACK_MODE",
+        "YIELD_CHAIN_ID",
+        "POOL_FEE_BPS",
+        "EST_GAS_UNITS"
       ],
-      "processorWhitelist": [
-        "5HPzp3e5TVJt8J81nrn28zvb8gh7ibS5DP1kaKjyiREUPH4y",
-        "5DDJeKPEkakcd4ickwnaFmNoGqMtZf4bQLATxxXN6LZiCSzx"
-      ]
+      "processorWhitelist": []
     }
   }
 }
