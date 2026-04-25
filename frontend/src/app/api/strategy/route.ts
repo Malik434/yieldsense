@@ -10,11 +10,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
-import path from 'path';
-import fs from 'fs';
+import { getStore } from '@netlify/blobs';
 
-const STRATEGY_FILE = path.resolve(process.cwd(), '.strategy-params.json');
 const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS ?? '';
+
+async function getStrategyStore() {
+  return getStore('yieldsense-strategies');
+}
 
 // EIP-712 domain + types — must exactly match the frontend and processor
 const DOMAIN = {
@@ -42,19 +44,6 @@ interface StoredStrategy {
   signer: string;
   signature: string;
   timestamp: number;
-}
-
-function readStore(): Record<string, StoredStrategy> {
-  try {
-    if (!fs.existsSync(STRATEGY_FILE)) return {};
-    return JSON.parse(fs.readFileSync(STRATEGY_FILE, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-function writeStore(data: Record<string, StoredStrategy>): void {
-  fs.writeFileSync(STRATEGY_FILE, JSON.stringify(data, null, 2), 'utf-8');
 }
 
 // ─── POST /api/strategy ───────────────────────────────────────────────────────
@@ -96,10 +85,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Signature valid — persist
-  const store = readStore();
-  store[signer.toLowerCase()] = body;
-  writeStore(store);
+  // Signature valid — persist to Netlify Blobs
+  const blobs = await getStrategyStore();
+  await blobs.setJSON(signer.toLowerCase(), body);
 
   return NextResponse.json({ ok: true, signer, timestamp }, { status: 200 });
 }
@@ -112,8 +100,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing ?address param' }, { status: 400 });
   }
 
-  const store = readStore();
-  const params = store[address.toLowerCase()];
+  const blobs = await getStrategyStore();
+  const params = await blobs.get(address.toLowerCase(), { type: 'json' });
 
   if (!params) {
     return NextResponse.json({ error: 'No strategy params found for this address' }, { status: 404 });

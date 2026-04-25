@@ -2,12 +2,61 @@
   "previousApr": 0.1,
   "apiFailureStreak": 0,
   "lastDecisionReason": "executed",
-  "lastRunAt": 1777123675,
-  "lastExecutionAt": 1777123675,
+  "lastRunAt": 1777127292,
+  "lastExecutionAt": 1777127292,
   "suggestedNextCheckMs": 60000,
   "yieldIndexerCheckpointBlock": null,
   "rewardAprEwm": null,
-  "gridTradesExecuted": 0,
-  "lastGridTradeAt": null,
-  "hardwareLogs": []
+  "gridTradesExecuted": 8,
+  "lastGridTradeAt": 1777127486,
+  "hardwareLogs": [
+    {
+      "timestamp": 1777127288107,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0x98e45f9b396c89acdd908e6f86657a0861115d849f765348b4a144bc80807150"
+    },
+    {
+      "timestamp": 1777127291790,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0xdafc47d4705b133289073fc70192bafa224f2f6715e8d851c709195602ba36bf"
+    },
+    {
+      "timestamp": 1777127346378,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0x4fce812132cb6cd77f78e5cf75841b08e8f76dbdd2d1fc7ed1cf3673fa5d86fc"
+    },
+    {
+      "timestamp": 1777127349893,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0xc5b90db9fb2c66a47008b8679a08b7fa1d8aa4ed00ab1dd6df860d19c30b0236"
+    },
+    {
+      "timestamp": 1777127415279,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0x6ecbd89bbe040296a87152703819401b5bcfb5889b3ce164c3e867b39ef16378"
+    },
+    {
+      "timestamp": 1777127419228,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0x80dc1f30d23aabf03d90b1e1a1229f03f5ae95281342f6e33fa2bf2e54b456ae"
+    },
+    {
+      "timestamp": 1777127484069,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0xeb148ef77c7266662eb251dfc5e1db1ff88bc5c01d96ab071bd8939db9cdf313"
+    },
+    {
+      "timestamp": 1777127486938,
+      "type": "EXECUTION",
+      "message": "Grid Trade executed for 0x1B77...",
+      "txHash": "0xe7622966e35ea6e93b5d3d533377f59262695f01d454ec027b0bfc25d8bf94d9"
+    }
+  ]
 }

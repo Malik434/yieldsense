@@ -30,11 +30,11 @@ const DOMAIN = {
 
 const TYPES = {
   StrategyParams: [
-    { name: 'stopLossPrice',      type: 'string'  },
-    { name: 'gridUpper',          type: 'string'  },
-    { name: 'gridLower',          type: 'string'  },
-    { name: 'rebalanceInterval',  type: 'string'  },
-    { name: 'timestamp',          type: 'uint256' },
+    { name: 'stopLossPrice', type: 'string' },
+    { name: 'gridUpper', type: 'string' },
+    { name: 'gridLower', type: 'string' },
+    { name: 'rebalanceInterval', type: 'string' },
+    { name: 'timestamp', type: 'uint256' },
   ],
 } as const;
 
@@ -77,11 +77,11 @@ export function ConfidentialStrategyBox() {
     try {
       // Step 1: Sign the EIP-712 typed data with the user's wallet
       const message = {
-        stopLossPrice:     params.stopLossPrice     || '0',
-        gridUpper:         params.gridUpper         || '0',
-        gridLower:         params.gridLower         || '0',
+        stopLossPrice: params.stopLossPrice || '0',
+        gridUpper: params.gridUpper || '0',
+        gridLower: params.gridLower || '0',
         rebalanceInterval: params.rebalanceInterval || '4',
-        timestamp:         BigInt(timestamp),
+        timestamp: BigInt(timestamp),
       };
 
       const signature = await signTypedDataAsync({
@@ -98,11 +98,11 @@ export function ConfidentialStrategyBox() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          stopLossPrice:     Number(params.stopLossPrice)     || 0,
-          gridUpper:         Number(params.gridUpper)         || 0,
-          gridLower:         Number(params.gridLower)         || 0,
+          stopLossPrice: Number(params.stopLossPrice) || 0,
+          gridUpper: Number(params.gridUpper) || 0,
+          gridLower: Number(params.gridLower) || 0,
           rebalanceInterval: Number(params.rebalanceInterval) || 4,
-          signer:    address,
+          signer: address,
           signature,
           timestamp,
         }),
