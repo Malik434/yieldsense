@@ -54,11 +54,7 @@ const config: AcurastConfig = {
       minProcessorReputation: 0,
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [
-        "RPC_URL",
         "DATA_RPC_URL",
-        "UNISWAP_POOL_ADDRESS",
-        "POOL_ADDRESS",
-        "KEEPER_ADDRESS",
         "USER_ADDRESS",
         "GRID_CONFIG_JSON",
         "STOP_LOSS_SECRET_JSON",
@@ -66,7 +62,7 @@ const config: AcurastConfig = {
         "FORCE_TEST_HARVEST",
         "TELEMETRY_URL"
       ],
-      // For strict signer pinning, whitelist your Pixel 8 processor account(s).
+      // For strict signer pinning, whitelist Personal processor account(s).
       processorWhitelist: [],
     },
   },

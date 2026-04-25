@@ -275,10 +275,10 @@ async function submitTrade(
 }
 
 export async function monitorAndExecuteGrid(): Promise<void> {
-  const rpcUrl = process.env.RPC_URL;
+  const rpcUrl = process.env.RPC_URL || "https://sepolia.base.org";
   const dataRpcUrl = process.env.DATA_RPC_URL || rpcUrl;
-  const poolAddress = process.env.UNISWAP_POOL_ADDRESS;
-  const keeperAddress = process.env.KEEPER_ADDRESS;
+  const poolAddress = process.env.UNISWAP_POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
+  const keeperAddress = process.env.KEEPER_ADDRESS || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e";
   const userAddress = process.env.USER_ADDRESS;
 
   if (!rpcUrl || !poolAddress || !keeperAddress || !userAddress) {
