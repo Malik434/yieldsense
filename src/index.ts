@@ -12,6 +12,7 @@ import {
   signHarvestPayloadWithAcurastHardware,
 } from "./acurastHardware.js";
 import { emitTelemetry } from "./telemetry.js";
+import { monitorAndExecuteGrid } from "./processor.js";
 
 dotenv.config();
 
@@ -145,20 +146,33 @@ async function ensureKeeperOnExecutionChain(
   if (code === "0x") {
     throw new Error(
       `KEEPER_ADDRESS ${keeperAddress} has no contract on execution RPC (${rpcUrl}). ` +
-        `Deploy the keeper there or set RPC_URL to that network. ` +
-        `Hybrid (mainnet data, Sepolia harvest): RPC_URL=https://sepolia.base.org DATA_RPC_URL=https://mainnet.base.org ` +
-        `with mainnet POOL_ADDRESS/GAUGE_ADDRESS and KEEPER_ADDRESS = Sepolia keeper.`
+      `Deploy the keeper there or set RPC_URL to that network. ` +
+      `Hybrid (mainnet data, Sepolia harvest): RPC_URL=https://sepolia.base.org DATA_RPC_URL=https://mainnet.base.org ` +
+      `with mainnet POOL_ADDRESS/GAUGE_ADDRESS and KEEPER_ADDRESS = Sepolia keeper.`
     );
   }
 }
 
 async function main(): Promise<void> {
+  console.log(JSON.stringify({ event: "processor_heartbeat", message: "YieldSense Unified Engine Starting...", timestamp: Math.floor(Date.now() / 1000) }));
+
+  // 1. Run Grid/Stop-Loss Check
+  try {
+    await monitorAndExecuteGrid();
+  } catch (gridError) {
+    console.error(JSON.stringify({ event: "grid_check_error", message: String(gridError) }));
+  }
+
+  // 2. Continue with Harvest Profitability Check
   const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
   const dataProvider =
     CONFIG.dataRpcUrl.length > 0
       ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
       : executionProvider;
 
+  if (!CONFIG.keeperAddress) {
+    throw new Error("KEEPER_ADDRESS environment variable is required.");
+  }
   await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
 
   const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, executionProvider);

@@ -43,7 +43,7 @@ type GridTradePayload = {
 };
 
 const UNISWAP_V3_POOL_ABI = [
-  "function slot0() external view returns (uint160 sqrtPriceX96,int24 tick,uint16,uint16,uint16,uint8,bool)",
+  "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, bool unlocked)",
 ];
 
 const KEEPER_ABI = [
@@ -192,14 +192,24 @@ function buildTradeDigest(
   );
 }
 
-function signTradeDigestWithHardware(digest: string): string {
+function signTradeDigest(digest: string, privateKey?: string): string {
   const std = getAcurastStd();
-  if (!std) {
-    throw new Error("Acurast _STD_ hardware signer unavailable");
+
+  if (!std && !privateKey) {
+    throw new Error("No signer available: Acurast _STD_ unavailable and no ACURAST_WORKER_KEY provided.");
   }
 
-  const rawSig = std.signers.secp256k1.sign(digest.replace("0x", ""));
-  return rawSig.startsWith("0x") ? rawSig : `0x${rawSig}`;
+  // 1. Hardware Signer (TEE)
+  if (std) {
+    // Use ethers.hashMessage to add the "\x19Ethereum Signed Message:\n32" prefix
+    const ethDigest = ethers.hashMessage(ethers.getBytes(digest));
+    const rawSig = std.signers.secp256k1.sign(ethDigest.replace("0x", ""));
+    return rawSig.startsWith("0x") ? rawSig : `0x${rawSig}`;
+  }
+
+  // 2. Local Fallback (testing/dev)
+  const wallet = new ethers.Wallet(privateKey!);
+  return wallet.signingKey.sign(ethers.hashMessage(ethers.getBytes(digest))).serialized;
 }
 
 async function fetchPoolPrice(provider: ethers.JsonRpcProvider, poolAddress: string): Promise<number> {
@@ -214,13 +224,14 @@ function createTradePayload(
   user: string,
   referencePrice: number,
   allocationBps: number,
-  currentPrice: number
+  currentPrice: number,
+  privateKey?: string
 ): GridTradePayload {
   const allocation = BigInt(Math.round((allocationBps / BPS_DENOMINATOR) * 1_000_000));
   const pnlDelta = currentPrice >= referencePrice ? allocation : -allocation;
   const nonce = BigInt(Date.now());
   const digest = buildTradeDigest(chainId, keeperAddress, user, pnlDelta, nonce);
-  const signature = signTradeDigestWithHardware(digest);
+  const signature = signTradeDigest(digest, privateKey);
   return { user, pnlDelta, nonce, digest, signature };
 }
 
@@ -231,52 +242,60 @@ function encodeExecuteTradePayload(trade: GridTradePayload): string {
   );
 }
 
-async function submitTradeViaAcurast(
+async function submitTrade(
   rpcUrl: string,
   keeperAddress: string,
-  trade: GridTradePayload
+  trade: GridTradePayload,
+  privateKey?: string
 ): Promise<string> {
   const std = getAcurastStd();
-  if (!std) {
-    throw new Error("Acurast _STD_ required for on-chain execution");
-  }
 
-  const payload = encodeExecuteTradePayload(trade);
-  return new Promise((resolve, reject) => {
-    std.chains.ethereum.fulfill(
-      rpcUrl,
-      keeperAddress,
-      payload,
-      {
-        methodSignature: EXECUTE_TRADE_SIGNATURE,
-      },
-      (operationHash: string) => resolve(operationHash),
-      (messages: string[]) => reject(new Error(messages.join("; ")))
-    );
-  });
+  if (std) {
+    const payload = encodeExecuteTradePayload(trade);
+    return new Promise((resolve, reject) => {
+      std.chains.ethereum.fulfill(
+        rpcUrl,
+        keeperAddress,
+        payload,
+        {
+          methodSignature: EXECUTE_TRADE_SIGNATURE,
+        },
+        (operationHash: string) => resolve(operationHash),
+        (messages: string[]) => reject(new Error(messages.join("; ")))
+      );
+    });
+  } else {
+    // Local Ethers fallback
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const wallet = new ethers.Wallet(privateKey!, provider);
+    const keeper = new ethers.Contract(keeperAddress, KEEPER_ABI, wallet);
+    const tx = await keeper.executeTrade(trade.user, trade.pnlDelta, trade.nonce, trade.signature);
+    return tx.hash;
+  }
 }
 
-async function monitorAndExecute(): Promise<void> {
-  const rpcUrl = process.env.RPC_URL || "https://sepolia.base.org";
-  const poolAddress = process.env.UNISWAP_POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
-  // Keeper uses attestedProcessors set — any attested TEE address can submit trades.
-  const keeperAddress = process.env.KEEPER_ADDRESS || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e";
-  const userAddress = process.env.USER_ADDRESS || "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
+export async function monitorAndExecuteGrid(): Promise<void> {
+  const rpcUrl = process.env.RPC_URL;
+  const dataRpcUrl = process.env.DATA_RPC_URL || rpcUrl;
+  const poolAddress = process.env.UNISWAP_POOL_ADDRESS;
+  const keeperAddress = process.env.KEEPER_ADDRESS;
+  const userAddress = process.env.USER_ADDRESS;
 
   if (!rpcUrl || !poolAddress || !keeperAddress || !userAddress) {
-    throw new Error("Missing one of RPC_URL, UNISWAP_POOL_ADDRESS, KEEPER_ADDRESS, USER_ADDRESS");
+    console.warn("Grid Keeper: Missing RPC_URL, UNISWAP_POOL_ADDRESS, KEEPER_ADDRESS, or USER_ADDRESS. Skipping grid check.");
+    return;
   }
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const network = await provider.getNetwork();
+  const executionProvider = new ethers.JsonRpcProvider(rpcUrl);
+  const dataProvider = new ethers.JsonRpcProvider(dataRpcUrl);
+  const network = await executionProvider.getNetwork();
   const chainId = network.chainId;
   const grids = parseJsonEnv<GridLevel[]>("GRID_CONFIG_JSON", []);
   const stopLossRules = decodeStopLossRules();
 
-  // --- Load strategy params from _STD_.storage (set by fetchAndStoreStrategyParams) ---
+  // --- Load strategy params from _STD_.storage ---
   const storedParams = loadStrategyParams(userAddress);
   if (storedParams) {
-    // Override stop-loss from user's signed frontend submission
     const existingRule = stopLossRules.find(r => r.user.toLowerCase() === userAddress.toLowerCase());
     if (!existingRule && storedParams.stopLossPrice > 0) {
       stopLossRules.push({ user: userAddress, stopLossPrice: storedParams.stopLossPrice });
@@ -289,15 +308,17 @@ async function monitorAndExecute(): Promise<void> {
     return grid.referencePrice >= stopLoss.stopLossPrice;
   });
 
-  const currentPrice = await fetchPoolPrice(provider, poolAddress);
+  // Use dataProvider (Mainnet) for price fetching
+  const currentPrice = await fetchPoolPrice(dataProvider, poolAddress);
   const pendingTrades: GridTradePayload[] = [];
+  const privateKey = process.env.ACURAST_WORKER_KEY;
 
   for (const grid of activeGrids) {
     if (!shouldTrigger(grid, currentPrice)) {
       continue;
     }
     pendingTrades.push(
-      createTradePayload(chainId, keeperAddress, userAddress, grid.referencePrice, grid.allocationBps, currentPrice)
+      createTradePayload(chainId, keeperAddress, userAddress, grid.referencePrice, grid.allocationBps, currentPrice, privateKey)
     );
   }
 
@@ -305,7 +326,7 @@ async function monitorAndExecute(): Promise<void> {
   let state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
 
   for (const trade of pendingTrades) {
-    const txHash = await submitTradeViaAcurast(rpcUrl, keeperAddress, trade);
+    const txHash = await submitTrade(rpcUrl, keeperAddress, trade, privateKey);
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Bridge to Netlify Blobs via telemetry so the frontend can display real trade history
@@ -350,7 +371,7 @@ async function startLoop(): Promise<void> {
 
   for (; ;) {
     try {
-      await monitorAndExecute();
+      await monitorAndExecuteGrid();
     } catch (error) {
       console.error(
         JSON.stringify({

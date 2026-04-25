@@ -33,8 +33,8 @@ interface AcurastConfig {
 const config: AcurastConfig = {
   projects: {
     YieldSenseGridKeeper: {
-      projectName: "YieldSenseGridKeeper",
-      fileUrl: "dist/processor.js",
+      projectName: "YieldSense",
+      fileUrl: "dist/index.bundle.cjs",
       network: "mainnet",
       onlyAttestedDevices: true,
       assignmentStrategy: { type: "Single" },
@@ -55,11 +55,16 @@ const config: AcurastConfig = {
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [
         "RPC_URL",
+        "DATA_RPC_URL",
         "UNISWAP_POOL_ADDRESS",
+        "POOL_ADDRESS",
         "KEEPER_ADDRESS",
+        "USER_ADDRESS",
         "GRID_CONFIG_JSON",
         "STOP_LOSS_SECRET_JSON",
         "STOP_LOSS_SIGNED_PAYLOAD",
+        "FORCE_TEST_HARVEST",
+        "TELEMETRY_URL"
       ],
       // For strict signer pinning, whitelist your Pixel 8 processor account(s).
       processorWhitelist: [],

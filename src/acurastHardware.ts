@@ -123,10 +123,13 @@ export function signHarvestPayloadWithAcurastHardware(
   payloadHash: string,
   expectedSigner: string
 ): HarvestSignaturePayload {
-  const digestHex = ethers.hexlify(ethers.getBytes(payloadHash));
-  const sigHex = std.signers.secp256k1.sign(digestHex.replace(/^0x/, ""));
-  const { r, s, v } = parseSecp256k1SignOutput(digestHex, sigHex, expectedSigner);
-  return { payloadHash: digestHex, r, s, v };
+  // Use ethers.hashMessage to add the "\x19Ethereum Signed Message:\n32" prefix
+  // so it matches the contract's MessageHashUtils.toEthSignedMessageHash(digest).
+  const ethDigest = ethers.hashMessage(ethers.getBytes(payloadHash));
+  const sigHex = std.signers.secp256k1.sign(ethDigest.replace(/^0x/, ""));
+  
+  const { r, s, v } = parseSecp256k1SignOutput(ethDigest, sigHex, expectedSigner);
+  return { payloadHash, r, s, v };
 }
 
 const EXECUTE_HARVEST_MODERN = "executeHarvest(bytes32,bytes32,bytes32,uint8,uint256)";
