@@ -10,8 +10,8 @@
       },
       "execution": {
         "type": "interval",
-        "intervalInMs": 600000,
-        "numberOfExecutions": 10
+        "intervalInMs": 3600000,
+        "numberOfExecutions": 168
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
