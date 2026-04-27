@@ -11,14 +11,38 @@ export interface TelemetryEvent {
 const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetry";
 
 export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
-  // Always log to console for Acurast history
-  console.log(JSON.stringify(event));
+  const payload = JSON.stringify(event);
+  
+  // 1. Always log to console. This is the source of truth for Acurast logs.
+  console.log(`[TELEMETRY] ${payload}`);
 
-  // Prefer the env var; fall back to the built-in URL.
+  // 2. Prefer the env var; fall back to the built-in URL.
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
+
   try {
-    await axios.post(url, event, { timeout: 3000 });
-  } catch {
-    // Fail silently if dashboard is unreachable
+    // 3. Use fetch if available (standard in TEE), fallback to axios
+    if (typeof fetch !== 'undefined') {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        console.error(`[TELEMETRY_ERROR] POST to ${url} failed with status ${response.status}: ${response.statusText}`);
+      }
+    } else {
+      // Fallback for Node environments without fetch (older Acurast or local testing)
+      await axios.post(url, event, { timeout: 5000 });
+    }
+  } catch (err: any) {
+    // 4. Log the error specifically so we can debug on-chain failures
+    console.error(`[TELEMETRY_ERROR] Failed to reach ${url}: ${err?.message || String(err)}`);
   }
 }

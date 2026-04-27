@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import axios from "axios";
+// Removed axios import in favor of native fetch for TEE compatibility
 import dotenv from "dotenv";
 import { evaluateDecision } from "./decisionEngine.js";
 import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js";
@@ -123,11 +123,16 @@ const LEGACY_KEEPER_ABI = [
 
 async function getEthPrice(): Promise<number> {
   try {
-    const response = await axios.get(
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const response = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
-      { timeout: 4000 }
+      { signal: controller.signal }
     );
-    return Number(response.data?.ethereum?.usd ?? 3500);
+    clearTimeout(timeoutId);
+    if (!response.ok) return 3500;
+    const data: any = await response.json();
+    return Number(data?.ethereum?.usd ?? 3500);
   } catch {
     return 3500;
   }
@@ -154,7 +159,21 @@ async function ensureKeeperOnExecutionChain(
 }
 
 async function main(): Promise<void> {
-  console.log(JSON.stringify({ event: "processor_heartbeat", message: "YieldSense Unified Engine Starting...", timestamp: Math.floor(Date.now() / 1000) }));
+  const startNow = Math.floor(Date.now() / 1000);
+  console.log(JSON.stringify({ 
+    event: "processor_heartbeat", 
+    message: "YieldSense Unified Engine Starting...", 
+    timestamp: startNow,
+    keeper: CONFIG.keeperAddress,
+    rpc: CONFIG.rpcUrl
+  }));
+  
+  // Also emit as telemetry so it shows in dashboard immediately
+  await emitTelemetry({
+    event: "processor_heartbeat",
+    message: "Worker starting...",
+    timestamp: startNow
+  });
 
   // 1. Run Grid/Stop-Loss Check
   try {
