@@ -1,4 +1,18 @@
-import { ethers } from "ethers";
+import { 
+  ethers,
+  JsonRpcProvider, 
+  Contract, 
+  formatEther, 
+  getAddress, 
+  verifyTypedData, 
+  solidityPackedKeccak256, 
+  hashMessage, 
+  getBytes, 
+  recoverAddress, 
+  hexlify, 
+  AbiCoder, 
+  Wallet 
+} from "ethers";
 // Removed axios import in favor of native fetch for TEE compatibility
 import dotenv from "dotenv";
 import { evaluateDecision } from "./decisionEngine.js";

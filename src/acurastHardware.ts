@@ -1,4 +1,12 @@
-import { ethers } from "ethers";
+import { 
+  ethers,
+  recoverAddress, 
+  getBytes, 
+  hexlify, 
+  hashMessage, 
+  AbiCoder, 
+  getAddress 
+} from "ethers";
 import type { HarvestSignaturePayload } from "./signature.js";
 
 /** Minimal typing for the processor-injected `_STD_` global (Acurast runtime ≥ 1.9.2). */

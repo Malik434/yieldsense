@@ -1,4 +1,4 @@
-import axios from "axios";
+// axios removed to reduce bundle size
 
 /**
  * Standardized pool yield data from DefiLlama Yields API.
@@ -35,11 +35,17 @@ async function fetchAllBasePools(): Promise<DefiLlamaPoolYield[]> {
     return cachedPools;
   }
 
-  const res = await axios.get(DEFILLAMA_YIELDS_URL, {
-    timeout: 15_000,
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const res = await fetch(DEFILLAMA_YIELDS_URL, {
+    signal: controller.signal,
     headers: { "User-Agent": USER_AGENT },
   });
-  const allPools: any[] = res.data?.data ?? [];
+  clearTimeout(timeoutId);
+  if (!res.ok) return [];
+
+  const body: any = await res.json();
+  const allPools: any[] = body?.data ?? [];
 
   cachedPools = allPools
     .filter((p: any) => p.chain === "Base")

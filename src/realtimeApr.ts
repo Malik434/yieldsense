@@ -1,4 +1,4 @@
-import axios from "axios";
+// axios removed to reduce bundle size
 
 export type AprSourceName = "geckoTerminal" | "dexScreener" | "defiLlama";
 
@@ -88,12 +88,16 @@ async function fetchGecko(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
-    const response = await axios.get(`https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`, {
-      timeout: 6000,
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`, {
+      signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-
-    const attr = response.data?.data?.attributes ?? {};
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body: any = await response.json();
+    const attr = body?.data?.attributes ?? {};
     const directApr = attr.apr_7d ?? attr.apr;
     if (directApr !== undefined && directApr !== null) {
       return { source: "geckoTerminal", apr: Number(directApr) / 100, timestamp, confidence: 0.9 };
@@ -120,11 +124,16 @@ async function fetchDexScreener(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
-    const response = await axios.get(`https://api.dexscreener.com/latest/dex/pairs/base/${addr}`, {
-      timeout: 6000,
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/pairs/base/${addr}`, {
+      signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-    const pair = response.data?.pairs?.[0];
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body: any = await response.json();
+    const pair = body?.pairs?.[0];
     if (!pair) {
       return { source: "dexScreener", apr: null, timestamp, confidence: 0, error: "Pair not found" };
     }
@@ -151,19 +160,18 @@ async function fetchDefiLlama(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
-    // Strip 0x prefix for substring matching (DefiLlama pool IDs sometimes embed the address)
     const addrNoPrefix = addr.startsWith("0x") ? addr.slice(2) : addr;
-    const response = await axios.get("https://yields.llama.fi/pools", {
-      timeout: 12000,
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const response = await fetch("https://yields.llama.fi/pools", {
+      signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-    const pools: any[] = response.data?.data ?? [];
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body: any = await response.json();
+    const pools: any[] = body?.data ?? [];
 
-    // DefiLlama pool IDs are UUIDs for most protocols (e.g. Aerodrome).
-    // Match strategy (in order of reliability):
-    //   1. Exact match on pool ID (protocols that use address as ID)
-    //   2. Pool ID contains the address (some protocols embed it)
-    //   3. underlyingTokens array contains the address (lending markets)
     const pool = pools.find((p: any) => {
       const poolId = String(p?.pool ?? "").toLowerCase();
       if (poolId === addr) return true;

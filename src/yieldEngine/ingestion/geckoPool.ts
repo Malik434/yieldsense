@@ -1,5 +1,4 @@
-import axios from "axios";
-
+// axios removed to reduce bundle size
 const USER_AGENT = "YieldSense/3.0 (yield-engine)";
 
 function parseGeckoTokenAddress(relationshipId: string): string {
@@ -27,11 +26,16 @@ export async function fetchGeckoPoolSpotPricesUsd(
   const u1 = token1.toLowerCase();
   try {
     const url = `https://api.geckoterminal.com/api/v2/networks/${networkSlug}/pools/${addr}`;
-    const res = await axios.get(url, {
-      timeout: 8000,
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-    const data = res.data?.data;
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const body: any = await res.json();
+    const data = body?.data;
     const baseId = data?.relationships?.base_token?.data?.id as string | undefined;
     const quoteId = data?.relationships?.quote_token?.data?.id as string | undefined;
     if (!data?.attributes || !baseId || !quoteId) return null;
@@ -59,11 +63,16 @@ export async function fetchGeckoPoolReserveUsd(
   const addr = poolAddress.toLowerCase();
   try {
     const url = `https://api.geckoterminal.com/api/v2/networks/${networkSlug}/pools/${addr}`;
-    const res = await axios.get(url, {
-      timeout: 8000,
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      signal: controller.signal,
       headers: { "User-Agent": USER_AGENT },
     });
-    const raw = res.data?.data?.attributes?.reserve_in_usd;
+    clearTimeout(timeoutId);
+    if (!res.ok) return 0;
+    const body: any = await res.json();
+    const raw = body?.data?.attributes?.reserve_in_usd;
     if (raw == null) return 0;
     const n = parseFloat(String(raw));
     return Number.isFinite(n) && n > 0 ? n : 0;

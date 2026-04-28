@@ -1,5 +1,3 @@
-import axios from 'axios';
-
 export interface TelemetryEvent {
   event: string;
   timestamp: number;
@@ -20,7 +18,7 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
 
   try {
-    // 3. Use fetch if available (standard in TEE), fallback to axios
+    // 3. Use fetch if available (standard in TEE)
     if (typeof fetch !== 'undefined') {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -38,8 +36,7 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
         console.error(`[TELEMETRY_ERROR] POST to ${url} failed with status ${response.status}: ${response.statusText}`);
       }
     } else {
-      // Fallback for Node environments without fetch (older Acurast or local testing)
-      await axios.post(url, event, { timeout: 5000 });
+      console.error(`[TELEMETRY_ERROR] Native fetch unavailable for ${url}. Logs only visible in Acurast console.`);
     }
   } catch (err: any) {
     // 4. Log the error specifically so we can debug on-chain failures

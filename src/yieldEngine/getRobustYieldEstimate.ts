@@ -1,4 +1,4 @@
-import axios from "axios";
+// axios removed to reduce bundle size
 import { Contract, formatUnits } from "ethers";
 import { attachDivergenceGuard, getSpotPricesFromPool } from "./ingestion/prices.js";
 import { indexSwapFeesUsd, readPoolFeeBps } from "./indexers/feeIndexer.js";
@@ -32,8 +32,13 @@ async function fetchTokenUsdBase(contractAddress: string): Promise<number> {
   const addr = contractAddress.toLowerCase();
   try {
     const url = `https://api.coingecko.com/api/v3/simple/token_price/base?contract_addresses=${addr}&vs_currencies=usd`;
-    const res = await axios.get(url, { timeout: 4000 });
-    const row = res.data?.[addr];
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) return 0;
+    const data: any = await res.json();
+    const row = data?.[addr];
     if (row?.usd != null) return Number(row.usd);
   } catch {
     // ignore
