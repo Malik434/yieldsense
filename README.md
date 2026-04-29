@@ -1,16 +1,17 @@
 # YieldSense
 
-YieldSense is an automated yield harvesting and profitability checker designed to run in an [Acurast](https://acurast.com/) Trusted Execution Environment (TEE). It monitors an Aerodrome liquidity pool (WETH/USDC) on Base Sepolia, calculates the net reward versus gas costs, and triggers an on-chain harvest transaction only when compounding is profitable.
+YieldSense is an autonomous DeFi yield harvesting and confidential grid-trading platform designed to run inside an [Acurast](https://acurast.com/) Trusted Execution Environment (TEE). It monitors Aerodrome liquidity pools and Moonwell lending markets on Base, calculates the net reward versus gas costs, and triggers on-chain harvest and trade transactions only when they are provably profitable.
 
 ## Features
 
-- **True Yield Engine** (`src/yieldEngine/`): First-principles **fee APR** from on-chain **Swap** logs and **reward APR** from **gauge** `rewardRate` (when `GAUGE_ADDRESS` is set), plus rolling TVL from reserves, EWMA-smoothed emissions, and a data-quality **confidence** score. **Hybrid mode** (`YIELD_FALLBACK_MODE=auto`) blends in legacy REST APR consensus when RPC coverage or confidence is weak.
+- **True Yield Engine** (`src/yieldEngine/`): First-principles **fee APR** from on-chain **Swap** logs, **reward APR** from **gauge** `rewardRate`, and **Moonwell** lending market APY integration. Features rolling TVL from reserves, EWMA-smoothed emissions, and a data-quality **confidence** score. **Hybrid mode** (`YIELD_FALLBACK_MODE=auto`) blends in legacy REST APR consensus when RPC coverage or confidence is weak.
 - **Legacy API consensus** (GeckoTerminal, DexScreener, DefiLlama): Still used as fallback or benchmarking via `src/realtimeApr.ts`.
 - **Smart Profitability Checking**: Calculates accumulated rewards using **total APR** (fee + reward) and ETH pricing, then applies deterministic execution guardrails.
 - **Adaptive Runtime Loop**: Emits a recommended next-check interval based on APR regime and gas environment for Acurast-friendly scheduling.
 - **Gas Optimization**: Compares estimated gas costs against expected yield and enforces an efficiency multiplier (default 1.5x) before triggering transactions.
 - **Acurast TEE Ready**: Configured to be bundled via Webpack for seamless deployment to Acurast workers.
-- **Web3 Vault Dashboard**: A fully functional Next.js UI (`frontend/`) to visualize Acurast worker telemetry, manage liquidity, and safely grant smart contract approvals via MetaMask. Includes the "TEE Handshake" flow using EIP-712 signatures for MEV-protected strategy parameter encryption.
+- **Web3 Vault Dashboard**: A fully functional Next.js UI (`frontend/`) deployed on **Netlify** to visualize Acurast worker telemetry, manage liquidity, and safely grant smart contract approvals via MetaMask. Includes the "TEE Handshake" flow using EIP-712 signatures for MEV-protected strategy parameter encryption.
+- **Unified Smart Contracts**: A single `YieldSenseKeeper.sol` contract to manage dual-layer security logic for both harvest and grid-trade executions on Base Sepolia.
 - **Testnet Ready**: Includes `MockUSDC.sol` and a Hardhat deployment script to rapidly spin up test environments on Base Sepolia.
 - **Cross-Ecosystem Utility**: Includes a utility (`deriveAddress.ts`) to convert Substrate SS58 worker addresses to EVM addresses for cross-chain compatibility.
 
@@ -104,7 +105,9 @@ The worker emits structured JSON telemetry for:
 
 ## Live Testing & Deployment
 
-For a detailed step-by-step walkthrough on how to deploy the platform and test the EIP-712 TEE Handshake workflow, please refer to the [PARTICIPANTS_README.md](./PARTICIPANTS_README.md).
+The YieldSense Next.js frontend has been successfully deployed to Netlify and is integrated with Base Sepolia for live testing.
+
+For a detailed step-by-step walkthrough on how to deploy the platform and test the EIP-712 TEE Handshake workflow, please refer to the [PARTICIPANT_README.md](./PARTICIPANT_README.md).
 
 ## Build & Run
 

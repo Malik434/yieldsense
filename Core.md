@@ -57,7 +57,7 @@ YieldSense solves all three by combining:
 
 ### ✅ Fully Implemented
 
-- **Yield Engine** (`src/yieldEngine/`) — fee APR from Swap logs, gauge reward APR, TWAB TVL, EWMA reward smoothing, composite confidence scoring, API fallback blending, forward APR projection stub.
+- **Yield Engine** (`src/yieldEngine/`) — fee APR from Swap logs, gauge reward APR, Moonwell lending market APY tracking, TWAB TVL, EWMA reward smoothing, composite confidence scoring, API fallback blending, forward APR projection stub.
 - **Decision Engine** (`src/decisionEngine.ts`) — all profitability guardrails, circuit breaker, adaptive interval.
 - **Harvest Worker** (`src/index.ts`) — full end-to-end orchestration: yield fetch → decision → signing → broadcast → state save.
 - **Acurast Hardware Signing** (`src/acurastHardware.ts`) — `_STD_` secp256k1 signer, 64-byte/65-byte signature parsing, `fulfillEthereumHarvest`.
@@ -65,9 +65,9 @@ YieldSense solves all three by combining:
 - **Runtime State** (`src/runtimeState.ts`) — persistent JSON state (APR, failure streak, EWM checkpoint).
 - **Legacy API Consensus** (`src/realtimeApr.ts`) — GeckoTerminal, DexScreener, DefiLlama with outlier filtering.
 - **Grid Keeper Worker** (`src/processor.ts`) — price polling, grid trigger logic, stop-loss rules, `executeTrade` submission.
-- **Smart Contract** (`contracts/YieldSenseKeeper.sol`) — deposit/withdraw/executeTrade vault with performance fee, nonce bitmap, 2-day timelock on admin addresses. **P-256 TEE Attestation Gate** via OpenZeppelin `P256.sol` using the RIP-7212 precompile on Base. Dual-layer security: P-256 for hardware attestation verification, secp256k1 for runtime ECDSA signatures.
+- **Smart Contract** (`contracts/YieldSenseKeeper.sol`) — Unified architecture handling both automated yield harvesting and deposit/withdraw/executeTrade vault with performance fee, nonce bitmap, 2-day timelock on admin addresses. **P-256 TEE Attestation Gate** via OpenZeppelin `P256.sol` using the RIP-7212 precompile on Base. Dual-layer security: P-256 for hardware attestation verification, secp256k1 for runtime ECDSA signatures.
 - **Testnet Environment** (`hardhat.config.cjs`) — Hardhat deployment scripts (`deployMockAndKeeper.cjs`), OpenZeppelin dependencies, and `MockERC20` contract for easy local/Sepolia testing.
-- **Web3 Dashboard** (`frontend/`) — Fully designed, premium Next.js UI using Wagmi/Viem to interact with the Vault (deposit/withdraw/approve) and monitor worker telemetry.
+- **Web3 Dashboard** (`frontend/`) — Fully designed, premium Next.js UI successfully deployed to **Netlify**, using Wagmi/Viem to interact with the Vault on Base Sepolia (deposit/withdraw/approve) and monitor worker telemetry.
 - **Telemetry** (`src/telemetry.ts`) — structured JSON stdout events.
 - **SS58 → EVM Address Utility** (`src/deriveAddress.ts`).
 - **Test Suite** (`src/**/*.test.ts`) — unit tests for APR consensus, decision engine, signature, runtime state.

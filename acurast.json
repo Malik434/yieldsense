@@ -24,6 +24,9 @@
       "minProcessorReputation": 0,
       "maxCostPerExecution": 3300158999,
       "includeEnvironmentVariables": [
+        "RPC_URL",
+        "KEEPER_ADDRESS",
+        "POOL_ADDRESS",
         "DATA_RPC_URL",
         "GAUGE_ADDRESS",
         "ASSET_ADDRESS",
@@ -32,6 +35,7 @@
         "GRID_CONFIG_JSON",
         "HARVEST_MIN_ASSET_OUT",
         "TELEMETRY_URL",
+        "FRONTEND_URL",
         "FORCE_TEST_HARVEST",
         "YIELD_FALLBACK_MODE",
         "YIELD_CHAIN_ID",
