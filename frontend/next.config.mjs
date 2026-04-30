@@ -8,7 +8,7 @@ const nextConfig = {
   turbopack: {
     root: __dirname,
   },
-  serverExternalPackages: ['esbuild'],
+  serverExternalPackages: [],
   webpack: (config) => {
     config.resolve.fallback = { fs: false, net: false, tls: false };
     config.externals.push(

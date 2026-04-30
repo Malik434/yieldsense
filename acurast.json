@@ -26,23 +26,11 @@
       "includeEnvironmentVariables": [
         "RPC_URL",
         "KEEPER_ADDRESS",
-        "POOL_ADDRESS",
         "DATA_RPC_URL",
-        "GAUGE_ADDRESS",
-        "ASSET_ADDRESS",
-        "AUTOCOMPOUNDER_ADDRESS",
-        "USER_ADDRESS",
-        "GRID_CONFIG_JSON",
-        "HARVEST_MIN_ASSET_OUT",
-        "TELEMETRY_URL",
-        "FRONTEND_URL",
+        "POOL_ADDRESS",
         "FORCE_TEST_HARVEST",
-        "YIELD_FALLBACK_MODE",
-        "YIELD_CHAIN_ID",
-        "POOL_FEE_BPS",
-        "EST_GAS_UNITS",
         "PROCESSOR_SHARED_SECRET",
-        "CHAIN_ID"
+        "USER_ADDRESS"
       ],
       "processorWhitelist": []
     }

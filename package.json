@@ -6,6 +6,8 @@
   "scripts": {
     "test": "tsx --test src/**/*.test.ts",
     "build": "webpack",
+    "build:embed": "webpack && node scripts/embedProcessor.cjs",
+    "build:all": "npm run build:embed && npm run build --prefix frontend",
     "start": "webpack-dev-server --mode development",
     "test:pools": "tsx src/poolSmoke.ts"
   },
