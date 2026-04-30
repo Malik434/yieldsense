@@ -22,7 +22,7 @@
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
-      "maxCostPerExecution": 3300158999,
+      "maxCostPerExecution": 10000000000,
       "includeEnvironmentVariables": [
         "RPC_URL",
         "KEEPER_ADDRESS",
@@ -40,7 +40,9 @@
         "YIELD_FALLBACK_MODE",
         "YIELD_CHAIN_ID",
         "POOL_FEE_BPS",
-        "EST_GAS_UNITS"
+        "EST_GAS_UNITS",
+        "PROCESSOR_SHARED_SECRET",
+        "CHAIN_ID"
       ],
       "processorWhitelist": []
     }

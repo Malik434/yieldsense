@@ -125,7 +125,6 @@ async function main() {
   const Keeper = await hre.ethers.getContractFactory("YieldSenseKeeper");
   const keeper = await Keeper.deploy(
     assetAddress,
-    acurastSigner,
     yieldSource,
     counterparty,
     autocompounderAddress, // wire autocompounder at deploy time
@@ -159,8 +158,8 @@ async function main() {
   }
   // Always attest deployer for testnet local-key signing.
   await (await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100_000 })).wait();
-  await (await keeper.setPrimaryUser(deployer.address, { gasLimit: 100_000 })).wait();
-  console.log("✅ TEE processor(s) attested; deployer attested as primaryUser");
+  await (await keeper.assignProcessor(acurastSigner, { gasLimit: 100_000 })).wait();
+  console.log(`✅ TEE processor(s) attested; acurastSigner assigned to deployer`);
 
   // ─── 6. P-256 attestation root (testnet placeholder) ─────────────────────────
   if (isTestnet) {

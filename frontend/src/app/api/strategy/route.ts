@@ -13,16 +13,28 @@ import { ethers } from 'ethers';
 import { getStore } from '@netlify/blobs';
 
 const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS ?? '';
+if (!KEEPER_ADDRESS) {
+  console.error('[strategy] NEXT_PUBLIC_KEEPER_ADDRESS is not set — EIP-712 domain will be invalid');
+}
+
+/**
+ * Chain ID for EIP-712 domain separation.
+ * Must match the chain the keeper contract is deployed on.
+ * Set CHAIN_ID in the server environment:
+ *   Base Sepolia = 84532
+ *   Base Mainnet = 8453
+ */
+const CHAIN_ID = parseInt(process.env.CHAIN_ID ?? '84532');
 
 async function getStrategyStore() {
   return getStore('yieldsense-strategies');
 }
 
-// EIP-712 domain + types — must exactly match the frontend and processor
+// EIP-712 domain — must exactly match the processor's domain in processor.ts
 const DOMAIN = {
   name: 'YieldSense',
   version: '1',
-  chainId: 84532, // Base Sepolia
+  chainId: CHAIN_ID,
   verifyingContract: KEEPER_ADDRESS as `0x${string}`,
 };
 

@@ -2,10 +2,22 @@
 
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
-import { formatUnits, parseUnits, maxUint256 } from 'viem';
+import { formatUnits, parseUnits } from 'viem';
 import { ASSET_ADDRESS, KEEPER_ADDRESS, ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
 import { ShieldCheck, ArrowDownToLine, Unlock, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
+/**
+ * DepositModule
+ *
+ * Approval model:
+ *   We approve exactly the deposit amount rather than type(uint256).max.
+ *   An unlimited approval grants the vault permanent access to all user USDC
+ *   regardless of how much they intend to deposit, creating unnecessary risk
+ *   if the contract is ever exploited or replaced.
+ *
+ *   The trade-off is that each deposit requires a fresh approval if the user
+ *   changes the amount. This is the correct security posture for an MVP.
+ */
 export function DepositModule() {
   const { address, isConnected } = useAccount();
   const [depositAmount, setDepositAmount] = useState('');
@@ -16,13 +28,13 @@ export function DepositModule() {
     abi: KEEPER_ABI,
     functionName: 'asset',
   });
-  const actualAssetAddress = ASSET_ADDRESS || (dynamicAssetAddress as `0x${string}`);
+  const actualAssetAddress = (ASSET_ADDRESS || dynamicAssetAddress) as `0x${string}` | undefined;
 
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: actualAssetAddress,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: address ? [address, KEEPER_ADDRESS] : undefined,
+    args: address && actualAssetAddress ? [address, KEEPER_ADDRESS] : undefined,
     query: { enabled: !!address && !!actualAssetAddress },
   });
 
@@ -36,15 +48,28 @@ export function DepositModule() {
 
   const { writeContractAsync } = useWriteContract();
 
+  const ZERO = BigInt(0);
+
+  const depositAmountParsed =
+    depositAmount && parseFloat(depositAmount) > 0
+      ? parseUnits(depositAmount, 6)
+      : ZERO;
+
+  const currentAllowance = allowance ? (allowance as bigint) : ZERO;
+  const isApprovedForAmount = depositAmountParsed > ZERO && currentAllowance >= depositAmountParsed;
+
+  const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
+  const isLoading = txState === 'approving' || txState === 'depositing';
+
   const handleApprove = async () => {
+    if (!actualAssetAddress || depositAmountParsed === ZERO) return;
     setTxState('approving');
     try {
       await writeContractAsync({
         address: actualAssetAddress,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [KEEPER_ADDRESS, maxUint256],
-        gas: BigInt(100000),
+        args: [KEEPER_ADDRESS, depositAmountParsed],
       });
       await refetchAllowance();
       setTxState('idle');
@@ -55,15 +80,14 @@ export function DepositModule() {
   };
 
   const handleDeposit = async () => {
-    if (!depositAmount || parseFloat(depositAmount) <= 0) return;
+    if (!address || depositAmountParsed === ZERO) return;
     setTxState('depositing');
     try {
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
         functionName: 'deposit',
-        args: [parseUnits(depositAmount, 6)],
-        gas: BigInt(300000),
+        args: [depositAmountParsed, address],
       });
       setTxState('success');
       setDepositAmount('');
@@ -73,10 +97,6 @@ export function DepositModule() {
       setTxState('idle');
     }
   };
-
-  const isApproved = allowance && (allowance as bigint) > BigInt(0);
-  const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
-  const isLoading = txState === 'approving' || txState === 'depositing';
 
   if (!isConnected) {
     return (
@@ -101,7 +121,6 @@ export function DepositModule() {
 
   return (
     <div className="cyber-card p-6 flex flex-col gap-5">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ArrowDownToLine size={16} style={{ color: '#00ff9f' }} />
@@ -113,7 +132,7 @@ export function DepositModule() {
         </span>
       </div>
 
-      {/* Balance */}
+      {/* Wallet balance */}
       <div
         className="rounded-lg p-4"
         style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}
@@ -125,8 +144,37 @@ export function DepositModule() {
         </p>
       </div>
 
-      {/* Approval step */}
-      {!isApproved ? (
+      {/* Amount input — shown first so approve/deposit can be amount-scoped */}
+      <div className="flex flex-col gap-2">
+        <label className="font-mono text-xs" style={{ color: '#64748b' }}>
+          DEPOSIT AMOUNT (USDC)
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="number"
+            placeholder="0.00"
+            value={depositAmount}
+            onChange={e => setDepositAmount(e.target.value)}
+            className="cyber-input flex-1"
+            min="0"
+          />
+          <button
+            onClick={() => setDepositAmount(parseFloat(walletBalance).toFixed(6))}
+            className="px-3 rounded-lg font-mono text-xs font-semibold transition-all"
+            style={{
+              background: 'rgba(0,255,159,0.06)',
+              border: '1px solid rgba(0,255,159,0.2)',
+              color: '#00ff9f',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            MAX
+          </button>
+        </div>
+      </div>
+
+      {/* Approve step — shown only when allowance is insufficient for the entered amount */}
+      {depositAmountParsed > ZERO && !isApprovedForAmount && (
         <div
           className="rounded-lg p-4 flex flex-col gap-3"
           style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
@@ -134,11 +182,11 @@ export function DepositModule() {
           <div className="flex items-center gap-2">
             <Unlock size={14} style={{ color: '#a78bfa' }} />
             <p className="font-mono text-xs font-semibold" style={{ color: '#a78bfa' }}>
-              STEP 1 — GRANT VAULT ACCESS
+              STEP 1 — APPROVE {depositAmount} USDC
             </p>
           </div>
           <p className="text-xs" style={{ color: '#64748b' }}>
-            Authorize the YieldSense Keeper to manage your assets. One-time approval.
+            Authorise the vault to spend exactly {depositAmount} USDC for this deposit.
           </p>
           <button
             onClick={handleApprove}
@@ -146,65 +194,39 @@ export function DepositModule() {
             className="btn-purple flex items-center justify-center gap-2 w-full"
           >
             {txState === 'approving' ? (
-              <><Loader2 size={14} className="animate-spin" /> APPROVING...</>
+              <><Loader2 size={14} className="animate-spin" /> APPROVING…</>
             ) : (
-              <><Unlock size={14} /> GRANT ACCESS</>
-            )}
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={14} style={{ color: '#00ff9f' }} />
-            <span className="font-mono text-xs" style={{ color: '#00ff9f' }}>
-              STEP 1 — ACCESS GRANTED ✓
-            </span>
-          </div>
-
-          {/* Amount Input */}
-          <div className="flex flex-col gap-2">
-            <label className="font-mono text-xs" style={{ color: '#64748b' }}>
-              DEPOSIT AMOUNT (USDC)
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                placeholder="0.00"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                className="cyber-input flex-1"
-                min="0"
-              />
-              <button
-                onClick={() => setDepositAmount(parseFloat(walletBalance).toFixed(4))}
-                className="px-3 rounded-lg font-mono text-xs font-semibold transition-all"
-                style={{
-                  background: 'rgba(0,255,159,0.06)',
-                  border: '1px solid rgba(0,255,159,0.2)',
-                  color: '#00ff9f',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                MAX
-              </button>
-            </div>
-          </div>
-
-          <button
-            onClick={handleDeposit}
-            disabled={isLoading || !depositAmount || parseFloat(depositAmount) <= 0}
-            className="btn-primary flex items-center justify-center gap-2 w-full"
-          >
-            {txState === 'depositing' ? (
-              <><Loader2 size={14} className="animate-spin" /> DEPOSITING...</>
-            ) : txState === 'success' ? (
-              <><CheckCircle2 size={14} /> DEPOSITED!</>
-            ) : (
-              <><ArrowDownToLine size={14} /> DEPOSIT TO VAULT</>
+              <><Unlock size={14} /> APPROVE {depositAmount} USDC</>
             )}
           </button>
         </div>
       )}
+
+      {/* Approved indicator */}
+      {isApprovedForAmount && (
+        <div className="flex items-center gap-2">
+          <CheckCircle2 size={14} style={{ color: '#00ff9f' }} />
+          <span className="font-mono text-xs" style={{ color: '#00ff9f' }}>
+            APPROVED — ready to deposit
+          </span>
+        </div>
+      )}
+
+      {/* Deposit button */}
+      <button
+        onClick={handleDeposit}
+        disabled={isLoading || !isApprovedForAmount || depositAmountParsed === ZERO}
+        className="btn-primary flex items-center justify-center gap-2 w-full"
+        style={{ opacity: isApprovedForAmount && depositAmountParsed > ZERO ? 1 : 0.4 }}
+      >
+        {txState === 'depositing' ? (
+          <><Loader2 size={14} className="animate-spin" /> DEPOSITING…</>
+        ) : txState === 'success' ? (
+          <><CheckCircle2 size={14} /> DEPOSITED!</>
+        ) : (
+          <><ArrowDownToLine size={14} /> DEPOSIT TO VAULT</>
+        )}
+      </button>
     </div>
   );
 }

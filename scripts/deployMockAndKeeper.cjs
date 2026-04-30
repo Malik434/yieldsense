@@ -18,7 +18,7 @@ async function main() {
   const counterparty = deployer.address;
   
   const YieldSenseKeeper = await hre.ethers.getContractFactory("YieldSenseKeeper");
-  const keeper = await YieldSenseKeeper.deploy(mockAddress, acurastSigner, yieldSource, counterparty, { gasLimit: 5000000 });
+  const keeper = await YieldSenseKeeper.deploy(mockAddress, yieldSource, counterparty, { gasLimit: 5000000 });
   await keeper.waitForDeployment();
   const keeperAddress = await keeper.getAddress();
   

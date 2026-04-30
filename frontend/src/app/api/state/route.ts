@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getState, getLogs } from '@/lib/stateStore';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const [state, logs] = await Promise.all([getState(), getLogs()]);
+    const { searchParams } = new URL(request.url);
+    const userAddress = searchParams.get('userAddress') || undefined;
+
+    const [state, logs] = await Promise.all([getState(userAddress), getLogs(userAddress)]);
     return NextResponse.json({ ...state, logs });
   } catch (error: any) {
     console.error('Error reading state:', error);
@@ -13,4 +16,3 @@ export async function GET() {
     );
   }
 }
-

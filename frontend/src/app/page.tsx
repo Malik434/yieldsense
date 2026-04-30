@@ -13,6 +13,8 @@ import { PnlChart } from '@/components/PnlChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { WithdrawModule } from '@/components/WithdrawModule';
 import { TestingSuite } from '@/components/TestingSuite';
+import { WorkerProvisioningBox } from '@/components/WorkerProvisioningBox';
+import { HardwareTrustDashboard } from '@/components/HardwareTrustDashboard';
 import {
   ShieldCheck,
   Layers,
@@ -80,11 +82,16 @@ export default function CommandCenter() {
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [consensus, setConsensus] = useState<ConsensusData | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [provisionedWorker, setProvisionedWorker] = useState<string>('');
 
   // Fetch worker state from Acurast processor
   const fetchState = async () => {
+    if (!address) {
+      setWorkerState(null);
+      return;
+    }
     try {
-      const res = await fetch('/api/state');
+      const res = await fetch(`/api/state?userAddress=${address}`);
       if (res.ok) {
         const data = await res.json();
         setWorkerState(data);
@@ -105,25 +112,29 @@ export default function CommandCenter() {
 
   useEffect(() => {
     setMounted(true);
-    fetchState();
+    if (address) {
+      fetchState();
+    }
     fetchConsensus();
-    const stateInterval = setInterval(fetchState, 10000);
+    const stateInterval = setInterval(() => {
+      if (address) fetchState();
+    }, 10000);
     const consensusInterval = setInterval(fetchConsensus, 30000);
     return () => {
       clearInterval(stateInterval);
       clearInterval(consensusInterval);
     };
-  }, []);
+  }, [address]);
 
   // Watch block number to trigger refetches
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const queryClient = useQueryClient();
 
   // Read vault user data
-  const { data: userData, refetch: refetchUserData, queryKey } = useReadContract({
+  const { data: maxWithdraw, refetch: refetchUserData } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
-    functionName: 'userData',
+    functionName: 'maxWithdraw',
     args: address ? [address] : undefined,
     query: { enabled: !!address },
   });
@@ -135,9 +146,9 @@ export default function CommandCenter() {
     }
   }, [blockNumber, refetchUserData]);
 
-  // USDC has 6 decimals. The keeper stores balances in asset-native units.
-  const balance = userData ? parseFloat(formatUnits((userData as any)[0] as bigint, 6)) : 0;
-  const initialDeposit = userData ? parseFloat(formatUnits((userData as any)[1] as bigint, 6)) : 0;
+  // USDC has 6 decimals.
+  const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
+  const initialDeposit = balance; // In ERC4626, we don't track initial deposit on-chain. An indexer is required for exact PnL.
 
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
@@ -251,11 +262,19 @@ export default function CommandCenter() {
         />
 
         <div
-          className="grid gap-6"
+          className="grid gap-6 mb-6"
           style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}
         >
           <DepositModule />
           <ConfidentialStrategyBox />
+        </div>
+
+        <div
+          className="grid gap-6 mb-6"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}
+        >
+          <WorkerProvisioningBox onProvisioned={setProvisionedWorker} />
+          <HardwareTrustDashboard processorAddress={provisionedWorker} />
         </div>
 
         {/* ─── SECTION 2: LIVE ALPHA DASHBOARD ─── */}

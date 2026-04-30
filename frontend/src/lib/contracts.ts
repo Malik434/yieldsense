@@ -65,26 +65,72 @@ export const KEEPER_ABI = [
     "type": "function"
   },
   {
-    "inputs": [{ "internalType": "uint256", "name": "amount", "type": "uint256" }],
-    "name": "deposit",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "withdraw",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [{ "internalType": "address", "name": "user", "type": "address" }],
-    "name": "userData",
-    "outputs": [
-      { "internalType": "uint128", "name": "balance", "type": "uint128" },
-      { "internalType": "uint128", "name": "initialDeposit", "type": "uint128" }
+    "inputs": [
+      { "internalType": "uint256", "name": "assets", "type": "uint256" },
+      { "internalType": "address", "name": "receiver", "type": "address" }
     ],
+    "name": "deposit",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "assets", "type": "uint256" },
+      { "internalType": "address", "name": "receiver", "type": "address" },
+      { "internalType": "address", "name": "owner", "type": "address" }
+    ],
+    "name": "withdraw",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "balanceOf",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "maxWithdraw",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "userProcessors",
+    "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "processor", "type": "address" }],
+    "name": "assignProcessor",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "processor", "type": "address" },
+      { "internalType": "bytes32", "name": "certHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "r", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "s", "type": "bytes32" }
+    ],
+    "name": "attestProcessor",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "", "type": "address" }
+    ],
+    "name": "attestedProcessors",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
     "stateMutability": "view",
     "type": "function"
   },
@@ -102,7 +148,8 @@ export const KEEPER_ABI = [
   {
     "anonymous": false,
     "inputs": [
-      { "indexed": true, "internalType": "bytes32", "name": "payloadHash", "type": "bytes32" }
+      { "indexed": true, "internalType": "bytes32", "name": "payloadHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "uint256", "name": "profitCredited", "type": "uint256" }
     ],
     "name": "HarvestExecuted",
     "type": "event"
@@ -111,10 +158,9 @@ export const KEEPER_ABI = [
     "anonymous": false,
     "inputs": [
       { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
-      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" },
-      { "indexed": false, "internalType": "uint256", "name": "balanceAfter", "type": "uint256" }
+      { "indexed": true, "internalType": "address", "name": "processor", "type": "address" }
     ],
-    "name": "Deposited",
+    "name": "ProcessorAssigned",
     "type": "event"
   }
 ] as const;

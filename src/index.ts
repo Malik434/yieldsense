@@ -14,7 +14,9 @@ import {
   Wallet 
 } from "ethers";
 // Removed axios import in favor of native fetch for TEE compatibility
-import dotenv from "dotenv";
+// dotenv is intentionally not imported: on Acurast TEE, env vars are injected
+// by the platform before script start. dotenv.config() is a no-op there and
+// adds ~150KB of dotenvx to the bundle.
 import { evaluateDecision } from "./decisionEngine.js";
 import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js";
 import type { FallbackMode, YieldEstimateRequest } from "./yieldEngine/types.js";
@@ -27,8 +29,6 @@ import {
 } from "./acurastHardware.js";
 import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
-
-dotenv.config();
 
 const CONFIG = {
   /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Sepolia). */
