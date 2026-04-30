@@ -115,6 +115,12 @@ export async function POST(req: Request) {
       `  e.USER_ADDRESS=${JSON.stringify(ownerAddress)};`,
       `  e.KEEPER_ADDRESS=${JSON.stringify(keeperAddress)};`,
       `  e.CHAIN_ID=${JSON.stringify(process.env.CHAIN_ID ?? '84532')};`,
+      `  e.PROCESSOR_SHARED_SECRET=${JSON.stringify(process.env.PROCESSOR_SHARED_SECRET ?? '')};`,
+      `  e.TELEMETRY_URL=${JSON.stringify(process.env.TELEMETRY_URL ?? '')};`,
+      `  e.RPC_URL=${JSON.stringify(process.env.RPC_URL ?? 'https://sepolia.base.org')};`,
+      `  e.DATA_RPC_URL=${JSON.stringify(process.env.DATA_RPC_URL ?? 'https://mainnet.base.org')};`,
+      `  e.POOL_ADDRESS=${JSON.stringify(process.env.POOL_ADDRESS ?? '')};`,
+      `  e.FORCE_TEST_HARVEST=${JSON.stringify(process.env.FORCE_TEST_HARVEST ?? 'true')};`,
       `  e.STOP_LOSS_SECRET_JSON='';`,
       '})(typeof process!=="undefined"?process.env:(globalThis.__ENV__=globalThis.__ENV__||{}));',
     ].join('\n');
