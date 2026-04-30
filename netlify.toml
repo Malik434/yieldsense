@@ -14,9 +14,11 @@
   publish = ".next"
 
 [build.environment]
-  # Pin Node.js version for reproducible builds.
-  # v18 LTS is the recommended runtime for both the Acurast CLI and Next.js 15+.
-  NODE_VERSION = "18"
+  # Node 20 LTS (Iron) is required by Next.js 16 (>=20.9.0) and webpack-cli 7.
+  # Note: "18" was previously set for Acurast CLI local dev — that is a separate
+  # concern from this Netlify build, which only runs webpack + next build.
+  # The Acurast CLI is never invoked during the Netlify pipeline.
+  NODE_VERSION = "20.11.1"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

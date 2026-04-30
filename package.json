@@ -11,6 +11,9 @@
     "start": "webpack-dev-server --mode development",
     "test:pools": "tsx src/poolSmoke.ts"
   },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
