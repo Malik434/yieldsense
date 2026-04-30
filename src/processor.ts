@@ -366,7 +366,7 @@ async function submitTrade(
 export async function monitorAndExecuteGrid(): Promise<void> {
   const rpcUrl = process.env.RPC_URL || "https://sepolia.base.org";
   const dataRpcUrl = process.env.DATA_RPC_URL || rpcUrl;
-  const poolAddress = process.env.UNISWAP_POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
+  const poolAddress = process.env.POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
   const keeperAddress = process.env.KEEPER_ADDRESS;
   const userAddress = process.env.USER_ADDRESS;
 
@@ -499,7 +499,5 @@ async function startLoop(): Promise<void> {
   }
 }
 
-startLoop().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+// Removed top-level startLoop() execution to prevent duplicate concurrent runs
+// when imported by index.ts. The processor is now orchestrated purely by index.ts.
