@@ -1,7 +1,22 @@
 [build]
-  base = "frontend"
-  command = "npm run build"
+  # Stay in frontend/ so @netlify/plugin-nextjs can locate the Next.js project
+  # and publish = ".next" resolves to frontend/.next correctly.
+  base    = "frontend"
+  # Build sequence:
+  #   1. cd ..        → repo root (/opt/build/repo/)
+  #   2. npm ci       → install root devDependencies (webpack, ts-loader, typescript)
+  #   3. build:embed  → webpack compiles processor bundle, embedProcessor.cjs writes
+  #                     frontend/src/lib/processorBundle.ts
+  #   4. cd frontend  → back to Next.js project root
+  #   5. npm run build→ prebuild re-runs embedProcessor.cjs (fast, idempotent),
+  #                     then next build compiles the full site
+  command = "cd .. && npm ci && npm run build:embed && cd frontend && npm run build"
   publish = ".next"
+
+[build.environment]
+  # Pin Node.js version for reproducible builds.
+  # v18 LTS is the recommended runtime for both the Acurast CLI and Next.js 15+.
+  NODE_VERSION = "18"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
