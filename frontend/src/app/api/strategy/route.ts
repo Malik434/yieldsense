@@ -26,8 +26,17 @@ if (!KEEPER_ADDRESS) {
  */
 const CHAIN_ID = parseInt(process.env.CHAIN_ID ?? '84532');
 
+const localStrategyStore = new Map<string, any>();
+
 async function getStrategyStore() {
-  return getStore('yieldsense-strategies');
+  try {
+    return getStore('yieldsense-strategies');
+  } catch (err: any) {
+    if (err.name === 'MissingBlobsEnvironmentError') {
+      return null; // Fall back to local in-memory store
+    }
+    throw err;
+  }
 }
 
 // EIP-712 domain — must exactly match the processor's domain in processor.ts
@@ -97,9 +106,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Signature valid — persist to Netlify Blobs
+  // Signature valid — persist to Netlify Blobs or local store
   const blobs = await getStrategyStore();
-  await blobs.setJSON(signer.toLowerCase(), body);
+  if (blobs) {
+    await blobs.setJSON(signer.toLowerCase(), body);
+  } else {
+    localStrategyStore.set(signer.toLowerCase(), body);
+  }
 
   return NextResponse.json({ ok: true, signer, timestamp }, { status: 200 });
 }
@@ -113,7 +126,9 @@ export async function GET(req: NextRequest) {
   }
 
   const blobs = await getStrategyStore();
-  const params = await blobs.get(address.toLowerCase(), { type: 'json' });
+  const params = blobs
+    ? await blobs.get(address.toLowerCase(), { type: 'json' })
+    : localStrategyStore.get(address.toLowerCase());
 
   if (!params) {
     return NextResponse.json({ error: 'No strategy params found for this address' }, { status: 404 });

@@ -51,7 +51,8 @@ export function SecureSignatureAnimation({ onComplete }: SecureSignatureAnimatio
       timeouts.forEach(clearTimeout);
       clearTimeout(doneTimeout);
     };
-  }, [onComplete]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const current = STAGES[Math.min(stage, STAGES.length - 1)];
 
