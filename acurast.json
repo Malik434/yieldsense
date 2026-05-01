@@ -30,7 +30,10 @@
         "POOL_ADDRESS",
         "FORCE_TEST_HARVEST",
         "PROCESSOR_SHARED_SECRET",
-        "USER_ADDRESS"
+        "USER_ADDRESS",
+        "GRID_CONFIG_JSON",
+        "TELEMETRY_URL",
+        "FRONTEND_URL"
       ],
       "processorWhitelist": []
     }
