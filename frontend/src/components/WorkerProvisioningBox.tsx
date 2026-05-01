@@ -187,7 +187,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
       // Common revert: ProcessorNotAttested — processor hasn't been attested by admin yet
       const msg: string = err?.shortMessage ?? err?.message ?? String(err);
       const isNotAttested =
-        msg.includes('ProcessorNotAttested') || msg.includes('0x') ;
+        msg.includes('ProcessorNotAttested') || msg.includes('0x');
       setDeployError(
         isNotAttested
           ? 'Processor not yet attested by protocol admin. Contact the YieldSense team to attest your processor address before assigning.'
@@ -301,7 +301,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
           {/* Bundle complete */}
           <StepRow
             done
-            label={`Logic bundled & pinned${ipfsCid ? ` — CID: ${ipfsCid.slice(0, 16)}…` : ''}`}
+            label={`Logic bundled & pinned${ipfsCid ? ` — CID: ${ipfsCid}` : ''}`}
           />
 
           {/* Fund step */}
@@ -312,8 +312,8 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
               step === 'waiting_fund'
                 ? 'Confirming ETH transfer…'
                 : step === 'funding'
-                ? 'Fund processor with gas (0.001 ETH)'
-                : 'Processor funded'
+                  ? 'Fund processor with gas (0.001 ETH)'
+                  : 'Processor funded'
             }
           >
             {step === 'funding' && (
@@ -343,8 +343,8 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
               step === 'assigning'
                 ? 'Assigning processor on-chain…'
                 : step === 'ready'
-                ? `Processor assigned — ${processorAddress?.slice(0, 10)}…`
-                : 'Bind processor to your account'
+                  ? `Processor assigned — ${processorAddress?.slice(0, 10)}…`
+                  : 'Bind processor to your account'
             }
           >
             {step === 'assigning' && !isAssignPending && (
@@ -413,8 +413,8 @@ function StepRow({
         {done
           ? <CheckCircle2 size={12} className="text-[#00ff9f]" />
           : active
-          ? <Loader2 size={12} className="animate-spin text-[#00d4ff]" />
-          : <div className="w-3 h-3 rounded-full" style={{ border: '1px solid #334155' }} />}
+            ? <Loader2 size={12} className="animate-spin text-[#00d4ff]" />
+            : <div className="w-3 h-3 rounded-full" style={{ border: '1px solid #334155' }} />}
         <span
           className="font-mono text-[10px]"
           style={{ color: done ? '#00ff9f' : active ? '#00d4ff' : '#475569' }}
