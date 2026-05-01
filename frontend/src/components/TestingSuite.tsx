@@ -29,8 +29,28 @@ export function TestingSuite() {
         const res = await fetch('/api/state');
         if (res.ok) {
           const data = await res.json();
-          if (data.hardwareLogs) {
-            setLogs(data.hardwareLogs);
+          if (data.logs && Array.isArray(data.logs)) {
+            const mappedLogs = data.logs.map((log: any) => {
+              let type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC' = 'EXECUTION';
+              if (log.event === 'processor_heartbeat') type = 'ATTESTATION';
+              if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') type = 'STORAGE_SYNC';
+              
+              let message = log.message || log.event;
+              if (log.event === 'profitability_check') message = `Yield checked: ${log.reason} (APR: ${((log.apr || 0) * 100).toFixed(2)}%)`;
+              if (log.event === 'force_test_bypass') message = 'Force test bypass enabled, skipping yield checks';
+              if (log.event === 'harvest_submitted') message = `Harvest transaction submitted`;
+              if (log.event === 'harvest_confirmed') message = `Harvest transaction confirmed`;
+              if (log.event === 'hw_address_report') message = `Acurast Hardware Address: ${log.hwAddress}`;
+
+              return {
+                timestamp: log.timestamp ? log.timestamp * 1000 : Date.now(),
+                type,
+                message,
+                txHash: log.txHash
+              };
+            });
+            // Logs are returned newest-first from ring buffer, reverse for chronological terminal view
+            setLogs(mappedLogs.reverse());
           }
         }
       } catch { }
