@@ -14,7 +14,7 @@ interface HardwareLog {
 }
 
 export function TestingSuite() {
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const [logs, setLogs] = useState<HardwareLog[]>([]);
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
