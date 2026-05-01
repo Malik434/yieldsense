@@ -18,7 +18,7 @@ export function TestingSuite() {
   const [logs, setLogs] = useState<HardwareLog[]>([]);
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const { writeContractAsync } = useWriteContract();
 
@@ -62,9 +62,10 @@ export function TestingSuite() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-scroll logs
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
   }, [logs]);
 
   const handleMint = async () => {
@@ -164,7 +165,7 @@ export function TestingSuite() {
           </div>
         </div>
 
-        <div className="flex-1 p-4 overflow-y-auto font-mono text-[10px]" style={{ background: '#05070a' }}>
+        <div ref={scrollContainerRef} className="flex-1 p-4 overflow-y-auto font-mono text-[10px]" style={{ background: '#05070a' }}>
           {logs.length === 0 ? (
             <p style={{ color: '#475569' }}>Waiting for Acurast Processor telemetry...</p>
           ) : (
@@ -195,7 +196,6 @@ export function TestingSuite() {
                   </span>
                 </div>
               ))}
-              <div ref={logsEndRef} />
             </div>
           )}
         </div>
