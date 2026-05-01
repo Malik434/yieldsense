@@ -26,7 +26,8 @@ export function TestingSuite() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch('/api/state');
+        if (!address) return;
+        const res = await fetch(`/api/state?userAddress=${address}`);
         if (res.ok) {
           const data = await res.json();
           if (data.logs && Array.isArray(data.logs)) {
