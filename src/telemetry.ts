@@ -53,7 +53,7 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout to handle Netlify cold starts
 
     const response = await fetch(url, {
       method: "POST",
