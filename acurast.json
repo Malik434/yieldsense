@@ -36,6 +36,36 @@
         "FRONTEND_URL"
       ],
       "processorWhitelist": []
+    },
+    "YieldSenseTest": {
+      "projectName": "YieldSenseTest",
+      "fileUrl": "dist/networkTest.cjs",
+      "network": "mainnet",
+      "onlyAttestedDevices": false,
+      "assignmentStrategy": {
+        "type": "Single"
+      },
+      "execution": {
+        "type": "interval",
+        "intervalInMs": 300000,
+        "numberOfExecutions": 1
+      },
+      "maxAllowedStartDelayInMs": 60000,
+      "usageLimit": {
+        "maxMemory": 256000000,
+        "maxNetworkRequests": 30,
+        "maxStorage": 1000000
+      },
+      "numberOfReplicas": 1,
+      "requiredModules": [],
+      "minProcessorReputation": 0,
+      "maxCostPerExecution": 10000000000,
+      "includeEnvironmentVariables": [
+        "TELEMETRY_URL",
+        "PROCESSOR_SHARED_SECRET",
+        "USER_ADDRESS"
+      ],
+      "processorWhitelist": []
     }
   }
 }

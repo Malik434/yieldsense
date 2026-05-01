@@ -1,17 +1,17 @@
-import { 
+import {
   ethers,
-  JsonRpcProvider, 
-  Contract, 
-  formatEther, 
-  getAddress, 
-  verifyTypedData, 
-  solidityPackedKeccak256, 
-  hashMessage, 
-  getBytes, 
-  recoverAddress, 
-  hexlify, 
-  AbiCoder, 
-  Wallet 
+  JsonRpcProvider,
+  Contract,
+  formatEther,
+  getAddress,
+  verifyTypedData,
+  solidityPackedKeccak256,
+  hashMessage,
+  getBytes,
+  recoverAddress,
+  hexlify,
+  AbiCoder,
+  Wallet
 } from "ethers";
 // Removed axios import in favor of native fetch for TEE compatibility
 // dotenv is intentionally not imported: on Acurast TEE, env vars are injected
@@ -44,7 +44,7 @@ const CONFIG = {
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
     // Testnet fallback: keeper uses attestedProcessors set — any attested TEE can harvest.
-    return addr || "0x736B063b5937F64406A6Dd9792aD039F0117DE5e";
+    return addr || "0x488147C822b364a940630075f9EACD080Cc16234";
   })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
   poolAddress: (() => {
@@ -174,14 +174,14 @@ async function ensureKeeperOnExecutionChain(
 
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
-  console.log(JSON.stringify({ 
-    event: "processor_heartbeat", 
-    message: "YieldSense Unified Engine Starting...", 
+  console.log(JSON.stringify({
+    event: "processor_heartbeat",
+    message: "YieldSense Unified Engine Starting...",
     timestamp: startNow,
     keeper: CONFIG.keeperAddress,
     rpc: CONFIG.rpcUrl
   }));
-  
+
   // Also emit as telemetry so it shows in dashboard immediately
   await emitTelemetry({
     event: "processor_heartbeat",
