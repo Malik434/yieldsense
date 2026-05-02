@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAccount } from 'wagmi';
 import { ShieldCheck, ExternalLink, RefreshCw, Zap, ArrowUpDown, Clock } from 'lucide-react';
 
 interface TxEvent {
@@ -57,13 +58,20 @@ function mapLogToTx(log: any): TxEvent | null {
 }
 
 export function TransactionHistory() {
+  const { address } = useAccount();
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
 
+
   const fetchTxs = async () => {
+    if (!address) {
+      setTxs([]);
+      setLoading(false);
+      return;
+    }
     try {
-      const res = await fetch('/api/state');
+      const res = await fetch(`/api/state?userAddress=${address}`);
       if (!res.ok) return;
       const data = await res.json();
       const logs: any[] = data.logs ?? [];
@@ -81,7 +89,7 @@ export function TransactionHistory() {
     fetchTxs();
     const id = setInterval(fetchTxs, 10_000);
     return () => clearInterval(id);
-  }, []);
+  }, [address]);
 
   if (!mounted) return null;
 

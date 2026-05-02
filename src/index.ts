@@ -174,22 +174,15 @@ async function ensureKeeperOnExecutionChain(
 
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
-  console.log(JSON.stringify({
-    event: "processor_heartbeat",
-    message: "YieldSense Unified Engine Starting...",
-    timestamp: startNow,
-    keeper: CONFIG.keeperAddress,
-    rpc: CONFIG.rpcUrl
-  }));
 
-  // Also emit as telemetry so it shows in dashboard immediately
+  // 1. Send Heartbeat
   await emitTelemetry({
     event: "processor_heartbeat",
     message: "Worker starting...",
     timestamp: startNow
   });
 
-  // 1. Run Grid/Stop-Loss Check
+  // 2. Run Grid/Stop-Loss Check
   try {
     await monitorAndExecuteGrid();
   } catch (gridError) {
@@ -203,10 +196,8 @@ async function main(): Promise<void> {
       ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
       : executionProvider;
 
-  if (!CONFIG.keeperAddress) {
-    throw new Error("KEEPER_ADDRESS environment variable is required.");
-  }
   await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
+
 
   const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, executionProvider);
   const state = await loadState(CONFIG.statePath);
@@ -279,6 +270,7 @@ async function main(): Promise<void> {
     });
     return;
   }
+
 
   const BASE_SEPOLIA_CHAIN_ID = 84532;
   if (CONFIG.forceTestHarvest) {
@@ -428,6 +420,7 @@ async function main(): Promise<void> {
       maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
     });
     txHash = submitted.hash;
+
     await emitTelemetry({
       event: "harvest_submitted",
       timestamp: nowSec,

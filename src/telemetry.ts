@@ -1,7 +1,3 @@
-import axiosLib from "axios";
-// CommonJS/ESM interop: axios default export differs between module systems
-const axios = (axiosLib as any).default ?? axiosLib;
-
 export interface TelemetryEvent {
   event: string;
   timestamp: number;
@@ -13,37 +9,30 @@ const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetr
 
 /**
  * Emits a structured telemetry event to the Next.js telemetry API.
- *
- * Uses axios for maximum compatibility inside the Acurast TEE Node.js runtime.
- * Verbose debug logging included so failures are always visible in Acurast console.
+ * 
+ * Note: Environment variables (USER_ADDRESS, PROCESSOR_SHARED_SECRET) must be 
+ * injected by the Acurast Hub during deployment.
  */
 export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
-  // Inject USER_ADDRESS so the backend scopes state/logs to the correct user
+  // Inject USER_ADDRESS from environment if not present in event
   if (process.env.USER_ADDRESS && !event.userAddress) {
     event.userAddress = process.env.USER_ADDRESS;
   }
 
-  // Always log to stdout — primary source of truth in the Acurast console
-  console.log(`[TELEMETRY] ${JSON.stringify(event)}`);
+  const payload = JSON.stringify(event);
+
+  // STDOUT log for Acurast Console
+  console.log(`[TELEMETRY_STDOUT] ${payload}`);
 
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
-  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() ?? "";
-
-  // ── Debug: log env var presence so we can detect injection failures in the Acurast console
-  console.log(`[TELEMETRY_DEBUG] url=${url} secret_present=${!!secret} userAddress=${event.userAddress ?? "MISSING"}`);
+  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim();
 
   if (!secret) {
-    console.warn(
-      "[TELEMETRY_WARN] PROCESSOR_SHARED_SECRET not set — API will reject this request with 401. " +
-      "Ensure this env var is set in the Acurast Console environment variables."
-    );
+    console.warn("[TELEMETRY_WARN] PROCESSOR_SHARED_SECRET is missing. API will reject logs.");
   }
-
+  
   if (!event.userAddress) {
-    console.warn(
-      "[TELEMETRY_WARN] userAddress is missing from telemetry payload — API will reject with 400. " +
-      "Ensure USER_ADDRESS is set in the Acurast Console environment variables."
-    );
+    console.warn("[TELEMETRY_WARN] USER_ADDRESS is missing. Logs will be anonymous and likely ignored by frontend.");
   }
 
   const headers: Record<string, string> = {
@@ -57,22 +46,22 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   }
 
   try {
-    const response = await axios.post(url, event, {
+    if (typeof fetch === "undefined") {
+      console.error(`[TELEMETRY_ERROR] fetch is undefined.`);
+      return;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
       headers,
-      timeout: 15000,
-      validateStatus: null, // Don't throw on non-2xx — handle manually below
+      body: payload,
     });
 
-    // ── Debug: always log the API response so we can see 401/400 in the Acurast console
-    console.log(`[TELEMETRY_DEBUG] POST ${url} → HTTP ${response.status}`);
-
-    if (response.status < 200 || response.status >= 300) {
-      console.error(
-        `[TELEMETRY_ERROR] POST ${url} → ${response.status}. ` +
-        `Response: ${JSON.stringify(response.data ?? "").substring(0, 200)}`
-      );
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "no-body");
+      console.error(`[TELEMETRY_ERROR] API Rejected (${response.status}): ${errorText.substring(0, 100)}`);
     }
   } catch (err: any) {
-    console.error(`[TELEMETRY_ERROR] Failed to reach ${url}: ${err?.message ?? String(err)}`);
+    console.error(`[TELEMETRY_ERROR] Network Failure: ${err?.message || String(err)}`);
   }
 }
