@@ -153,11 +153,13 @@ export default function CommandCenter() {
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
 
-  // consensus.consensus is in BPS (e.g. 19044 = 190.44%).
-  // workerState.previousApr is a decimal fraction (e.g. 0.19 = 19%) — convert to BPS before use.
+  // UNIT CONTRACT: AprGauge expects ALL apr values in BPS (e.g. 4927 = 49.27%)
+  // - consensus.consensus is already BPS (from /api/consensus)
+  // - workerState.previousApr is a decimal fraction (0.4927) from the yield engine → convert to BPS
   const prevApr =
     consensus?.consensus ??
     (workerState?.previousApr != null ? Math.round(workerState.previousApr * 10_000) : null);
+  // rewardAprEwm.mean is also a decimal fraction from the yield engine → pass as-is; AprGauge multiplies by 100
   const ewmMean = workerState?.rewardAprEwm?.mean ?? null;
 
   if (!mounted) return null;

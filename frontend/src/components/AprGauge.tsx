@@ -113,19 +113,20 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
     return () => clearTimeout(t);
   }, []);
 
+  // previousApr is always BPS (page.tsx normalizes both code paths to BPS before passing down).
+  // AprGauge divides by 100 to get a percentage for display (4927 BPS → 49.27%).
   const aprBps = previousApr ?? 0;
   const aprPct = aprBps / 100;
 
-  // rewardAprEwm is a decimal fraction (0.19 = 19%) from the yield engine EWMA.
-  // When it hasn't been seeded by the worker yet, fall back to the consensus APR
-  // (which is already in BPS, so divide by 100 to get percent).
-  const ewmPct =
-    rewardAprEwm != null
-      ? rewardAprEwm * 100
-      : consensusData != null
-        ? consensusData.consensus / 100
-        : 0;
-  const ewmIsLive = rewardAprEwm != null;
+  // rewardAprEwm is a decimal fraction (0.4927 = 49.27%) from the yield engine EWMA.
+  // Multiply by 100 for display. Fall back to aprPct if not yet seeded.
+  let ewmPct = 0;
+  if (rewardAprEwm != null && rewardAprEwm !== 0) {
+    ewmPct = rewardAprEwm * 100;
+  } else {
+    ewmPct = aprPct;
+  }
+  const ewmIsLive = rewardAprEwm != null && rewardAprEwm !== 0;
 
   const sources = consensusData
     ? [
