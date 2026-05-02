@@ -76,7 +76,20 @@ export function TransactionHistory() {
       const data = await res.json();
       const logs: any[] = data.logs ?? [];
       const mapped = logs.map(mapLogToTx).filter((t): t is TxEvent => t !== null);
-      setTxs(mapped);
+      
+      // Deduplicate by txHash to prevent double-counting submitted vs confirmed
+      const unique = Array.from(
+        mapped.reduce((map, tx) => {
+          // If we have both, confirmed usually comes later (higher timestamp), 
+          // so we keep the first one we find in the descending-order list.
+          if (!map.has(tx.txHash)) {
+            map.set(tx.txHash, tx);
+          }
+          return map;
+        }, new Map<string, TxEvent>()).values()
+      );
+
+      setTxs(unique);
     } catch {
       // silently keep last state on network error
     } finally {
