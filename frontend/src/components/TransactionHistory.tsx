@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAccount } from 'wagmi';
 import { ShieldCheck, ExternalLink, RefreshCw, Zap, ArrowUpDown, Clock } from 'lucide-react';
+import { OPERATOR_ADDRESS } from '@/lib/contracts';
 
 interface TxEvent {
   type: 'HARVEST' | 'TRADE' | 'DEPOSIT' | 'WITHDRAW';
@@ -31,9 +31,9 @@ function shortHash(hash: string): string {
 
 const TYPE_CONFIG = {
   HARVEST: { label: 'HARVEST', color: '#00ff9f', bg: 'rgba(0,255,159,0.08)', border: 'rgba(0,255,159,0.25)', icon: <Zap size={10} /> },
-  TRADE:   { label: 'TRADE',   color: '#00d4ff', bg: 'rgba(0,212,255,0.08)', border: 'rgba(0,212,255,0.25)', icon: <ArrowUpDown size={10} /> },
+  TRADE: { label: 'TRADE', color: '#00d4ff', bg: 'rgba(0,212,255,0.08)', border: 'rgba(0,212,255,0.25)', icon: <ArrowUpDown size={10} /> },
   DEPOSIT: { label: 'DEPOSIT', color: '#a78bfa', bg: 'rgba(139,92,246,0.08)', border: 'rgba(139,92,246,0.25)', icon: <RefreshCw size={10} /> },
-  WITHDRAW:{ label: 'WITHDRAW',color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', icon: <RefreshCw size={10} /> },
+  WITHDRAW: { label: 'WITHDRAW', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', icon: <RefreshCw size={10} /> },
 };
 
 /** Map a raw telemetry event (from /api/state logs) to a TxEvent for display. */
@@ -58,25 +58,19 @@ function mapLogToTx(log: any): TxEvent | null {
 }
 
 export function TransactionHistory() {
-  const { address } = useAccount();
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
 
-
+  // Always fetch from OPERATOR_ADDRESS — harvest txs are shared across all vault depositors.
   const fetchTxs = async () => {
-    if (!address) {
-      setTxs([]);
-      setLoading(false);
-      return;
-    }
     try {
-      const res = await fetch(`/api/state?userAddress=${address}`);
+      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
       if (!res.ok) return;
       const data = await res.json();
       const logs: any[] = data.logs ?? [];
       const mapped = logs.map(mapLogToTx).filter((t): t is TxEvent => t !== null);
-      
+
       // Deduplicate by txHash to prevent double-counting submitted vs confirmed
       const unique = Array.from(
         mapped.reduce((map, tx) => {
@@ -102,7 +96,7 @@ export function TransactionHistory() {
     fetchTxs();
     const id = setInterval(fetchTxs, 10_000);
     return () => clearInterval(id);
-  }, [address]);
+  }, []);
 
   if (!mounted) return null;
 

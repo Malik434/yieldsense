@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
 import { parseUnits } from 'viem';
 import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2 } from 'lucide-react';
-import { MOCK_USDC_ABI, ASSET_ADDRESS } from '@/lib/contracts';
+import { MOCK_USDC_ABI, ASSET_ADDRESS, OPERATOR_ADDRESS } from '@/lib/contracts';
 
 interface HardwareLog {
   timestamp: number;
@@ -22,12 +22,12 @@ export function TestingSuite() {
 
   const { writeContractAsync } = useWriteContract();
 
-  // Poll state endpoint for hardware logs
+  // Poll state endpoint for hardware logs — always use OPERATOR_ADDRESS because
+  // the processor tags all telemetry to the deployer's wallet, not the connected user.
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        if (!address) return;
-        const res = await fetch(`/api/state?userAddress=${address}`);
+        const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
         if (res.ok) {
           const data = await res.json();
           if (data.logs && Array.isArray(data.logs)) {

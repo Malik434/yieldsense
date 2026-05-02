@@ -2,6 +2,14 @@ export const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS as `0x${str
 export const ASSET_ADDRESS = process.env.NEXT_PUBLIC_ASSET_ADDRESS as `0x${string}`;
 export const AUTOCOMPOUNDER_ADDRESS = process.env.NEXT_PUBLIC_AUTOCOMPOUNDER_ADDRESS as `0x${string}`;
 
+/**
+ * The operator wallet that owns all Acurast processor deployments.
+ * Telemetry logs are always stored under this address, regardless of
+ * which user's wallet is currently connected. This is correct for a
+ * shared pooled vault — one processor serves all depositors.
+ */
+export const OPERATOR_ADDRESS = "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
+
 export const ERC20_ABI = [
   {
     "constant": true,
