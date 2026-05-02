@@ -1,3 +1,7 @@
+import axiosLib from "axios";
+// CommonJS/ESM interop: axios default export differs between module systems
+const axios = (axiosLib as any).default ?? axiosLib;
+
 export interface TelemetryEvent {
   event: string;
   timestamp: number;
@@ -10,13 +14,8 @@ const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetr
 /**
  * Emits a structured telemetry event to the Next.js telemetry API.
  *
- * Authentication: every outbound POST carries an Authorization header with the
- * PROCESSOR_SHARED_SECRET env var as a Bearer token. The API rejects requests
- * that omit or provide the wrong secret, preventing public log poisoning.
- *
- * If PROCESSOR_SHARED_SECRET is not set the request is still sent but the API
- * will reject it in production (it accepts unauthenticated writes only in local
- * dev mode when the env var is also absent server-side).
+ * Uses axios for maximum compatibility inside the Acurast TEE Node.js runtime.
+ * Verbose debug logging included so failures are always visible in Acurast console.
  */
 export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   // Inject USER_ADDRESS so the backend scopes state/logs to the correct user
@@ -24,51 +23,53 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
     event.userAddress = process.env.USER_ADDRESS;
   }
 
-  const payload = JSON.stringify(event);
-
   // Always log to stdout — primary source of truth in the Acurast console
-  console.log(`[TELEMETRY] ${payload}`);
+  console.log(`[TELEMETRY] ${JSON.stringify(event)}`);
 
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
   const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() ?? "";
 
+  // ── Debug: log env var presence so we can detect injection failures in the Acurast console
+  console.log(`[TELEMETRY_DEBUG] url=${url} secret_present=${!!secret} userAddress=${event.userAddress ?? "MISSING"}`);
+
+  if (!secret) {
+    console.warn(
+      "[TELEMETRY_WARN] PROCESSOR_SHARED_SECRET not set — API will reject this request with 401. " +
+      "Ensure this env var is set in the Acurast Console environment variables."
+    );
+  }
+
+  if (!event.userAddress) {
+    console.warn(
+      "[TELEMETRY_WARN] userAddress is missing from telemetry payload — API will reject with 400. " +
+      "Ensure USER_ADDRESS is set in the Acurast Console environment variables."
+    );
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36 YieldSense/1.0",
+    "Accept": "application/json",
+  };
+
+  if (secret) {
+    headers["Authorization"] = `Bearer ${secret}`;
+  }
+
   try {
-    if (typeof fetch === "undefined") {
-      console.error(`[TELEMETRY_ERROR] Native fetch unavailable. Logs visible in Acurast console only.`);
-      return;
-    }
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36 YieldSense/1.0",
-      "Accept": "application/json"
-    };
-
-    if (secret) {
-      headers["Authorization"] = `Bearer ${secret}`;
-    } else {
-      // Warn once per process — missing secret means production API will reject writes
-      console.warn(
-        "[TELEMETRY_WARN] PROCESSOR_SHARED_SECRET not set. " +
-        "Telemetry writes will be rejected by the production API."
-      );
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout to handle Netlify cold starts
-
-    const response = await fetch(url, {
-      method: "POST",
+    const response = await axios.post(url, event, {
       headers,
-      body: payload,
-      signal: controller.signal,
+      timeout: 15000,
+      validateStatus: null, // Don't throw on non-2xx — handle manually below
     });
 
-    clearTimeout(timeoutId);
+    // ── Debug: always log the API response so we can see 401/400 in the Acurast console
+    console.log(`[TELEMETRY_DEBUG] POST ${url} → HTTP ${response.status}`);
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       console.error(
-        `[TELEMETRY_ERROR] POST ${url} → ${response.status} ${response.statusText}`
+        `[TELEMETRY_ERROR] POST ${url} → ${response.status}. ` +
+        `Response: ${JSON.stringify(response.data ?? "").substring(0, 200)}`
       );
     }
   } catch (err: any) {

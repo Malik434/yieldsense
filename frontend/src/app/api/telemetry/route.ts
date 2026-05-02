@@ -20,6 +20,10 @@ import { applyTelemetryEvent } from '@/lib/stateStore';
  *   Writes without a userAddress are rejected — there is no global fallback key.
  */
 export async function POST(request: Request) {
+  const incomingIp = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const incomingUA = request.headers.get('user-agent') ?? 'unknown';
+  console.log(`[telemetry] Incoming POST from IP=${incomingIp} UA=${incomingUA.substring(0, 80)}`);
+
   // ── Authentication ────────────────────────────────────────────────────────
   const secret = process.env.PROCESSOR_SHARED_SECRET?.trim();
 
@@ -30,11 +34,13 @@ export async function POST(request: Request) {
       : '';
 
     if (providedToken !== secret) {
+      console.error(`[telemetry] REJECTED 401 — token mismatch. Provided: "${providedToken.substring(0, 12)}..." Expected prefix: "${secret.substring(0, 12)}..."`);
       return NextResponse.json(
         { error: 'Unauthorized — invalid or missing Bearer token' },
         { status: 401 }
       );
     }
+    console.log('[telemetry] Auth OK');
   } else {
     // Local dev only — loudly warn so this is never silently deployed to production
     console.warn(
@@ -53,11 +59,13 @@ export async function POST(request: Request) {
   }
 
   if (!event || typeof event !== 'object' || typeof event.event !== 'string') {
+    console.error(`[telemetry] REJECTED 400 — invalid payload structure: ${JSON.stringify(event).substring(0, 200)}`);
     return NextResponse.json(
       { error: 'Invalid payload — must include "event" string field' },
       { status: 400 }
     );
   }
+  console.log(`[telemetry] Event type: "${event.event}" userAddress: "${event.userAddress ?? 'MISSING'}"`);  
 
   // ── Tenant isolation: require userAddress ─────────────────────────────────
   const userAddress =
@@ -65,6 +73,7 @@ export async function POST(request: Request) {
     (event.USER_ADDRESS as string | undefined);
 
   if (!userAddress || typeof userAddress !== 'string') {
+    console.error(`[telemetry] REJECTED 400 — missing userAddress. Full payload keys: ${Object.keys(event).join(', ')}`);
     return NextResponse.json(
       { error: 'Missing userAddress — anonymous telemetry writes are not allowed' },
       { status: 400 }
@@ -76,6 +85,7 @@ export async function POST(request: Request) {
 
   try {
     await applyTelemetryEvent(event);
+    console.log(`[telemetry] OK — persisted event "${event.event}" for user ${event.userAddress}`);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[telemetry] applyTelemetryEvent error:', error);

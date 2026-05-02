@@ -2,159 +2,68 @@
 
 YieldSense is an autonomous DeFi yield harvesting and confidential grid-trading platform designed to run inside an [Acurast](https://acurast.com/) Trusted Execution Environment (TEE). It monitors Aerodrome liquidity pools and Moonwell lending markets on Base, calculates the net reward versus gas costs, and triggers on-chain harvest and trade transactions only when they are provably profitable.
 
-## Features
+## Core Architecture
 
-- **True Yield Engine** (`src/yieldEngine/`): First-principles **fee APR** from on-chain **Swap** logs, **reward APR** from **gauge** `rewardRate`, and **Moonwell** lending market APY integration. Features rolling TVL from reserves, EWMA-smoothed emissions, and a data-quality **confidence** score. **Hybrid mode** (`YIELD_FALLBACK_MODE=auto`) blends in legacy REST APR consensus when RPC coverage or confidence is weak.
-- **Legacy API consensus** (GeckoTerminal, DexScreener, DefiLlama): Still used as fallback or benchmarking via `src/realtimeApr.ts`.
-- **Smart Profitability Checking**: Calculates accumulated rewards using **total APR** (fee + reward) and ETH pricing, then applies deterministic execution guardrails.
-- **Adaptive Runtime Loop**: Emits a recommended next-check interval based on APR regime and gas environment for Acurast-friendly scheduling.
-- **Gas Optimization**: Compares estimated gas costs against expected yield and enforces an efficiency multiplier (default 1.5x) before triggering transactions.
-- **Acurast TEE Ready**: Configured to be bundled via Webpack for seamless deployment to Acurast workers.
-- **Web3 Vault Dashboard**: A fully functional Next.js UI (`frontend/`) deployed on **Netlify** to visualize Acurast worker telemetry, manage liquidity, and safely grant smart contract approvals via MetaMask. Includes the "TEE Handshake" flow using EIP-712 signatures for MEV-protected strategy parameter encryption.
-- **Unified Smart Contracts**: A single `YieldSenseKeeper.sol` contract to manage dual-layer security logic for both harvest and grid-trade executions on Base Sepolia.
-- **Testnet Ready**: Includes `MockUSDC.sol` and a Hardhat deployment script to rapidly spin up test environments on Base Sepolia.
-- **Cross-Ecosystem Utility**: Includes a utility (`deriveAddress.ts`) to convert Substrate SS58 worker addresses to EVM addresses for cross-chain compatibility.
+YieldSense separates data ingestion, decisioning, and signing so sensitive key material remains inside the trusted execution boundary at all times.
+
+- **Frontend (Netlify):** Next.js dashboard providing a premium UI for deposits, EIP-712 strategy parameter signing (MEV protection), and real-time telemetry streaming from the Acurast Hub.
+- **Backend (Acurast TEE):** Secure enclaves running our Node.js bundles (`index.ts` for harvesting, `processor.ts` for grid trading). The TEE holds the private keys, evaluates the on-chain profitability logic, and pushes signed transactions to the blockchain.
+- **Smart Contracts (Base Sepolia):** `YieldSenseKeeper.sol` is a unified vault handling both autonomous harvesting and grid trade execution. It natively verifies Acurast hardware attestations to ensure that only unmodified, official YieldSense code can access vault funds.
+
+## Recent Updates & Progress
+- **Unified Smart Contracts:** Both Harvest execution and Grid Trading logic are now securely managed by a single unified `YieldSenseKeeper.sol` contract.
+- **Netlify Firewall Bypass:** The telemetry pipeline now successfully bypasses Netlify's Edge Firewall (WAF) using User-Agent spoofing, allowing the headless Acurast data center nodes to stream live execution logs directly to the dashboard.
+- **EIP-712 Handshake:** Fully implemented the secure strategy delivery pipeline. Users configure stop-loss rules on the frontend, sign them with MetaMask, and the Acurast TEE decrypts and verifies the payload at runtime.
+- **CLI Deployment:** `acurast.json` is fully configured with proper environment variable mapping (`TELEMETRY_URL`, `GRID_CONFIG_JSON`, etc.) for immediate push-button deployment via the Acurast CLI.
 
 ## Prerequisites
 
-- Node.js (v16+)
-- npm or yarn
-- An Acurast Worker Key (provided as an environment variable in the TEE)
+- Node.js (v18+)
+- An Acurast Worker Key (for testing) or an active Acurast Console account.
+- Base Sepolia ETH for gas.
 
-## Installation
+## Installation & Deployment
 
-Clone the repository and install the required dependencies:
-
+1. **Clone & Install:**
 ```bash
 npm install
 ```
 
-## Project Structure
-
-- `src/index.ts`: The main application logic. Fetches data, calculates profitability, and broadcasts transactions.
-- `src/yieldEngine/`: Modular yield estimation (`getRobustYieldEstimate`), RPC fee / gauge indexers, smoothing, confidence, optional forward projection stub.
-- `frontend/`: The Next.js dashboard and Web3 dApp for interacting with the Vault, completing the "TEE Handshake", and viewing live hardware execution logs.
-- `contracts/YieldSenseKeeper.sol`: The Vault smart contract that executes the Acurast-signed payload.
-- `contracts/MockUSDC.sol`: Mintable testnet asset for the Base Sepolia Testing Suite.
-- `scripts/deployMockAndKeeper.cjs`: Hardhat script for rapidly deploying the Keeper and Mock USDC token to Base Sepolia.
-- `src/deriveAddress.ts`: Utility script to decode a Polkadot/Acurast SS58 address into an EVM-compatible hex address.
-- `webpack.config.js`: Bundles the application into a single file (`dist/bundle.js`) optimized for the Node environment.
-- `tsconfig.json`: TypeScript configuration (configured for ES modules and modern Node environments).
-
-## Configuration
-
-Before running the bot, configure environment variables for your strategy and deployment:
-
-```typescript
-RPC_URL=https://sepolia.base.org
-KEEPER_ADDRESS=...
-POOL_ADDRESS=...
-STRATEGY_TVL_USD=10000
-EFFICIENCY_MULTIPLIER=1.5
-POOL_FEE_RATE=0.003
-MIN_APR_CONFIDENCE=0.55
-APR_FRESHNESS_WINDOW_SEC=1200
-MIN_NET_REWARD_USD=1
-MAX_GAS_USD=30
-COOLDOWN_SEC=300
-STATE_PATH=.yieldsense-state.json
-
-# True Yield Engine (optional; hybrid fallback recommended on testnet)
-# GAUGE_ADDRESS=0x...           # Aerodrome-style gauge for reward APR
-# LP_TOKEN_ADDRESS=0x...        # Defaults to POOL_ADDRESS (V2 pair)
-# REWARD_TOKEN_ADDRESS=0x...  # Override reward token for pricing
-FEE_WINDOW_SEC=604800
-FEE_MAX_BLOCKS=80000
-LOG_CHUNK_SIZE=3000
-REWARD_EWMA_HALF_LIFE_SEC=259200
-MIN_YIELD_CONFIDENCE=0.55
-YIELD_FALLBACK_MODE=auto
-# YIELD_FORWARD_PROJECTION=true
-# STRATEGY_DELTA_USD=10000
-# POOL_FEE_BPS=30
-# APY_COMPOUNDS_PER_YEAR=365
-```
-
-### Read-only hybrid: mainnet yield, Sepolia execution
-
-To exercise the yield engine against **live** Aerodrome pool/gauge data without spending mainnet gas on harvests:
-
-- Set **`DATA_RPC_URL`** (or **`MAINNET_DATA_RPC_URL`**) to a **Base mainnet** RPC (public or free tier).
-- Keep **`RPC_URL`** on **Base Sepolia** (or your execution testnet).
-- Set **`POOL_ADDRESS`** / **`GAUGE_ADDRESS`** to the **real mainnet** pool and gauge you want to mirror.
-- Set **`KEEPER_ADDRESS`** to your keeper **on Sepolia** (same worker key as `acurastWorker` there).
-
-The worker will compute APR from mainnet logs/state, estimate gas from Sepolia, and broadcast **`executeHarvest`** only to the Sepolia keeper. Telemetry includes `hybridReadMainnetExecuteTestnet`, `yieldChainId`, and `executionChainId`.
-
-Optional **`YIELD_CHAIN_ID=8453`** fixes the yield engine’s chain metadata if your data RPC does not report chain id correctly.
-
-**Troubleshooting `lastHarvest` / `BAD_DATA` / `value="0x"`:** `KEEPER_ADDRESS` must be a deployed `YieldSenseKeeper` on the **same network as `RPC_URL`**. A common mistake is `RPC_URL=https://mainnet.base.org` with a keeper that only exists on **Base Sepolia** — use the hybrid env above (Sepolia `RPC_URL` + mainnet `DATA_RPC_URL`) or redeploy the keeper on mainnet.
-
-### Environment Variables
-
-To execute harvest transactions, the application requires the following environment variable to be set (typically provided securely by the Acurast execution environment):
-
-- `ACURAST_WORKER_KEY`: The private key of the wallet triggering the transaction.
-
-The worker emits structured JSON telemetry for:
-- **Yield**: `feeApr`, `rewardApr`, `totalApr`, `estimatedApy`, `forwardAprEstimate`, `dataSourcesUsed`, `diagnostics`
-- Legacy APR / source health when fallback triggers
-- Profitability decision reason
-- Suggested next check interval
-- Harvest submission and confirmation
-
-## Live Testing & Deployment
-
-The YieldSense Next.js frontend has been successfully deployed to Netlify and is integrated with Base Sepolia for live testing.
-
-For a detailed step-by-step walkthrough on how to deploy the platform and test the EIP-712 TEE Handshake workflow, please refer to the [PARTICIPANT_README.md](./PARTICIPANT_README.md).
-
-## Build & Run
-
-To compile the application into a single CommonJS bundle for deployment:
-
+2. **Build the TEE Bundles:**
 ```bash
 npm run build
 ```
+*(This uses Webpack to bundle `src/index.ts` and `src/processor.ts` into isolated, TEE-ready `dist/*.bundle.cjs` files).*
 
-This will output `index.bundle.cjs` into the `dist/` directory. You can run the bundle locally to test the logic:
-
+3. **Deploy the Acurast Worker (Backend):**
 ```bash
-node dist/index.bundle.cjs
+acurast deploy YieldSense
+```
+*(Note: Do not run this inside your Netlify build command. Netlify hosts the Next.js frontend; Acurast hosts the backend workers).*
+
+4. **Attest the Processor:**
+Take the newly generated Processor Address from the Acurast CLI and whitelist it on your smart contract to grant it trading authority.
+
+## Environment Variables
+
+Your `.env` file should include the following to deploy locally:
+
+```typescript
+RPC_URL=https://sepolia.base.org
+DATA_RPC_URL=https://mainnet.base.org
+KEEPER_ADDRESS=0x488147C822b364a940630075f9EACD080Cc16234
+POOL_ADDRESS=0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59
+STRATEGY_TVL_USD=10000
+TELEMETRY_URL=https://yieldsense.huzaifamalik.tech/api/telemetry
+PROCESSOR_SHARED_SECRET=...
+USER_ADDRESS=...
 ```
 
-## Utilities
+## Security Model
 
-If you need to derive an EVM address from an Acurast SS58 worker address, you can run the provided utility script. Make sure to paste your address in `src/deriveAddress.ts` first, then run:
-
-```bash
-npx tsx src/deriveAddress.ts
-```
-
-## Security Architecture
-
-YieldSense separates data ingestion, decisioning, and signing so sensitive key material remains inside the trusted execution boundary at all times.
-
-```mermaid
-flowchart TD
-  A[External RPC/API Providers] --> B[YieldSense Worker Runtime]
-  B --> C[Validation and Guardrails<br/>- confidence checks<br/>- gas and net reward thresholds<br/>- cooldown + freshness windows]
-  C --> D{Profitable and Safe?}
-  D -- No --> E[Skip Harvest + Emit Telemetry]
-  D -- Yes --> F[Build executeHarvest Transaction]
-  F --> G[Acurast TEE Signer<br/>ACURAST_WORKER_KEY stays in TEE]
-  G --> H[Broadcast to Base Sepolia]
-  H --> I[On-chain Keeper Contract]
-  I --> J[Harvest Confirmed + Telemetry]
-```
-
-### Security Controls
-
-- **TEE key isolation**: `ACURAST_WORKER_KEY` is only used inside the Acurast execution environment and is never logged by the app.
-- **Deterministic execution guards**: Harvests are blocked unless profitability and risk thresholds (`EFFICIENCY_MULTIPLIER`, `MAX_GAS_USD`, `MIN_NET_REWARD_USD`, `COOLDOWN_SEC`) are satisfied.
-- **Data quality gating**: Low-confidence or stale APR inputs are filtered with confidence and freshness constraints before execution.
-- **Fail-safe behavior**: When checks fail, the worker emits telemetry and exits without signing or sending a transaction.
+The protocol utilizes dual-layer security:
+1. **Hardware Verification:** The smart contract natively verifies the P-256 signature of the Acurast TEE to guarantee the execution enclave is running an unmodified version of the protocol code.
+2. **Deterministic Guardrails:** The TEE code enforces strict, gas-aware execution logic (circuit breakers, cooldowns, efficiency multipliers) before ever signing a transaction, ensuring capital efficiency at all times.
 
 ## License
-
 ISC

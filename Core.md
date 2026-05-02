@@ -1,7 +1,14 @@
 # YieldSense — Core Documentation
 
 > **Audience:** Developers joining the project for the first time.
-> **Last updated:** April 2026
+> **Last updated:** May 2026
+
+---
+
+### 🚀 May 2026 Architecture Updates
+* **Unified Keeper Contract:** `YieldSenseKeeper.sol` has been successfully unified. It now manages *both* `executeHarvest` (Yield harvesting) and `executeTrade` (Grid trading) autonomously via a single Acurast processor.
+* **Telemetry & WAF Bypass:** The Netlify Edge Firewall (WAF) was previously blocking headless Acurast data center IPs. The `telemetry.ts` script now successfully bypasses this via `User-Agent` spoofing, streaming all live execution logs natively to the Next.js frontend state database.
+* **CLI Deployment Streamlined:** The `acurast.json` config has been fully loaded with the correct environment variables, enabling direct `acurast deploy YieldSense` execution without custom build scripts.
 
 ---
 
