@@ -62,6 +62,8 @@ export function DepositModule() {
   const isLoading = txState === 'approving' || txState === 'depositing';
 
   const handleApprove = async () => {
+    // Legacy EOA fallback: only used when writeContractsAsync (EIP-5792 batch) is not
+    // available (e.g. MetaMask without smart account support). Not called from UI directly.
     if (!actualAssetAddress || depositAmountParsed === ZERO) return;
     setTxState('approving');
     try {
@@ -79,10 +81,19 @@ export function DepositModule() {
     }
   };
 
+  const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
+
   const handleDeposit = async () => {
-    if (!address || depositAmountParsed === ZERO) return;
+    if (!address || !actualAssetAddress || depositAmountParsed === ZERO) return;
     setTxState('depositing');
     try {
+      // Step 1: ensure approval is current
+      if (!isApprovedForAmount) {
+        await handleApprove();
+        // handleApprove resets state to 'idle'; caller must re-click to deposit.
+        return;
+      }
+      // Step 2: deposit
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
@@ -92,6 +103,7 @@ export function DepositModule() {
       setTxState('success');
       setDepositAmount('');
       setTimeout(() => setTxState('idle'), 3000);
+      await refetchAllowance();
     } catch (e) {
       console.error(e);
       setTxState('idle');
@@ -173,8 +185,9 @@ export function DepositModule() {
         </div>
       </div>
 
-      {/* Approve step — shown only when allowance is insufficient for the entered amount */}
-      {depositAmountParsed > ZERO && !isApprovedForAmount && (
+      {/* Approve step — only shown in the non-sponsored EOA fallback path when
+          paymasterService is not configured and the user hasn't pre-approved yet. */}
+      {!paymasterUrl && depositAmountParsed > ZERO && !isApprovedForAmount && (
         <div
           className="rounded-lg p-4 flex flex-col gap-3"
           style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
@@ -202,8 +215,8 @@ export function DepositModule() {
         </div>
       )}
 
-      {/* Approved indicator */}
-      {isApprovedForAmount && (
+      {/* Approved indicator — only relevant in the non-sponsored EOA path */}
+      {!paymasterUrl && isApprovedForAmount && (
         <div className="flex items-center gap-2">
           <CheckCircle2 size={14} style={{ color: '#00ff9f' }} />
           <span className="font-mono text-xs" style={{ color: '#00ff9f' }}>
@@ -212,12 +225,12 @@ export function DepositModule() {
         </div>
       )}
 
-      {/* Deposit button */}
+      {/* Deposit button — no prior approval needed when paymaster is active */}
       <button
         onClick={handleDeposit}
-        disabled={isLoading || !isApprovedForAmount || depositAmountParsed === ZERO}
+        disabled={isLoading || depositAmountParsed === ZERO || (!paymasterUrl && !isApprovedForAmount)}
         className="btn-primary flex items-center justify-center gap-2 w-full"
-        style={{ opacity: isApprovedForAmount && depositAmountParsed > ZERO ? 1 : 0.4 }}
+        style={{ opacity: depositAmountParsed > ZERO && (paymasterUrl || isApprovedForAmount) ? 1 : 0.4 }}
       >
         {txState === 'depositing' ? (
           <><Loader2 size={14} className="animate-spin" /> DEPOSITING…</>

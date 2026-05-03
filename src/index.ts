@@ -31,8 +31,8 @@ import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
 
 const CONFIG = {
-  /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Sepolia). */
-  rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
+  /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Mainnet). */
+  rpcUrl: process.env.RPC_URL ?? "https://mainnet.base.org",
   /**
    * Optional: RPC for yield math only (logs, pool, gauge). When set, APR uses live mainnet data
    * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
@@ -54,7 +54,7 @@ const CONFIG = {
   })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
-  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
+  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.0005),
   estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "400000"),
   minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
   maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
