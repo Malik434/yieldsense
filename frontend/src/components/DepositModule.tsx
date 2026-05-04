@@ -4,20 +4,8 @@ import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { ASSET_ADDRESS, KEEPER_ADDRESS, ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
-import { ShieldCheck, ArrowDownToLine, Unlock, Lock, Loader2, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, ArrowDownToLine, Unlock, Lock, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
 
-/**
- * DepositModule
- *
- * Approval model:
- *   We approve exactly the deposit amount rather than type(uint256).max.
- *   An unlimited approval grants the vault permanent access to all user USDC
- *   regardless of how much they intend to deposit, creating unnecessary risk
- *   if the contract is ever exploited or replaced.
- *
- *   The trade-off is that each deposit requires a fresh approval if the user
- *   changes the amount. This is the correct security posture for an MVP.
- */
 export function DepositModule() {
   const { address, isConnected } = useAccount();
   const [depositAmount, setDepositAmount] = useState('');
@@ -62,8 +50,6 @@ export function DepositModule() {
   const isLoading = txState === 'approving' || txState === 'depositing';
 
   const handleApprove = async () => {
-    // Legacy EOA fallback: only used when writeContractsAsync (EIP-5792 batch) is not
-    // available (e.g. MetaMask without smart account support). Not called from UI directly.
     if (!actualAssetAddress || depositAmountParsed === ZERO) return;
     setTxState('approving');
     try {
@@ -81,19 +67,14 @@ export function DepositModule() {
     }
   };
 
-  const paymasterUrl = process.env.NEXT_PUBLIC_PAYMASTER_URL;
-
   const handleDeposit = async () => {
     if (!address || !actualAssetAddress || depositAmountParsed === ZERO) return;
     setTxState('depositing');
     try {
-      // Step 1: ensure approval is current
       if (!isApprovedForAmount) {
         await handleApprove();
-        // handleApprove resets state to 'idle'; caller must re-click to deposit.
         return;
       }
-      // Step 2: deposit
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
@@ -112,19 +93,14 @@ export function DepositModule() {
 
   if (!isConnected) {
     return (
-      <div className="cyber-card p-6 flex flex-col items-center justify-center text-center gap-4 min-h-[280px]">
-        <div
-          className="w-14 h-14 rounded-full flex items-center justify-center"
-          style={{ background: 'rgba(0,255,159,0.06)', border: '1px solid rgba(0,255,159,0.2)' }}
-        >
-          <Lock size={24} style={{ color: '#00ff9f', opacity: 0.6 }} />
+      <div className="ys-card p-12 flex flex-col items-center justify-center text-center gap-6 min-h-[350px]">
+        <div className="w-20 h-20 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center">
+          <Wallet size={32} className="text-[#484F58]" />
         </div>
-        <div>
-          <p className="font-mono text-sm font-semibold" style={{ color: '#e2e8f0' }}>
-            WALLET NOT CONNECTED
-          </p>
-          <p className="text-xs mt-1" style={{ color: '#64748b' }}>
-            Connect your wallet to deposit into the vault
+        <div className="space-y-2">
+          <h3 className="text-xl font-heading font-bold text-[#F5F7FA] uppercase tracking-widest">Connect Wallet</h3>
+          <p className="text-xs font-mono text-[#8B949E] max-w-[240px] mx-auto leading-relaxed uppercase tracking-widest">
+            Synchronize your asset account to initialize vault allocation.
           </p>
         </div>
       </div>
@@ -132,114 +108,89 @@ export function DepositModule() {
   }
 
   return (
-    <div className="cyber-card p-6 flex flex-col gap-5">
+    <div className="ys-card p-12 flex flex-col gap-10 h-full relative">
+      <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+      
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <ArrowDownToLine size={16} style={{ color: '#00ff9f' }} />
-          <span className="neon-label">DEPOSIT MODULE</span>
+        <div className="flex items-center gap-4">
+          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+            <ArrowDownToLine size={20} className="text-[#C2E812]" />
+          </div>
+          <div>
+            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Capital Inflow</p>
+            <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Asset Allocation</h3>
+          </div>
         </div>
-        <span className="status-badge verified">
-          <ShieldCheck size={10} />
-          VAULT ACTIVE
-        </span>
+        <div className="flex items-center gap-2 px-0 py-1.5 text-[#00FFA3]">
+          <ShieldCheck size={14} />
+          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.3em]">Secured</span>
+        </div>
       </div>
 
-      {/* Wallet balance */}
-      <div
-        className="rounded-lg p-4"
-        style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}
-      >
-        <p className="text-xs font-mono" style={{ color: '#64748b' }}>WALLET BALANCE</p>
-        <p className="font-mono font-bold text-xl mt-1" style={{ color: '#e2e8f0' }}>
-          {parseFloat(walletBalance).toFixed(4)}{' '}
-          <span style={{ color: '#64748b', fontSize: 13 }}>USDC</span>
+      <div className="space-y-6">
+        {/* Wallet Balance */}
+        <div className="rounded-3xl p-6 bg-white/[0.02] border border-white/[0.04]">
+          <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-2">Available Balance</p>
+          <div className="flex items-baseline gap-3">
+            <span className="text-4xl font-heading font-bold text-[#F5F7FA]">
+              {parseFloat(walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-lg font-heading font-bold text-[#484F58]">USDC</span>
+          </div>
+        </div>
+
+        {/* Input Field */}
+        <div className="flex flex-col gap-3">
+          <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+            Amount to Deposit
+          </label>
+          <div className="flex gap-4">
+            <div className="relative flex-1">
+              <input
+                type="number"
+                placeholder="0.00"
+                value={depositAmount}
+                onChange={e => setDepositAmount(e.target.value)}
+                className="ys-input w-full pr-16 text-2xl"
+              />
+              <div className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-[#484F58]">USDC</div>
+            </div>
+            <button
+              onClick={() => setDepositAmount(parseFloat(walletBalance).toFixed(6))}
+              className="px-6 rounded-2xl bg-white/5 border border-white/10 font-heading font-bold text-xs uppercase tracking-widest hover:bg-white/10 transition-all"
+            >
+              Max
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Info Notice */}
+      <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10">
+        <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
+        <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
+          Allocation will be processed through the YieldSense autonomous engine. Funds remain accessible via the exit flow at any time.
         </p>
       </div>
 
-      {/* Amount input — shown first so approve/deposit can be amount-scoped */}
-      <div className="flex flex-col gap-2">
-        <label className="font-mono text-xs" style={{ color: '#64748b' }}>
-          DEPOSIT AMOUNT (USDC)
-        </label>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            placeholder="0.00"
-            value={depositAmount}
-            onChange={e => setDepositAmount(e.target.value)}
-            className="cyber-input flex-1"
-            min="0"
-          />
-          <button
-            onClick={() => setDepositAmount(parseFloat(walletBalance).toFixed(6))}
-            className="px-3 rounded-lg font-mono text-xs font-semibold transition-all"
-            style={{
-              background: 'rgba(0,255,159,0.06)',
-              border: '1px solid rgba(0,255,159,0.2)',
-              color: '#00ff9f',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            MAX
-          </button>
-        </div>
-      </div>
-
-      {/* Approve step — only shown in the non-sponsored EOA fallback path when
-          paymasterService is not configured and the user hasn't pre-approved yet. */}
-      {!paymasterUrl && depositAmountParsed > ZERO && !isApprovedForAmount && (
-        <div
-          className="rounded-lg p-4 flex flex-col gap-3"
-          style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
+      {/* Action Button */}
+      <div className="mt-auto">
+        <button
+          onClick={handleDeposit}
+          disabled={isLoading || depositAmountParsed === ZERO}
+          className="ys-btn-primary w-full h-16 text-sm"
         >
-          <div className="flex items-center gap-2">
-            <Unlock size={14} style={{ color: '#a78bfa' }} />
-            <p className="font-mono text-xs font-semibold" style={{ color: '#a78bfa' }}>
-              STEP 1 — APPROVE {depositAmount} USDC
-            </p>
-          </div>
-          <p className="text-xs" style={{ color: '#64748b' }}>
-            Authorise the vault to spend exactly {depositAmount} USDC for this deposit.
-          </p>
-          <button
-            onClick={handleApprove}
-            disabled={isLoading}
-            className="btn-purple flex items-center justify-center gap-2 w-full"
-          >
-            {txState === 'approving' ? (
-              <><Loader2 size={14} className="animate-spin" /> APPROVING…</>
-            ) : (
-              <><Unlock size={14} /> APPROVE {depositAmount} USDC</>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Approved indicator — only relevant in the non-sponsored EOA path */}
-      {!paymasterUrl && isApprovedForAmount && (
-        <div className="flex items-center gap-2">
-          <CheckCircle2 size={14} style={{ color: '#00ff9f' }} />
-          <span className="font-mono text-xs" style={{ color: '#00ff9f' }}>
-            APPROVED — ready to deposit
-          </span>
-        </div>
-      )}
-
-      {/* Deposit button — no prior approval needed when paymaster is active */}
-      <button
-        onClick={handleDeposit}
-        disabled={isLoading || depositAmountParsed === ZERO || (!paymasterUrl && !isApprovedForAmount)}
-        className="btn-primary flex items-center justify-center gap-2 w-full"
-        style={{ opacity: depositAmountParsed > ZERO && (paymasterUrl || isApprovedForAmount) ? 1 : 0.4 }}
-      >
-        {txState === 'depositing' ? (
-          <><Loader2 size={14} className="animate-spin" /> DEPOSITING…</>
-        ) : txState === 'success' ? (
-          <><CheckCircle2 size={14} /> DEPOSITED!</>
-        ) : (
-          <><ArrowDownToLine size={14} /> DEPOSIT TO VAULT</>
-        )}
-      </button>
+          {txState === 'approving' ? (
+            <><Loader2 size={20} className="animate-spin" /> Authorizing Assets...</>
+          ) : txState === 'depositing' ? (
+            <><Loader2 size={20} className="animate-spin" /> Executing Inflow...</>
+          ) : txState === 'success' ? (
+            <><CheckCircle2 size={20} className="text-[#030605]" /> Transaction Complete</>
+          ) : (
+            <><ArrowDownToLine size={20} /> Confirm Allocation</>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

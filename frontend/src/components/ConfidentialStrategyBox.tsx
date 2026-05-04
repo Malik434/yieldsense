@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Lock, Shield, EyeOff, AlertTriangle, Info, CheckCircle2, Loader2 } from 'lucide-react';
-import { useAccount, useSignTypedData } from 'wagmi';
-import { KEEPER_ADDRESS } from '@/lib/contracts';
+import { Lock, Shield, EyeOff, AlertTriangle, CheckCircle2, Loader2, Cpu, Fingerprint, TrendingUp, TrendingDown, Target, SlidersHorizontal } from 'lucide-react';
+import { useAccount, useSignTypedData, useReadContract } from 'wagmi';
+import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
 import { SecureSignatureAnimation } from './SecureSignatureAnimation';
 
 interface StrategyParams {
@@ -20,11 +20,10 @@ const DEFAULT_PARAMS: StrategyParams = {
   rebalanceInterval: '4',
 };
 
-// EIP-712 domain — must match /api/strategy/route.ts and processor.ts
 const DOMAIN = {
   name: 'YieldSense',
   version: '1',
-  chainId: 84532, // Base Sepolia
+  chainId: 84532, 
   verifyingContract: KEEPER_ADDRESS,
 } as const;
 
@@ -49,7 +48,6 @@ export function ConfidentialStrategyBox() {
 
   const { signTypedDataAsync } = useSignTypedData();
 
-  // Load previously committed params from localStorage as a UI convenience
   useEffect(() => {
     if (!address) return;
     const stored = localStorage.getItem(`ys_strategy_${address}`);
@@ -75,7 +73,6 @@ export function ConfidentialStrategyBox() {
     const timestamp = Math.floor(Date.now() / 1000);
 
     try {
-      // Step 1: Sign the EIP-712 typed data with the user's wallet
       const message = {
         stopLossPrice: params.stopLossPrice || '0',
         gridUpper: params.gridUpper || '0',
@@ -93,8 +90,7 @@ export function ConfidentialStrategyBox() {
 
       setCommitStatus('submitting');
 
-      // Step 2: POST signed params to the API relay so the Acurast processor can fetch them
-      const res = await fetch('/api/strategy', {
+      const res = await fetch('https://yieldsense.netlify.app/.netlify/functions/update-strategy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -113,9 +109,9 @@ export function ConfidentialStrategyBox() {
         throw new Error(body.error ?? `API returned ${res.status}`);
       }
 
-      // Step 3: Persist to localStorage as a UI cache (never used by the processor)
       localStorage.setItem(`ys_strategy_${address}`, JSON.stringify(params));
       setCommitStatus('success');
+      setTimeout(() => setCommitStatus('idle'), 4000);
     } catch (err: any) {
       setCommitStatus('error');
       setErrorMsg(err?.message ?? String(err));
@@ -127,159 +123,157 @@ export function ConfidentialStrategyBox() {
     if (commitStatus === 'success') setCommitStatus('idle');
   };
 
+  if (!isConnected) {
+    return (
+      <div className="ys-card p-12 flex flex-col items-center justify-center text-center gap-6 h-full">
+        <div className="w-20 h-20 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center opacity-40">
+          <Lock size={32} className="text-[#484F58]" />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-xl font-heading font-bold text-[#F5F7FA] uppercase tracking-widest">Vault Entry</h3>
+          <p className="text-xs font-mono text-[#8B949E] max-w-[240px] mx-auto leading-relaxed uppercase tracking-widest">
+            Synchronize cryptographic identity to initialize strategy engine.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {showAnimation && <SecureSignatureAnimation onComplete={handleAnimationComplete} />}
 
-      <div className="cyber-card-locked p-6 flex flex-col gap-5 h-full">
-        {/* Header */}
+      <div className="ys-card p-12 flex flex-col gap-10 h-full relative">
+        <div className="absolute top-0 right-0 p-12 bg-[#00FFA3]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+        
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Lock size={16} style={{ color: '#a78bfa' }} />
-            <span className="font-mono font-bold tracking-widest" style={{ fontSize: 11, color: '#a78bfa', letterSpacing: '0.15em' }}>
-              CONFIDENTIAL STRATEGY
-            </span>
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+              <SlidersHorizontal size={20} className="text-[#00FFA3]" />
+            </div>
+            <div>
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Confidential Logic</p>
+              <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Strategy Parameters</h3>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {commitStatus === 'success' && (
-              <span className="status-badge encrypted">
-                <CheckCircle2 size={9} />
-                TEE SECURED
-              </span>
-            )}
-            <span className="status-badge encrypted">
-              <EyeOff size={9} />
-              PRIVATE
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="px-3 py-1.5 rounded-lg bg-[#00FFA3]/5 border border-[#00FFA3]/10 flex items-center gap-2">
+              <Cpu size={12} className="text-[#00FFA3] animate-pulse" />
+              <span className="text-[10px] font-mono font-bold text-[#00FFA3] tracking-widest">TEE Active</span>
+            </div>
           </div>
         </div>
 
-        {/* Privacy notice */}
-        <div className="rounded-lg p-3 flex items-start gap-2" style={{ background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.15)' }}>
-          <Info size={13} style={{ color: '#a78bfa', flexShrink: 0, marginTop: 1 }} />
-          <p className="font-mono text-xs leading-relaxed" style={{ color: '#94a3b8' }}>
-            Parameters are signed with your wallet and relayed to the Acurast TEE.{' '}
-            <span style={{ color: '#a78bfa' }}>
-              They are never stored on-chain and are invisible to validators or MEV bots.
-            </span>
-          </p>
-        </div>
-
-        {!isConnected ? (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="font-mono text-xs text-center" style={{ color: '#334155' }}>
-              Connect wallet to configure your confidential strategy
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4 flex-1">
-            {/* Stop Loss */}
-            <div className="flex flex-col gap-1.5">
+        <div className="space-y-8">
+          {/* Stop Loss Price */}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+                Protected Stop-Loss
+              </label>
               <div className="flex items-center gap-2">
-                <Lock size={11} style={{ color: '#a78bfa' }} />
-                <label className="font-mono text-xs font-semibold" style={{ color: '#a78bfa' }}>
-                  INVISIBLE STOP-LOSS PRICE
-                </label>
-                <span className="px-1.5 py-0.5 rounded font-mono text-[9px]" style={{ background: 'rgba(255,68,102,0.08)', color: '#ff4466', border: '1px solid rgba(255,68,102,0.2)' }}>
-                  FRONT-RUN PROTECTED
-                </span>
+                <Shield size={10} className="text-[#FF4466]/60" />
+                <span className="text-[9px] font-mono font-bold text-[#FF4466]/80 uppercase tracking-widest">Shielded</span>
               </div>
+            </div>
+            <div className="relative group/input">
               <input
                 type="number"
-                placeholder="e.g. 0.94 USDC"
+                placeholder="0.00 USDC"
                 value={params.stopLossPrice}
                 onChange={handleChange('stopLossPrice')}
                 disabled={isBusy}
-                className="cyber-input"
+                className="ys-input w-full pr-16 text-xl"
               />
-              <p className="font-mono text-[10px]" style={{ color: '#334155' }}>
-                Trigger price encrypted inside TEE — validators cannot see or front-run this
-              </p>
-            </div>
-
-            {/* Grid Range */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2">
-                <Lock size={11} style={{ color: '#a78bfa' }} />
-                <label className="font-mono text-xs font-semibold" style={{ color: '#a78bfa' }}>
-                  CONFIDENTIAL GRID RANGE
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px]" style={{ color: '#64748b' }}>UPPER BOUND</span>
-                  <input type="number" placeholder="e.g. 1.02" value={params.gridUpper} onChange={handleChange('gridUpper')} disabled={isBusy} className="cyber-input" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="font-mono text-[10px]" style={{ color: '#64748b' }}>LOWER BOUND</span>
-                  <input type="number" placeholder="e.g. 0.96" value={params.gridLower} onChange={handleChange('gridLower')} disabled={isBusy} className="cyber-input" />
-                </div>
+              <div className="absolute right-5 top-1/2 -translate-y-1/2">
+                <Target size={16} className="text-[#484F58] group-focus-within:text-[#00FFA3] transition-colors" />
               </div>
             </div>
-
-            {/* Rebalance Interval */}
-            <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-xs font-semibold" style={{ color: '#a78bfa' }}>
-                REBALANCE INTERVAL (HOURS)
-              </label>
-              <div className="flex gap-2">
-                {['1', '4', '8', '24'].map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => { setParams(p => ({ ...p, rebalanceInterval: v })); if (commitStatus === 'success') setCommitStatus('idle'); }}
-                    disabled={isBusy}
-                    className="flex-1 py-2 rounded-lg font-mono text-xs font-semibold transition-all"
-                    style={{
-                      background: params.rebalanceInterval === v ? 'rgba(139,92,246,0.2)' : 'rgba(0,0,0,0.3)',
-                      border: params.rebalanceInterval === v ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(255,255,255,0.06)',
-                      color: params.rebalanceInterval === v ? '#a78bfa' : '#64748b',
-                    }}
-                  >
-                    {v}h
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Error message */}
-            {commitStatus === 'error' && (
-              <div className="flex items-start gap-2 rounded-lg p-2" style={{ background: 'rgba(255,68,102,0.06)', border: '1px solid rgba(255,68,102,0.2)' }}>
-                <AlertTriangle size={11} style={{ color: '#ff4466', flexShrink: 0, marginTop: 1 }} />
-                <span className="font-mono text-[10px]" style={{ color: '#ff4466' }}>{errorMsg}</span>
-              </div>
-            )}
-
-            {/* Save Button */}
-            <button
-              onClick={handleSave}
-              disabled={!hasValues || isBusy}
-              className="btn-purple flex items-center justify-center gap-2 w-full mt-auto"
-            >
-              {isBusy ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  {commitStatus === 'signing' ? 'WAITING FOR WALLET...' : 'COMMITTING TO TEE...'}
-                </>
-              ) : commitStatus === 'success' ? (
-                <>
-                  <CheckCircle2 size={14} />
-                  UPDATE SECURE STRATEGY
-                </>
-              ) : (
-                <>
-                  <Shield size={14} />
-                  SIGN & COMMIT TO TEE
-                </>
-              )}
-            </button>
-
-            {commitStatus === 'success' && (
-              <p className="font-mono text-[10px] text-center" style={{ color: '#00ff9f' }}>
-                ✓ Strategy signed · Relayed to Acurast processor · Enforced silently
-              </p>
-            )}
           </div>
-        )}
+
+          {/* Grid Range */}
+          <div className="flex flex-col gap-3">
+            <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+              Optimization Range
+            </label>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="flex flex-col gap-2">
+                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Upper</span>
+                <input type="number" placeholder="1.00" value={params.gridUpper} onChange={handleChange('gridUpper')} disabled={isBusy} className="ys-input w-full text-base" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Lower</span>
+                <input type="number" placeholder="0.80" value={params.gridLower} onChange={handleChange('gridLower')} disabled={isBusy} className="ys-input w-full text-base" />
+              </div>
+            </div>
+          </div>
+
+          {/* Rebalance Interval */}
+          <div className="flex flex-col gap-3">
+            <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+              Execution Heartbeat
+            </label>
+            <div className="flex gap-2">
+              {['1', '4', '8', '24'].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => { setParams(p => ({ ...p, rebalanceInterval: v })); if (commitStatus === 'success') setCommitStatus('idle'); }}
+                  disabled={isBusy}
+                  className={`
+                    flex-1 h-12 rounded-2xl font-heading text-[10px] font-bold transition-all duration-300
+                    ${params.rebalanceInterval === v 
+                      ? 'bg-[#C2E812] text-[#030605] shadow-lg shadow-[#C2E812]/10' 
+                      : 'bg-white/5 border border-white/5 text-[#484F58] hover:text-[#8B949E]'}
+                    border-none uppercase tracking-widest
+                  `}
+                >
+                  {v}H
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Security Footer */}
+        <div className="rounded-2xl p-6 bg-white/[0.02] border border-white/[0.04] mt-auto">
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-[0.2em] uppercase">Security Metadata</span>
+            <Fingerprint size={12} className="text-[#C2E812]/40" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-wider">EIP-712</span>
+              <span className="text-[10px] font-mono font-bold text-[#F5F7FA]">YieldSense v1</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-wider">Nonce</span>
+              <span className="text-[10px] font-mono font-bold text-[#C2E812]">Authorized</span>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={handleSave}
+          disabled={!hasValues || isBusy}
+          className="ys-btn-primary w-full h-16 text-sm"
+        >
+          {isBusy ? (
+            <div className="flex items-center justify-center gap-3">
+              <Loader2 size={20} className="animate-spin" />
+              <span className="font-heading font-bold uppercase tracking-widest">Sealing Strategy...</span>
+            </div>
+          ) : commitStatus === 'success' ? (
+            <div className="flex items-center justify-center gap-3">
+              <CheckCircle2 size={20} className="text-[#030605]" />
+              <span className="font-heading font-bold uppercase tracking-widest">Strategy Sealed</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-3">
+              <Shield size={20} />
+              <span className="font-heading font-bold uppercase tracking-widest">Sign & Commit to TEE</span>
+            </div>
+          )}
+        </button>
       </div>
     </>
   );

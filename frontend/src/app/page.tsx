@@ -12,18 +12,19 @@ import { AprGauge } from '@/components/AprGauge';
 import { PnlChart } from '@/components/PnlChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { WithdrawModule } from '@/components/WithdrawModule';
-import { TestingSuite } from '@/components/TestingSuite';
-import { WorkerProvisioningBox } from '@/components/WorkerProvisioningBox';
-import { HardwareTrustDashboard } from '@/components/HardwareTrustDashboard';
 import { PortfolioTicker } from '@/components/PortfolioTicker';
 import {
   ShieldCheck,
   Layers,
   TrendingUp,
   LogOut,
-  AlertCircle,
   ChevronRight,
-  Droplets
+  Activity,
+  Cpu,
+  ArrowRight,
+  LayoutDashboard,
+  Settings,
+  History
 } from 'lucide-react';
 
 interface WorkerState {
@@ -51,31 +52,23 @@ interface ConsensusData {
 }
 
 const SECTIONS = [
-  { id: 'testing-suite', label: 'TESTNET', icon: <Droplets size={12} /> },
-  { id: 'command-center', label: 'STRATEGY', icon: <Layers size={12} /> },
-  { id: 'live-alpha', label: 'LIVE ALPHA', icon: <TrendingUp size={12} /> },
-  { id: 'exit-flow', label: 'EXIT', icon: <LogOut size={12} /> },
+  { id: 'command-center', label: 'Allocation', icon: <LayoutDashboard size={14} /> },
+  { id: 'live-alpha', label: 'Activity', icon: <History size={14} /> },
+  { id: 'exit-flow', label: 'Withdraw', icon: <LogOut size={14} /> },
 ];
 
 function SectionHeading({ id, label, sublabel }: { id: string; label: string; sublabel: string }) {
   return (
-    <div id={id} className="section-divider">
-      <span
-        className="font-mono font-bold tracking-widest px-4 py-1.5 rounded-lg"
-        style={{
-          fontSize: 11,
-          color: '#00ff9f',
-          letterSpacing: '0.2em',
-          background: 'rgba(0,255,159,0.04)',
-          border: '1px solid rgba(0,255,159,0.12)',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {label}
-      </span>
-      <span className="font-mono text-xs" style={{ color: '#334155', whiteSpace: 'nowrap' }}>
+    <div id={id} className="mb-12 pt-24 group">
+      <div className="flex items-center gap-4 mb-4">
+        <h2 className="text-3xl font-heading font-bold tracking-tighter text-[#F5F7FA]">
+          {label}
+        </h2>
+        <div className="h-px flex-1 bg-white/[0.05]" />
+      </div>
+      <p className="text-xs font-mono font-bold text-[#484F58] uppercase tracking-[0.4em]">
         {sublabel}
-      </span>
+      </p>
     </div>
   );
 }
@@ -85,9 +78,7 @@ export default function CommandCenter() {
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [consensus, setConsensus] = useState<ConsensusData | null>(null);
   const [mounted, setMounted] = useState(false);
-  const [provisionedWorker, setProvisionedWorker] = useState<string>('');
 
-  // Fetch worker state from Acurast processor
   const fetchState = async () => {
     if (!address) {
       setWorkerState(null);
@@ -102,7 +93,6 @@ export default function CommandCenter() {
     } catch { }
   };
 
-  // Fetch consensus APR
   const fetchConsensus = async () => {
     try {
       const res = await fetch('/api/consensus');
@@ -129,11 +119,9 @@ export default function CommandCenter() {
     };
   }, [address]);
 
-  // Watch block number to trigger refetches
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const queryClient = useQueryClient();
 
-  // Read vault user data
   const { data: maxWithdraw, refetch: refetchUserData } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
@@ -142,213 +130,152 @@ export default function CommandCenter() {
     query: { enabled: !!address },
   });
 
-  // Automatically refetch when a new block is mined (covers deposits/harvests)
   useEffect(() => {
     if (blockNumber) {
       refetchUserData();
     }
   }, [blockNumber, refetchUserData]);
 
-  // USDC has 6 decimals.
   const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
-  const initialDeposit = balance; // In ERC4626, we don't track initial deposit on-chain. An indexer is required for exact PnL.
-
+  
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
 
-  // UNIT CONTRACT: AprGauge expects ALL apr values in BPS (e.g. 4927 = 49.27%)
-  // - consensus.consensus is already BPS (from /api/consensus)
-  // - workerState.previousApr is a decimal fraction (0.4927) from the yield engine → convert to BPS
   const prevApr =
     consensus?.consensus ??
     (workerState?.previousApr != null ? Math.round(workerState.previousApr * 10_000) : null);
-  // rewardAprEwm.mean is also a decimal fraction from the yield engine → pass as-is; AprGauge multiplies by 100
   const ewmMean = workerState?.rewardAprEwm?.mean ?? null;
 
   if (!mounted) return null;
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--background)' }}>
+    <div className="min-h-screen">
       <Header isHealthy={!!isHealthy} isWarning={!!isWarning} />
 
-      {/* Sticky section nav */}
-      <div
-        className="sticky z-40 top-16 w-full flex justify-center"
-        style={{ padding: '0' }}
-      >
-        <div
-          className="flex items-center gap-1 px-2 py-1.5 mt-3 rounded-xl"
-          style={{
-            background: 'rgba(13,17,23,0.9)',
-            border: '1px solid rgba(255,255,255,0.06)',
-            backdropFilter: 'blur(12px)',
-          }}
-        >
-          {SECTIONS.map((s, i) => (
-            <a
-              key={s.id}
-              href={`#${s.id}`}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-[10px] font-semibold tracking-widest transition-all"
-              style={{ color: '#475569' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#00ff9f'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(0,255,159,0.06)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#475569'; (e.currentTarget as HTMLAnchorElement).style.background = 'transparent'; }}
-            >
-              {s.icon}
-              {s.label}
-              {i < SECTIONS.length - 1 && <ChevronRight size={10} style={{ color: '#1e293b', marginLeft: 4 }} />}
-            </a>
-          ))}
+      <main className="max-w-7xl mx-auto px-6 pb-40">
+
+        {/* Hero Portfolio Section (Jupiter Style) */}
+        <div className="pt-12 mb-16">
+          <PortfolioTicker
+            balance={balance}
+            unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
+            totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
+            apr={workerState?.previousApr ?? 0}
+          />
         </div>
-      </div>
 
-      <main className="max-w-7xl mx-auto px-6 pb-24" style={{ paddingTop: '2rem' }}>
-
-        {/* Hero status bar */}
-        <div
-          className="rounded-xl px-5 py-3 flex items-center justify-between mb-8"
-          style={{
-            background: isHealthy
-              ? 'rgba(0,255,159,0.04)'
-              : isWarning
-                ? 'rgba(245,158,11,0.04)'
-                : 'rgba(255,68,102,0.04)',
-            border: `1px solid ${isHealthy ? 'rgba(0,255,159,0.15)' : isWarning ? 'rgba(245,158,11,0.15)' : 'rgba(255,68,102,0.15)'}`,
-          }}
-        >
-          <div className="flex items-center gap-3">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{
-                background: isHealthy ? '#00ff9f' : isWarning ? '#f59e0b' : '#ff4466',
-                boxShadow: `0 0 8px ${isHealthy ? '#00ff9f' : isWarning ? '#f59e0b' : '#ff4466'}`,
-                animation: 'pulse-ring 1.5s ease-out infinite',
-              }}
-            />
-            <span className="font-mono text-xs font-semibold tracking-widest" style={{ color: '#e2e8f0' }}>
-              {isHealthy ? 'PROCESSOR ACTIVE — STRATEGY RUNNING' : isWarning ? 'API RETRYING — STRATEGY PAUSED' : 'NO STATE DETECTED — CONNECT WALLET TO START'}
-            </span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="font-mono text-xs" style={{ color: '#475569' }}>
-              GRID TRADES:{' '}
-              <span style={{ color: '#a78bfa' }}>{workerState?.gridTradesExecuted ?? 0}</span>
-            </span>
-            <span className="font-mono text-xs" style={{ color: '#475569' }}>
-              CHECKPOINT:{' '}
-              <span style={{ color: '#64748b' }}>{workerState?.yieldIndexerCheckpointBlock ?? '—'}</span>
-            </span>
-            {workerState?.lastDecisionReason && (
-              <span
-                className="font-mono text-xs px-2 py-0.5 rounded"
-                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: '#f59e0b', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              >
-                {workerState.lastDecisionReason}
+        {/* Status Dashboard Bar */}
+        <div className="mb-20 animate-fade-in">
+          <div className={`
+            ys-card p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-[#0B0F0D]/60
+            ${isHealthy ? 'border-[#C2E812]/10' : isWarning ? 'border-amber-500/10' : 'border-[#FF4466]/10'}
+          `}>
+            <div className="flex items-center gap-5">
+              <div className="relative">
+                <div className={`status-dot ${isHealthy ? 'bg-[#C2E812]' : isWarning ? 'bg-amber-400' : 'bg-[#FF4466]'}`} />
+              </div>
+              <span className="font-heading font-bold text-sm tracking-tight text-[#F5F7FA] uppercase">
+                {isHealthy ? 'Autonomous Guardian — Active' : isWarning ? 'Oracle Synchronization Degradation' : 'Hardware Signal Lost'}
               </span>
-            )}
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-10">
+              <div className="flex items-center gap-3">
+                <Activity size={16} className="text-[#C2E812]" />
+                <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
+                  Trades: <span className="text-[#F5F7FA]">{workerState?.gridTradesExecuted ?? 0}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Cpu size={16} className="text-[#00FFA3]" />
+                <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
+                  Checkpoint: <span className="text-[#F5F7FA]">{workerState?.yieldIndexerCheckpointBlock ?? '0'}</span>
+                </span>
+              </div>
+              {workerState?.lastDecisionReason && (
+                <div className="px-4 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-[#8B949E] font-bold tracking-widest uppercase">
+                  {workerState.lastDecisionReason}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* ─── SECTION 0: TESTING SUITE (TESTNET ONLY) ─── */}
-        <SectionHeading
-          id="testing-suite"
-          label="00 · TESTNET ONBOARDING"
-          sublabel="Request mock assets and view live TEE execution logs"
-        />
-
-        <div className="mb-12">
-          <TestingSuite />
-        </div>
-
-        {/* ─── SECTION 1: STRATEGY COMMAND CENTER ─── */}
+        {/* ─── SECTION 1: ALLOCATION ─── */}
         <SectionHeading
           id="command-center"
-          label="01 · STRATEGY COMMAND CENTER"
-          sublabel="Deposit funds and configure your confidential parameters"
+          label="Vault Allocation"
+          sublabel="Principal control & parameterization"
         />
-
-        <div
-          className="grid gap-6 mb-6"
-          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}
-        >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-24 animate-fade-in">
           <DepositModule />
           <ConfidentialStrategyBox />
         </div>
 
-        <div
-          className="grid gap-6 mb-6"
-          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}
-        >
-          <WorkerProvisioningBox onProvisioned={setProvisionedWorker} />
-          <HardwareTrustDashboard processorAddress={provisionedWorker} />
-        </div>
-
-        {/* ─── SECTION 2: LIVE ALPHA DASHBOARD ─── */}
+        {/* ─── SECTION 2: PERFORMANCE ─── */}
         <SectionHeading
           id="live-alpha"
-          label="02 · LIVE ALPHA DASHBOARD"
-          sublabel="Real-time verified yield and performance tracking"
+          label="Activity & Audit"
+          sublabel="Real-time verified yield engine"
         />
-
-        <PortfolioTicker
-          balance={balance}
-          unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
-          totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
-          apr={workerState?.previousApr ?? 0}
-        />
-
-        {/* APR + PnL row */}
-        <div
-          className="grid gap-6 mb-6"
-          style={{ gridTemplateColumns: '320px 1fr' }}
-        >
-          <AprGauge
-            previousApr={prevApr}
-            rewardAprEwm={ewmMean}
-            consensusData={consensus ?? undefined}
-          />
+        <div className="animate-fade-in space-y-10" style={{ animationDelay: '0.1s' }}>
           <PnlChart
             currentBalance={balance}
-            initialDeposit={initialDeposit}
+            initialDeposit={balance} // Using current balance as base for demo
             totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
             unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
           />
+          <TransactionHistory />
         </div>
 
-        <TransactionHistory />
-
-        {/* ─── SECTION 3: EXIT FLOW ─── */}
+        {/* ─── SECTION 3: WITHDRAW ─── */}
         <SectionHeading
           id="exit-flow"
-          label="03 · EXIT FLOW"
-          sublabel="Withdraw liquidity with transparent fee breakdown"
+          label="Liquidity Exit"
+          sublabel="Vault withdrawal & settlement"
         />
-
-        <div style={{ maxWidth: 560 }}>
+        <div className="max-w-3xl mx-auto animate-fade-in" style={{ animationDelay: '0.2s' }}>
           <WithdrawModule />
         </div>
 
-        {/* Footer */}
-        <footer className="mt-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck size={13} style={{ color: '#334155' }} />
-            <span className="font-mono text-xs" style={{ color: '#334155' }}>
-              YieldSense · Powered by Acurast TEE · Deployed on Base
-            </span>
+        {/* Artistic Footer (Jupiter Style) */}
+        <footer className="mt-60 pt-20 border-t border-white/[0.05]">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-16">
+            <div className="flex flex-col gap-8">
+              <div className="flex items-center gap-5">
+                <div className="w-12 h-12 rounded-2xl bg-[#C2E812] flex items-center justify-center shadow-lg shadow-[#C2E812]/20">
+                  <ShieldCheck size={24} className="text-[#030605]" />
+                </div>
+                <div>
+                  <span className="font-heading font-bold text-3xl text-[#F5F7FA]">YieldSense</span>
+                  <p className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-[0.5em] mt-1">Autonomous Systems</p>
+                </div>
+              </div>
+              <p className="text-xs font-mono text-[#484F58] max-w-sm leading-relaxed uppercase tracking-[0.2em]">
+                Protocol-level security powered by Acurast TEE. <br />
+                Strategy parameters are encrypted and verified at runtime in secure hardware enclaves.
+              </p>
+            </div>
+            
+            <div className="flex flex-col items-end gap-8">
+              <a
+                href={`https://base-sepolia.blockscout.com/address/${KEEPER_ADDRESS}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-center gap-4 text-[11px] font-mono font-bold text-[#8B949E] hover:text-[#C2E812] transition-all duration-500 uppercase tracking-[0.4em]"
+              >
+                Explorer Verified
+                <ArrowRight size={16} className="group-hover:translate-x-3 transition-transform duration-500" />
+              </a>
+              <div className="px-6 py-3 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-xs font-mono font-bold text-[#484F58] tracking-widest">
+                {KEEPER_ADDRESS}
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            <a
-              href={`https://base-sepolia.blockscout.com/address/${KEEPER_ADDRESS}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-[10px] transition-all"
-              style={{ color: '#334155' }}
-              onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = '#00d4ff')}
-              onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = '#334155')}
-            >
-              View Contract ↗
-            </a>
-            <span className="font-mono text-[10px]" style={{ color: '#1e293b' }}>
-              Keeper: {KEEPER_ADDRESS?.slice(0, 8)}...{KEEPER_ADDRESS?.slice(-6)}
+          
+          <div className="mt-24 text-center">
+            <span className="text-[10px] font-mono text-[#484F58] tracking-[0.6em] uppercase font-bold opacity-40">
+              © 2024 YieldSense Autonomous Guardian
             </span>
           </div>
         </footer>

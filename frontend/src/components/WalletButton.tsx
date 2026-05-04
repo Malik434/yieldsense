@@ -16,13 +16,7 @@ export function WalletButton() {
       <button
         onClick={() => connect({ connector: injected() })}
         disabled={isPending}
-        className="relative flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-sm font-semibold tracking-wider transition-all duration-200"
-        style={{
-          background: 'linear-gradient(135deg, rgba(0,255,159,0.12), rgba(0,212,255,0.08))',
-          border: '1px solid rgba(0,255,159,0.4)',
-          color: '#00ff9f',
-          animation: 'border-glow 2.5s ease-in-out infinite',
-        }}
+        className="ys-btn-primary h-10 min-w-[160px]"
       >
         <Wallet size={15} />
         {isPending ? 'CONNECTING...' : 'CONNECT WALLET'}
@@ -35,16 +29,13 @@ export function WalletButton() {
       onClick={() => disconnect()}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-sm font-semibold tracking-wider transition-all duration-200"
-      style={{
-        background: hovered
-          ? 'rgba(255,68,102,0.1)'
-          : 'rgba(0,255,159,0.06)',
-        border: hovered
-          ? '1px solid rgba(255,68,102,0.5)'
-          : '1px solid rgba(0,255,159,0.25)',
-        color: hovered ? '#ff4466' : '#00ff9f',
-      }}
+      className={`
+        flex items-center gap-2.5 px-4 h-10 rounded-xl font-heading text-xs font-semibold tracking-wider transition-all duration-300
+        ${hovered 
+          ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+          : 'bg-white/[0.03] border-white/[0.06] text-white hover:bg-white/[0.06] hover:border-white/[0.1]'}
+        border
+      `}
     >
       {hovered ? (
         <>
@@ -53,12 +44,9 @@ export function WalletButton() {
         </>
       ) : (
         <>
-          <span
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#00ff9f', boxShadow: '0 0 8px #00ff9f' }}
-          />
+          <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
           {address?.slice(0, 6)}...{address?.slice(-4)}
-          <ChevronDown size={12} />
+          <ChevronDown size={14} className="opacity-40" />
         </>
       )}
     </button>
