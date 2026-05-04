@@ -19,7 +19,9 @@ import {
   Clock, 
   RefreshCw, 
   CheckCircle2, 
-  Target 
+  Target,
+  Zap,
+  ArrowUpDown
 } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { OPERATOR_ADDRESS } from '@/lib/contracts';
@@ -70,6 +72,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
   const [mounted, setMounted] = useState(false);
   const [period, setPeriod] = useState('1D');
   const [loading, setLoading] = useState(true);
+  const [attribution, setAttribution] = useState({ harvest: 0, trade: 0 });
 
   const fetchHistory = async () => {
     setLoading(true);
@@ -80,6 +83,8 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
       const logs = (state.logs || []).reverse(); 
 
       let cumulativePnl = 0;
+      let harvestTotal = 0;
+      let tradeTotal = 0;
       const points: PnlDataPoint[] = [];
 
       points.push({
@@ -92,9 +97,13 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
       logs.forEach((log: any) => {
         const ts = (log.timestamp || 0) * 1000;
         if (log.event === 'harvest_confirmed') {
-          cumulativePnl += (log.rewardUsd || 0);
+          const reward = (log.rewardUsd || 0);
+          cumulativePnl += reward;
+          harvestTotal += reward;
         } else if (log.event === 'grid_trade_executed') {
-          cumulativePnl += (Number(log.pnlDelta || 0) / 1_000_000);
+          const profit = (Number(log.pnlDelta || 0) / 1_000_000);
+          cumulativePnl += profit;
+          tradeTotal += profit;
         } else {
           return;
         }
@@ -107,6 +116,8 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
           timestamp: ts
         });
       });
+
+      setAttribution({ harvest: harvestTotal, trade: tradeTotal });
 
       if (points.length > 0) {
         points.push({
@@ -150,7 +161,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
   if (!mounted) return null;
 
   return (
-    <div className="ys-card p-10 flex flex-col gap-8 h-full bg-[#0B0F0D] group/chart relative overflow-hidden">
+    <div className="ys-card p-10 flex flex-col gap-10 h-full bg-[#0B0F0D] group/chart relative overflow-hidden">
       <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
@@ -183,7 +194,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
           { label: 'Principal', value: `$${initialDeposit.toFixed(2)}`, color: 'text-[#8B949E]', icon: <Shield size={12} /> },
           { label: 'Net Position', value: `$${(currentBalance + unrealizedYield).toFixed(2)}`, color: 'text-[#F5F7FA]', icon: <Target size={12} /> },
         ].map(({ label, value, color, icon }) => (
-          <div key={label} className="p-6 rounded-3xl bg-white/[0.02] border border-white/[0.04] space-y-2">
+          <div key={label} className="p-6 rounded-3xl bg-white/[0.02] border border-white/[0.04] space-y-2 hover:bg-white/[0.04] transition-all">
             <div className="flex items-center gap-2">
               {icon}
               <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</p>
@@ -193,54 +204,88 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
         ))}
       </div>
 
-      <div className="relative flex-1 min-h-[350px] mt-4 relative z-10">
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0B0F0D]/50 backdrop-blur-sm z-20 rounded-3xl">
-            <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
+        {/* Attribution breakdown */}
+        <div className="space-y-6 relative flex flex-col justify-center">
+          <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-2">Yield Attribution</p>
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 text-[#F5F7FA] font-heading font-bold">
+                  <Zap size={14} className="text-[#00FFA3]" />
+                  Protocol Harvests
+                </div>
+                <span className="text-[#00FFA3] font-mono font-bold">+${attribution.harvest.toFixed(2)}</span>
+              </div>
+              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full bg-[#00FFA3]" style={{ width: `${(attribution.harvest / (attribution.harvest + attribution.trade || 1)) * 100}%` }} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 text-[#F5F7FA] font-heading font-bold">
+                  <ArrowUpDown size={14} className="text-[#C2E812]" />
+                  Grid Execution Fees
+                </div>
+                <span className="text-[#C2E812] font-mono font-bold">+${attribution.trade.toFixed(2)}</span>
+              </div>
+              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full bg-[#C2E812]" style={{ width: `${(attribution.trade / (attribution.harvest + attribution.trade || 1)) * 100}%` }} />
+              </div>
+            </div>
           </div>
-        )}
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 20, right: 0, left: -10, bottom: 0 }}>
-            <defs>
-              <linearGradient id="limeGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#C2E812" stopOpacity={0.2} />
-                <stop offset="100%" stopColor="#C2E812" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="8 8" stroke="rgba(255, 255, 255, 0.02)" vertical={false} />
-            <XAxis
-              dataKey="time"
-              tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
-              axisLine={false}
-              tickLine={false}
-              dy={15}
-              minTickGap={30}
-            />
-            <YAxis
-              tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
-              axisLine={false}
-              tickLine={false}
-              domain={['auto', 'auto']}
-              tickFormatter={(v) => `$${v.toFixed(0)}`}
-              dx={-10}
-            />
-            <Tooltip 
-              content={<CustomTooltip />} 
-              cursor={{ stroke: 'rgba(194, 232, 18, 0.2)', strokeWidth: 2 }}
-            />
-            <Area
-              type="monotone"
-              dataKey="balance"
-              stroke="#C2E812"
-              strokeWidth={4}
-              fill="url(#limeGrad)"
-              dot={false}
-              activeDot={{ r: 8, fill: '#C2E812', stroke: '#030605', strokeWidth: 4 }}
-              animationDuration={1500}
-              animationEasing="ease-in-out"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        </div>
+
+        {/* Chart area */}
+        <div className="relative min-h-[300px]">
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#0B0F0D]/50 backdrop-blur-sm z-20 rounded-3xl">
+              <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 20, right: 0, left: -10, bottom: 0 }}>
+              <defs>
+                <linearGradient id="limeGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#C2E812" stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#C2E812" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="8 8" stroke="rgba(255, 255, 255, 0.02)" vertical={false} />
+              <XAxis
+                dataKey="time"
+                tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
+                axisLine={false}
+                tickLine={false}
+                dy={15}
+                minTickGap={30}
+              />
+              <YAxis
+                tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
+                axisLine={false}
+                tickLine={false}
+                domain={['auto', 'auto']}
+                tickFormatter={(v) => `$${v.toFixed(0)}`}
+                dx={-10}
+              />
+              <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{ stroke: 'rgba(194, 232, 18, 0.2)', strokeWidth: 2 }}
+              />
+              <Area
+                type="monotone"
+                dataKey="balance"
+                stroke="#C2E812"
+                strokeWidth={4}
+                fill="url(#limeGrad)"
+                dot={false}
+                activeDot={{ r: 8, fill: '#C2E812', stroke: '#030605', strokeWidth: 4 }}
+                animationDuration={1500}
+                animationEasing="ease-in-out"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <div className="flex items-center justify-between pt-8 border-t border-white/[0.03] relative z-10">
@@ -255,7 +300,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
           </div>
           <button 
             onClick={fetchHistory}
-            className="p-2 rounded-lg bg-white/5 border border-white/5 text-[#484F58] hover:text-[#C2E812] transition-all"
+            className="p-2 rounded-lg bg-white/5 border border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all"
           >
             <RefreshCw size={14} />
           </button>

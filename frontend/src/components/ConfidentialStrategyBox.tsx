@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Lock, Shield, EyeOff, AlertTriangle, CheckCircle2, Loader2, Cpu, Fingerprint, TrendingUp, TrendingDown, Target, SlidersHorizontal } from 'lucide-react';
-import { useAccount, useSignTypedData, useReadContract } from 'wagmi';
-import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
+import { Lock, Shield, EyeOff, AlertTriangle, CheckCircle2, Loader2, Cpu, Fingerprint, TrendingUp, TrendingDown, Target, SlidersHorizontal, MousePointer2, RefreshCcw } from 'lucide-react';
+import { useAccount, useSignTypedData } from 'wagmi';
+import { KEEPER_ADDRESS } from '@/lib/contracts';
 import { SecureSignatureAnimation } from './SecureSignatureAnimation';
 
 interface StrategyParams {
@@ -11,6 +11,8 @@ interface StrategyParams {
   gridUpper: string;
   gridLower: string;
   rebalanceInterval: string;
+  maxSlippage: number;
+  autoReinvest: boolean;
 }
 
 const DEFAULT_PARAMS: StrategyParams = {
@@ -18,6 +20,8 @@ const DEFAULT_PARAMS: StrategyParams = {
   gridUpper: '',
   gridLower: '',
   rebalanceInterval: '4',
+  maxSlippage: 0.5,
+  autoReinvest: true,
 };
 
 const DOMAIN = {
@@ -33,6 +37,8 @@ const TYPES = {
     { name: 'gridUpper', type: 'string' },
     { name: 'gridLower', type: 'string' },
     { name: 'rebalanceInterval', type: 'string' },
+    { name: 'maxSlippage', type: 'string' },
+    { name: 'autoReinvest', type: 'bool' },
     { name: 'timestamp', type: 'uint256' },
   ],
 } as const;
@@ -52,7 +58,10 @@ export function ConfidentialStrategyBox() {
     if (!address) return;
     const stored = localStorage.getItem(`ys_strategy_${address}`);
     if (stored) {
-      try { setParams(JSON.parse(stored)); } catch { /* ignore */ }
+      try { 
+        const parsed = JSON.parse(stored);
+        setParams(prev => ({ ...prev, ...parsed })); 
+      } catch { /* ignore */ }
     }
   }, [address]);
 
@@ -78,6 +87,8 @@ export function ConfidentialStrategyBox() {
         gridUpper: params.gridUpper || '0',
         gridLower: params.gridLower || '0',
         rebalanceInterval: params.rebalanceInterval || '4',
+        maxSlippage: params.maxSlippage.toString(),
+        autoReinvest: params.autoReinvest,
         timestamp: BigInt(timestamp),
       };
 
@@ -94,10 +105,8 @@ export function ConfidentialStrategyBox() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          stopLossPrice: Number(params.stopLossPrice) || 0,
-          gridUpper: Number(params.gridUpper) || 0,
-          gridLower: Number(params.gridLower) || 0,
-          rebalanceInterval: Number(params.rebalanceInterval) || 4,
+          ...params,
+          maxSlippage: Number(params.maxSlippage),
           signer: address,
           signature,
           timestamp,
@@ -119,7 +128,8 @@ export function ConfidentialStrategyBox() {
   };
 
   const handleChange = (field: keyof StrategyParams) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setParams(prev => ({ ...prev, [field]: e.target.value }));
+    const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    setParams(prev => ({ ...prev, [field]: val }));
     if (commitStatus === 'success') setCommitStatus('idle');
   };
 
@@ -143,10 +153,10 @@ export function ConfidentialStrategyBox() {
     <>
       {showAnimation && <SecureSignatureAnimation onComplete={handleAnimationComplete} />}
 
-      <div className="ys-card p-12 flex flex-col gap-10 h-full relative">
+      <div className="ys-card p-12 flex flex-col gap-10 h-full relative group">
         <div className="absolute top-0 right-0 p-12 bg-[#00FFA3]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
         
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between relative z-10">
           <div className="flex items-center gap-4">
             <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
               <SlidersHorizontal size={20} className="text-[#00FFA3]" />
@@ -156,15 +166,20 @@ export function ConfidentialStrategyBox() {
               <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Strategy Parameters</h3>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="px-3 py-1.5 rounded-lg bg-[#00FFA3]/5 border border-[#00FFA3]/10 flex items-center gap-2">
-              <Cpu size={12} className="text-[#00FFA3] animate-pulse" />
-              <span className="text-[10px] font-mono font-bold text-[#00FFA3] tracking-widest">TEE Active</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Auto-Compound</span>
+              <button 
+                onClick={() => setParams(p => ({ ...p, autoReinvest: !p.autoReinvest }))}
+                className={`w-10 h-5 rounded-full transition-all relative ${params.autoReinvest ? 'bg-[#00FFA3]' : 'bg-white/10'}`}
+              >
+                <div className={`absolute top-1 w-3 h-3 rounded-full bg-black transition-all ${params.autoReinvest ? 'left-6' : 'left-1'}`} />
+              </button>
             </div>
           </div>
         </div>
 
-        <div className="space-y-8">
+        <div className="space-y-8 relative z-10">
           {/* Stop Loss Price */}
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -176,7 +191,7 @@ export function ConfidentialStrategyBox() {
                 <span className="text-[9px] font-mono font-bold text-[#FF4466]/80 uppercase tracking-widest">Shielded</span>
               </div>
             </div>
-            <div className="relative group/input">
+            <div className="relative">
               <input
                 type="number"
                 placeholder="0.00 USDC"
@@ -186,8 +201,31 @@ export function ConfidentialStrategyBox() {
                 className="ys-input w-full pr-16 text-xl"
               />
               <div className="absolute right-5 top-1/2 -translate-y-1/2">
-                <Target size={16} className="text-[#484F58] group-focus-within:text-[#00FFA3] transition-colors" />
+                <Target size={16} className="text-[#484F58]" />
               </div>
+            </div>
+          </div>
+
+          {/* Max Slippage Slider */}
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+                Maximum Slippage
+              </label>
+              <span className="text-xs font-heading font-bold text-[#C2E812]">{params.maxSlippage}%</span>
+            </div>
+            <div className="relative h-6 flex items-center">
+              <div className="absolute w-full h-1 bg-white/5 rounded-full" />
+              <div className="absolute h-1 bg-[#C2E812]/40 rounded-full" style={{ width: `${(params.maxSlippage / 2) * 100}%` }} />
+              <input 
+                type="range" 
+                min="0.1" 
+                max="2.0" 
+                step="0.1" 
+                value={params.maxSlippage} 
+                onChange={e => setParams(p => ({ ...p, maxSlippage: parseFloat(e.target.value) }))}
+                className="absolute w-full h-1 bg-transparent appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#C2E812] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg"
+              />
             </div>
           </div>
 
@@ -198,11 +236,11 @@ export function ConfidentialStrategyBox() {
             </label>
             <div className="grid grid-cols-2 gap-6">
               <div className="flex flex-col gap-2">
-                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Upper</span>
+                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Upper Limit</span>
                 <input type="number" placeholder="1.00" value={params.gridUpper} onChange={handleChange('gridUpper')} disabled={isBusy} className="ys-input w-full text-base" />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Lower</span>
+                <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Lower Limit</span>
                 <input type="number" placeholder="0.80" value={params.gridLower} onChange={handleChange('gridLower')} disabled={isBusy} className="ys-input w-full text-base" />
               </div>
             </div>
@@ -234,46 +272,30 @@ export function ConfidentialStrategyBox() {
           </div>
         </div>
 
-        {/* Security Footer */}
-        <div className="rounded-2xl p-6 bg-white/[0.02] border border-white/[0.04] mt-auto">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-[0.2em] uppercase">Security Metadata</span>
-            <Fingerprint size={12} className="text-[#C2E812]/40" />
-          </div>
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-wider">EIP-712</span>
-              <span className="text-[10px] font-mono font-bold text-[#F5F7FA]">YieldSense v1</span>
+        {/* Action button */}
+        <div className="mt-auto relative z-10">
+          <button
+            onClick={handleSave}
+            disabled={!hasValues || isBusy}
+            className={`ys-btn-primary w-full h-16 text-sm relative group overflow-hidden transition-all duration-500 ${commitStatus === 'success' ? 'bg-[#00FFA3] text-[#030605]' : ''}`}
+          >
+            <div className="relative flex items-center justify-center gap-3">
+              {isBusy ? (
+                <><Loader2 size={20} className="animate-spin" /> Sealing Strategy...</>
+              ) : commitStatus === 'success' ? (
+                <><CheckCircle2 size={20} /> Strategy Committed</>
+              ) : (
+                <><Fingerprint size={20} /> Sign & Commit to TEE</>
+              )}
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-wider">Nonce</span>
-              <span className="text-[10px] font-mono font-bold text-[#C2E812]">Authorized</span>
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={handleSave}
-          disabled={!hasValues || isBusy}
-          className="ys-btn-primary w-full h-16 text-sm"
-        >
-          {isBusy ? (
-            <div className="flex items-center justify-center gap-3">
-              <Loader2 size={20} className="animate-spin" />
-              <span className="font-heading font-bold uppercase tracking-widest">Sealing Strategy...</span>
-            </div>
-          ) : commitStatus === 'success' ? (
-            <div className="flex items-center justify-center gap-3">
-              <CheckCircle2 size={20} className="text-[#030605]" />
-              <span className="font-heading font-bold uppercase tracking-widest">Strategy Sealed</span>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center gap-3">
-              <Shield size={20} />
-              <span className="font-heading font-bold uppercase tracking-widest">Sign & Commit to TEE</span>
-            </div>
+          </button>
+          
+          {commitStatus === 'error' && (
+            <p className="text-[9px] font-mono text-[#FF4466] mt-4 text-center uppercase tracking-widest">
+              {errorMsg || 'Commitment Failed. Verify Network.'}
+            </p>
           )}
-        </button>
+        </div>
       </div>
     </>
   );

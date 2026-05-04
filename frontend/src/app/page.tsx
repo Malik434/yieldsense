@@ -130,6 +130,12 @@ export default function CommandCenter() {
     query: { enabled: !!address },
   });
 
+  const { data: globalTvlRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'totalSupply',
+  });
+
   useEffect(() => {
     if (blockNumber) {
       refetchUserData();
@@ -137,7 +143,8 @@ export default function CommandCenter() {
   }, [blockNumber, refetchUserData]);
 
   const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
-  
+  const globalTvl = globalTvlRaw ? parseFloat(formatUnits(globalTvlRaw as bigint, 6)) : 0;
+
   const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
   const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
 
@@ -160,7 +167,8 @@ export default function CommandCenter() {
             balance={balance}
             unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
             totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
-            apr={workerState?.previousApr ?? 0}
+            apr={prevApr != null ? prevApr / 100 : 0}
+            globalTvl={globalTvl}
           />
         </div>
 
@@ -178,7 +186,7 @@ export default function CommandCenter() {
                 {isHealthy ? 'Autonomous Guardian — Active' : isWarning ? 'Oracle Synchronization Degradation' : 'Hardware Signal Lost'}
               </span>
             </div>
-            
+
             <div className="flex flex-wrap items-center gap-10">
               <div className="flex items-center gap-3">
                 <Activity size={16} className="text-[#C2E812]" />
@@ -256,7 +264,7 @@ export default function CommandCenter() {
                 Strategy parameters are encrypted and verified at runtime in secure hardware enclaves.
               </p>
             </div>
-            
+
             <div className="flex flex-col items-end gap-8">
               <a
                 href={`https://base-sepolia.blockscout.com/address/${KEEPER_ADDRESS}`}
@@ -272,7 +280,7 @@ export default function CommandCenter() {
               </div>
             </div>
           </div>
-          
+
           <div className="mt-24 text-center">
             <span className="text-[10px] font-mono text-[#484F58] tracking-[0.6em] uppercase font-bold opacity-40">
               © 2024 YieldSense Autonomous Guardian
