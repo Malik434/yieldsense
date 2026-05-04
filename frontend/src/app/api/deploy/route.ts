@@ -121,7 +121,7 @@ export async function POST(req: Request) {
       `  e.DATA_RPC_URL=${JSON.stringify(process.env.DATA_RPC_URL ?? 'https://mainnet.base.org')};`,
       `  e.POOL_ADDRESS=${JSON.stringify(process.env.POOL_ADDRESS ?? '')};`,
       `  e.FORCE_TEST_HARVEST=${JSON.stringify(process.env.FORCE_TEST_HARVEST ?? 'true')};`,
-      `  e.FRONTEND_URL=${JSON.stringify(process.env.FRONTEND_URL ?? 'https://yieldsense.huzaifamalik.tech')};`,
+      `  e.FRONTEND_URL=${JSON.stringify(process.env.FRONTEND_URL ?? 'https://yieldsense.netlify.app')};`,
       `  e.GRID_CONFIG_JSON=${JSON.stringify(process.env.GRID_CONFIG_JSON ?? 'W3siaWQiOiJnMSIsInJlZmVyZW5jZVByaWNlIjoxLjAsInRyaWdnZXJQZXJjZW50IjowLjAsImFsbG9jYXRpb25CcHMiOjUwMH1d')};`,
       `  e.STOP_LOSS_SECRET_JSON='';`,
       '})(typeof process!=="undefined"?process.env:(globalThis.__ENV__=globalThis.__ENV__||{}));',

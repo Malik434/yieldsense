@@ -3,7 +3,7 @@ async function main() {
 
   // 1. Test the Netlify API
   try {
-    const res1 = await fetch("https://yieldsense.huzaifamalik.tech/api/telemetry", {
+    const res1 = await fetch("https://yieldsense.netlify.app/api/telemetry", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

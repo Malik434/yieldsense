@@ -16,6 +16,7 @@ export interface DecisionInputs {
 export interface DecisionResult {
   shouldExecute: boolean;
   reason: string;
+  grossRewardUsd: number;
   netRewardUsd: number;
   thresholdUsd: number;
   recommendedNextCheckMs: number;
@@ -40,6 +41,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
     return {
       shouldExecute: false,
       reason: "circuit_breaker_api_failures",
+      grossRewardUsd: grossReward,
       netRewardUsd,
       thresholdUsd,
       recommendedNextCheckMs,
@@ -50,6 +52,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
     return {
       shouldExecute: false,
       reason: "cooldown_active",
+      grossRewardUsd: grossReward,
       netRewardUsd,
       thresholdUsd,
       recommendedNextCheckMs,
@@ -60,6 +63,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
     return {
       shouldExecute: false,
       reason: "gas_too_high",
+      grossRewardUsd: grossReward,
       netRewardUsd,
       thresholdUsd,
       recommendedNextCheckMs,
@@ -70,6 +74,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
     return {
       shouldExecute: false,
       reason: "min_reward_not_met",
+      grossRewardUsd: grossReward,
       netRewardUsd,
       thresholdUsd,
       recommendedNextCheckMs,
@@ -80,6 +85,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
     return {
       shouldExecute: false,
       reason: "profitability_threshold_not_met",
+      grossRewardUsd: grossReward,
       netRewardUsd,
       thresholdUsd,
       recommendedNextCheckMs,
@@ -89,6 +95,7 @@ export function evaluateDecision(input: DecisionInputs): DecisionResult {
   return {
     shouldExecute: true,
     reason: "profitable",
+    grossRewardUsd: grossReward,
     netRewardUsd,
     thresholdUsd,
     recommendedNextCheckMs,

@@ -25,6 +25,8 @@ interface PnlDataPoint {
 interface PnlChartProps {
   currentBalance: number;
   initialDeposit: number;
+  totalRealized?: number;
+  unrealizedYield?: number;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -54,7 +56,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export function PnlChart({ currentBalance, initialDeposit }: PnlChartProps) {
+export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, unrealizedYield = 0 }: PnlChartProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const [data, setData] = useState<PnlDataPoint[]>([]);
@@ -178,18 +180,19 @@ export function PnlChart({ currentBalance, initialDeposit }: PnlChartProps) {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         {[
-          { label: 'CURRENT BALANCE', value: currentBalance.toFixed(4), color: '#00ff9f' },
-          { label: 'INITIAL DEPOSIT', value: initialDeposit.toFixed(4), color: '#64748b' },
-          { label: 'TOTAL PnL', value: `${pnl >= 0 ? '+' : ''}${pnl.toFixed(4)}`, color: isProfit ? '#00ff9f' : '#ff4466' },
+          { label: 'DEPOSITED', value: (initialDeposit - totalRealized).toFixed(4), color: '#64748b' },
+          { label: 'REALIZED', value: `+${totalRealized.toFixed(4)}`, color: '#a78bfa' },
+          { label: 'UNREALIZED', value: `+${unrealizedYield.toFixed(4)}`, color: '#00ff9f' },
+          { label: 'TOTAL BALANCE', value: (currentBalance + unrealizedYield).toFixed(4), color: '#00d4ff' },
         ].map(({ label, value, color }) => (
           <div
             key={label}
             className="rounded-lg p-3"
             style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)' }}
           >
-            <p className="font-mono text-[10px] tracking-widest" style={{ color: '#334155' }}>{label}</p>
+            <p className="font-mono text-[9px] tracking-widest" style={{ color: '#334155' }}>{label}</p>
             <p className="font-mono font-bold text-sm mt-1" style={{ color }}>{value}</p>
           </div>
         ))}

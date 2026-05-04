@@ -15,6 +15,7 @@ import { WithdrawModule } from '@/components/WithdrawModule';
 import { TestingSuite } from '@/components/TestingSuite';
 import { WorkerProvisioningBox } from '@/components/WorkerProvisioningBox';
 import { HardwareTrustDashboard } from '@/components/HardwareTrustDashboard';
+import { PortfolioTicker } from '@/components/PortfolioTicker';
 import {
   ShieldCheck,
   Layers,
@@ -36,6 +37,8 @@ interface WorkerState {
   rewardAprEwm: { mean: number; variance: number; lastTimestamp: number } | null;
   gridTradesExecuted?: number;
   lastGridTradeAt?: number | null;
+  totalRealizedProfitUsd?: number;
+  unrealizedYieldUsd?: number;
   error?: string;
   defaultState?: boolean;
 }
@@ -286,6 +289,13 @@ export default function CommandCenter() {
           sublabel="Real-time verified yield and performance tracking"
         />
 
+        <PortfolioTicker
+          balance={balance}
+          unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
+          totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
+          apr={workerState?.previousApr ?? 0}
+        />
+
         {/* APR + PnL row */}
         <div
           className="grid gap-6 mb-6"
@@ -299,6 +309,8 @@ export default function CommandCenter() {
           <PnlChart
             currentBalance={balance}
             initialDeposit={initialDeposit}
+            totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
+            unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
           />
         </div>
 

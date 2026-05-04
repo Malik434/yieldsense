@@ -54,7 +54,7 @@ DATA_RPC_URL=https://mainnet.base.org
 KEEPER_ADDRESS=0x488147C822b364a940630075f9EACD080Cc16234
 POOL_ADDRESS=0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59
 STRATEGY_TVL_USD=10000
-TELEMETRY_URL=https://yieldsense.huzaifamalik.tech/api/telemetry
+TELEMETRY_URL=https://yieldsense.netlify.app/api/telemetry
 PROCESSOR_SHARED_SECRET=...
 USER_ADDRESS=...
 ```

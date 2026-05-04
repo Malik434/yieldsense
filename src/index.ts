@@ -341,6 +341,7 @@ async function main(): Promise<void> {
       forwardAprEstimate: aprConsensus.forwardAprEstimate,
       diagnostics: aprConsensus.diagnostics,
       netRewardUsd: decision.netRewardUsd,
+      grossRewardUsd: decision.grossRewardUsd,
       gasCostUsd,
       thresholdUsd: decision.thresholdUsd,
       reason: decision.reason,
@@ -530,6 +531,7 @@ async function main(): Promise<void> {
   await emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
+    rewardUsd: rewardCents / 100,
     txHash,
   });
 }

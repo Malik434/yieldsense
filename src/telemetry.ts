@@ -5,7 +5,7 @@ export interface TelemetryEvent {
   [key: string]: unknown;
 }
 
-const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetry";
+const BUILTIN_TELEMETRY_URL = "https://yieldsense.netlify.app/api/telemetry";
 
 /**
  * Emits a structured telemetry event to the Next.js telemetry API.

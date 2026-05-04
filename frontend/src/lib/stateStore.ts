@@ -19,6 +19,8 @@ interface WorkerState {
   rewardAprEwm: { mean: number; variance: number; lastTimestamp: number } | null;
   gridTradesExecuted?: number;
   lastGridTradeAt?: number | null;
+  totalRealizedProfitUsd?: number;
+  unrealizedYieldUsd?: number;
   error?: string;
   defaultState?: boolean;
 }
@@ -109,6 +111,7 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       patch.suggestedNextCheckMs =
         (event.recommendedNextCheckMs as number | undefined) ?? currentState.suggestedNextCheckMs;
       patch.apiFailureStreak = 0;
+      patch.unrealizedYieldUsd = (event.grossRewardUsd as number | undefined) ?? currentState.unrealizedYieldUsd;
       if (event.rewardApr != null) {
         patch.rewardAprEwm = {
           mean: event.rewardApr as number,
@@ -119,10 +122,18 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       break;
 
     case 'harvest_submitted':
+      patch.lastDecisionReason = 'executed';
+      patch.lastExecutionAt = event.timestamp as number;
+      patch.apiFailureStreak = 0;
+      break;
+
     case 'harvest_confirmed':
       patch.lastDecisionReason = 'executed';
       patch.lastExecutionAt = event.timestamp as number;
       patch.apiFailureStreak = 0;
+      // Realized the yield, so reset unrealized to 0 and add to realized total
+      patch.unrealizedYieldUsd = 0;
+      patch.totalRealizedProfitUsd = (currentState.totalRealizedProfitUsd ?? 0) + ((event.rewardUsd as number) ?? 0);
       break;
 
     case 'grid_trade_executed':
