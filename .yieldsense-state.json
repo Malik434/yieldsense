@@ -1,9 +1,9 @@
 {
   "previousApr": 0.1,
   "apiFailureStreak": 0,
-  "lastDecisionReason": "missing_worker_key",
-  "lastRunAt": 1777663543,
-  "lastExecutionAt": 1777578257,
+  "lastDecisionReason": "dry_run",
+  "lastRunAt": 1777890876,
+  "lastExecutionAt": 1777889711,
   "suggestedNextCheckMs": 60000,
   "yieldIndexerCheckpointBlock": null,
   "rewardAprEwm": null,

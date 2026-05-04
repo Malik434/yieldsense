@@ -31,12 +31,17 @@ import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
 
 const CONFIG = {
-  /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Mainnet). */
-  rpcUrl: process.env.RPC_URL ?? "https://mainnet.base.org",
+  /**
+   * RPC for keeper reads, gas, and harvest transactions.
+   * Defaults to Base Sepolia because the default KEEPER_ADDRESS is deployed there.
+   * For mainnet execution set: RPC_URL=https://mainnet.base.org and deploy a mainnet keeper.
+   */
+  rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
   /**
    * Optional: RPC for yield math only (logs, pool, gauge). When set, APR uses live mainnet data
    * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
-   * Example: DATA_RPC_URL=https://mainnet.base.org with RPC_URL=Base Sepolia.
+   * Default: mainnet.base.org (real yield data even when executing on Sepolia).
+   * To use Sepolia data too: DATA_RPC_URL=https://sepolia.base.org
    */
   dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "https://mainnet.base.org",
   /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
@@ -98,6 +103,12 @@ const CONFIG = {
    * Example: 1000000 = accept at least 1.00 USDC per harvest.
    */
   harvestMinAssetOut: Number(process.env.HARVEST_MIN_ASSET_OUT ?? 0),
+  /**
+   * When true: build and sign the payload but do NOT submit the on-chain transaction.
+   * Useful for local testing to verify the full pipeline without spending gas or hitting
+   * keeper attestation checks. Set DRY_RUN=true in .env to enable.
+   */
+  dryRun: process.env.DRY_RUN === "true",
 };
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
@@ -377,6 +388,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  // When running locally with a plain private key (not Acurast hardware), the keeper
+  // contract will always revert because that address is not in attestedProcessors.
+  // DRY_RUN=true lets you validate the full pipeline locally without a real on-chain submit.
+  if (!acurastStd && privateKey && !CONFIG.dryRun) {
+    console.warn(
+      "[index] ACURAST_WORKER_KEY is set but you are NOT running on Acurast hardware. " +
+      "The keeper contract will reject the tx (attestation check). " +
+      "Add DRY_RUN=true to .env to simulate locally without submitting on-chain."
+    );
+  }
+
   const aprBps = CONFIG.forceTestHarvest
     ? CONFIG.forceTestAprBps != null && Number.isFinite(CONFIG.forceTestAprBps)
       ? CONFIG.forceTestAprBps
@@ -433,6 +455,28 @@ async function main(): Promise<void> {
   } else {
     const signed = signHarvestPayload(privateKey!, payloadHash);
     const wallet = new ethers.Wallet(privateKey!, executionProvider);
+
+    // DRY_RUN: sign + validate the payload without touching the chain.
+    // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
+    // and any real tx will revert. The payload hash + signature are logged so you can
+    // verify them off-chain or manually call the contract once the key is attested.
+    if (CONFIG.dryRun) {
+      await emitTelemetry({
+        event: "harvest_dry_run",
+        timestamp: nowSec,
+        payloadHash: signed.payloadHash,
+        r: signed.r,
+        s: signed.s,
+        v: signed.v,
+        signerAddress: wallet.address,
+        keeperAddress: CONFIG.keeperAddress,
+        note: "DRY_RUN=true — tx not submitted. Pipeline validated end-to-end.",
+        ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+      });
+      state.lastDecisionReason = "dry_run";
+      await saveState(CONFIG.statePath, state);
+      return;
+    }
 
     // ETH balance pre-flight — fail fast with a clear message before the RPC rejects the tx
     const workerBalance = await executionProvider.getBalance(wallet.address);
