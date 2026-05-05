@@ -408,7 +408,7 @@ async function main(): Promise<void> {
   const rewardCents = CONFIG.forceTestHarvest
     ? CONFIG.forceTestRewardCents != null && Number.isFinite(CONFIG.forceTestRewardCents)
       ? CONFIG.forceTestRewardCents
-      : 0
+      : Math.floor(Math.random() * 10) + 5 // Default: 5-15 cents for testnet visibility
     : Math.round(decision!.netRewardUsd * 100);
   const payloadHash = buildPayloadHash(CONFIG.keeperAddress, CONFIG.poolAddress, aprBps, rewardCents, nowSec);
 
