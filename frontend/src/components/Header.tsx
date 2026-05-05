@@ -39,7 +39,7 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
                 <span className="font-heading font-bold text-2xl text-[#F5F7FA] tracking-tight">YieldSense</span>
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-pulse" />
-                  <span className="text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">Base Mainnet</span>
+                  <span className="text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">Base Testnet</span>
                 </div>
               </div>
             </div>

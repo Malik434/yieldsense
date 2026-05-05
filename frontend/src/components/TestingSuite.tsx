@@ -166,7 +166,7 @@ export function TestingSuite() {
         </div>
 
         {/* Console Logs */}
-        <div className="lg:col-span-2 ys-card p-0 bg-black overflow-hidden flex flex-col min-h-[450px] border-white/[0.05]">
+        <div className="lg:col-span-2 ys-card p-0 bg-black overflow-hidden flex flex-col h-[550px] border-white/[0.05]">
           <div className="flex items-center justify-between p-5 border-b border-white/[0.05] bg-white/[0.02]">
             <div className="flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse" />
@@ -179,9 +179,9 @@ export function TestingSuite() {
             </div>
           </div>
 
-          <div
+          <div 
             ref={scrollContainerRef}
-            className="flex-1 p-8 overflow-y-auto font-mono text-[11px] space-y-3 scrollbar-hide"
+            className="flex-1 p-8 overflow-y-auto font-mono text-[11px] space-y-3"
           >
             {logs.length === 0 ? (
               <div className="h-full flex items-center justify-center text-[#484F58] animate-pulse uppercase tracking-[0.3em]">

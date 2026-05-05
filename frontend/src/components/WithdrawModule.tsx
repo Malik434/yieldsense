@@ -97,11 +97,11 @@ export function WithdrawModule() {
       </div>
 
       {/* Performance fee notice */}
-      <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#00FFA3]/[0.03] border border-[#00FFA3]/10 relative z-10">
-        <Info size={16} className="text-[#00FFA3] flex-shrink-0 mt-0.5" />
+      <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10 relative z-10 group/notice transition-all hover:bg-[#C2E812]/[0.05]">
+        <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
         <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
           Performance fees will be enforced on-chain in the next protocol upgrade. <br />
-          Current withdrawals return the <span className="text-[#F5F7FA]">full balance</span> with zero fee deduction.
+          Current withdrawals return the <span className="text-[#F5F7FA] font-bold">full balance</span> with <span className="text-[#C2E812] font-bold">zero fee deduction</span>.
         </p>
       </div>
 
