@@ -15,6 +15,7 @@
   "dependencies": {
     "@acurast/dapp": "^1.0.1",
     "@acurast/sdk": "^0.0.1",
+    "@coinbase/wallet-sdk": "^4.3.7",
     "@netlify/blobs": "^10.7.4",
     "@netlify/plugin-nextjs": "^5.15.9",
     "@polkadot/api": "^16.5.6",

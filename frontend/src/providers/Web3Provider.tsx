@@ -4,11 +4,22 @@ import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base, baseSepolia } from 'wagmi/chains';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactNode, useState } from 'react';
-import { injected } from 'wagmi/connectors';
+import { coinbaseWallet, injected } from 'wagmi/connectors';
 
 export const config = createConfig({
   chains: [base, baseSepolia],
-  connectors: [injected()],
+  connectors: [
+    // Coinbase Smart Wallet (preferred on Base) — 'all' enables both Smart Wallet
+    // and legacy EOA Coinbase Wallet so users can choose.
+    coinbaseWallet({
+      appName: 'YieldSense',
+      // 'all' enables Smart Wallet + legacy EOA Coinbase Wallet.
+      // wagmi v3 requires preference as an object, not a plain string.
+      preference: { options: 'all' },
+    }),
+    // Fallback for MetaMask, Rabby, Rainbow, Trust Wallet, etc.
+    injected(),
+  ],
   transports: {
     [base.id]: http(),
     [baseSepolia.id]: http(),

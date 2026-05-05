@@ -425,10 +425,27 @@ export async function monitorAndExecuteGrid(): Promise<void> {
 
   let stateUpdated = false;
   const state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
+  const isDryRun = process.env.DRY_RUN === "true";
 
   for (const trade of pendingTrades) {
-    const txHash = await submitTrade(rpcUrl, keeperAddress, trade, privateKey);
     const nowSec = Math.floor(Date.now() / 1000);
+
+    if (isDryRun) {
+      // DRY_RUN: log the would-be trade without submitting. The local ACURAST_WORKER_KEY
+      // is not attested in the keeper contract so any real submit would revert.
+      await emitTelemetry({
+        event: "grid_trade_dry_run",
+        timestamp: nowSec,
+        userAddress: trade.user,
+        nonce: trade.nonce.toString(),
+        pnlDelta: trade.pnlDelta.toString(),
+        digest: trade.digest,
+        note: "DRY_RUN=true — grid trade not submitted on-chain.",
+      });
+      continue;
+    }
+
+    const txHash = await submitTrade(rpcUrl, keeperAddress, trade, privateKey);
 
     await emitTelemetry({
       event: "grid_trade_executed",

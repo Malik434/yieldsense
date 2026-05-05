@@ -9,7 +9,9 @@
     "build:embed": "webpack && node scripts/embedProcessor.cjs",
     "build:all": "npm run build:embed && npm run build --prefix frontend",
     "start": "webpack-dev-server --mode development",
-    "test:pools": "tsx src/poolSmoke.ts"
+    "test:pools": "tsx src/poolSmoke.ts",
+    "dev": "node --env-file=.env dist/index.bundle.cjs",
+    "dev:processor": "node --env-file=.env dist/processor.bundle.cjs"
   },
   "engines": {
     "node": ">=20.9.0"

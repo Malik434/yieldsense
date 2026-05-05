@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { TrendingUp, Zap, Radio } from 'lucide-react';
+import { TrendingUp, Zap, Radio, Target } from 'lucide-react';
 
 interface ConsensusData {
   geckoTerminal: number;
@@ -19,11 +19,10 @@ interface AprGaugeProps {
 function ArcGauge({ value, max = 80 }: { value: number; max?: number }) {
   const pct = Math.min(value / max, 1);
   const SIZE = 200;
-  const STROKE = 12;
+  const STROKE = 8;
   const R = (SIZE - STROKE * 2) / 2;
   const CX = SIZE / 2;
   const CY = SIZE / 2 + 20;
-  // Arc from -210deg to 30deg (240deg span)
   const startAngle = -210;
   const endAngle = 30;
   const totalArc = endAngle - startAngle;
@@ -52,27 +51,17 @@ function ArcGauge({ value, max = 80 }: { value: number; max?: number }) {
     <svg width={SIZE} height={SIZE - 20} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
       <defs>
         <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#8b5cf6" />
-          <stop offset="50%" stopColor="#00d4ff" />
-          <stop offset="100%" stopColor="#00ff9f" />
+          <stop offset="0%" stopColor="#C2E812" />
+          <stop offset="100%" stopColor="#00FFA3" />
         </linearGradient>
-        <filter id="glow">
-          <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-          <feMerge>
-            <feMergeNode in="coloredBlur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
-      {/* Background arc */}
       <path
         d={bgPath}
         fill="none"
-        stroke="rgba(255,255,255,0.05)"
+        stroke="rgba(255,255,255,0.03)"
         strokeWidth={STROKE}
         strokeLinecap="round"
       />
-      {/* Active arc */}
       {activePath && (
         <path
           d={activePath}
@@ -80,15 +69,13 @@ function ArcGauge({ value, max = 80 }: { value: number; max?: number }) {
           stroke="url(#gaugeGrad)"
           strokeWidth={STROKE}
           strokeLinecap="round"
-          filter="url(#glow)"
-          style={{ transition: 'all 1s ease-out' }}
+          style={{ transition: 'all 1.5s cubic-bezier(0.2, 0, 0, 1)' }}
         />
       )}
-      {/* Tick marks */}
       {[0, 0.25, 0.5, 0.75, 1].map((t) => {
         const a = startAngle + totalArc * t;
         const inner = polarToCartesian(a);
-        const outer = { x: CX + (R + STROKE) * Math.cos((a * Math.PI) / 180), y: CY + (R + STROKE) * Math.sin((a * Math.PI) / 180) };
+        const outer = { x: CX + (R + 6) * Math.cos((a * Math.PI) / 180), y: CY + (R + 6) * Math.sin((a * Math.PI) / 180) };
         return (
           <line
             key={t}
@@ -96,8 +83,8 @@ function ArcGauge({ value, max = 80 }: { value: number; max?: number }) {
             y1={inner.y}
             x2={outer.x}
             y2={outer.y}
-            stroke="rgba(255,255,255,0.15)"
-            strokeWidth="1.5"
+            stroke="rgba(255,255,255,0.06)"
+            strokeWidth="1"
           />
         );
       })}
@@ -113,13 +100,9 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
     return () => clearTimeout(t);
   }, []);
 
-  // previousApr is always BPS (page.tsx normalizes both code paths to BPS before passing down).
-  // AprGauge divides by 100 to get a percentage for display (4927 BPS → 49.27%).
   const aprBps = previousApr ?? 0;
   const aprPct = aprBps / 100;
 
-  // rewardAprEwm is a decimal fraction (0.4927 = 49.27%) from the yield engine EWMA.
-  // Multiply by 100 for display. Fall back to aprPct if not yet seeded.
   let ewmPct = 0;
   if (rewardAprEwm != null && rewardAprEwm !== 0) {
     ewmPct = rewardAprEwm * 100;
@@ -130,83 +113,87 @@ export function AprGauge({ previousApr, rewardAprEwm, consensusData }: AprGaugeP
 
   const sources = consensusData
     ? [
-        { label: 'GECKO', value: consensusData.geckoTerminal / 100, color: '#f59e0b' },
-        { label: 'DEXSCREENER', value: consensusData.dexScreener / 100, color: '#00d4ff' },
-        { label: 'RPC', value: consensusData.rpc / 100, color: '#a78bfa' },
-      ]
+      { label: 'GECKO', value: consensusData.geckoTerminal / 100, color: '#C2E812' },
+      { label: 'DEXSCREENER', value: consensusData.dexScreener / 100, color: '#0ea5e9' },
+      { label: 'RPC', value: consensusData.rpc / 100, color: '#00FFA3' },
+    ]
     : [];
 
   return (
-    <div className="cyber-card p-6 flex flex-col items-center gap-4">
-      <div className="w-full flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <TrendingUp size={15} style={{ color: '#00ff9f' }} />
-          <span className="neon-label">CONSENSUS APR GAUGE</span>
+    <div className="ys-card p-10 flex flex-col items-center gap-10 relative overflow-hidden group bg-[#0B0F0D]">
+      <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+
+      <div className="w-full flex items-center justify-between relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+            <TrendingUp size={18} className="text-[#C2E812]" />
+          </div>
+          <div>
+            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Consensus Audit</p>
+            <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Yield Velocity</h3>
+          </div>
         </div>
-        <span className="status-badge verified">
-          <Zap size={9} />
-          VERIFIED YIELD
-        </span>
+        <div className="ys-badge-accent py-1.5 px-4">
+          <Zap size={12} />
+          LIVE
+        </div>
       </div>
 
-      {/* Gauge — max scales to the next clean ceiling above the actual APR */}
-      <div className="relative flex flex-col items-center">
+      <div className="relative flex flex-col items-center py-4">
         <ArcGauge value={animate ? aprPct : 0} max={Math.max(50, Math.ceil(aprPct / 50) * 50)} />
-        <div
-          className="absolute flex flex-col items-center"
-          style={{ bottom: 0 }}
-        >
-          <span
-            className="font-mono font-bold"
-            style={{ fontSize: 36, color: '#00ff9f', lineHeight: 1, textShadow: '0 0 20px rgba(0,255,159,0.5)' }}
-          >
-            {aprPct.toFixed(2)}
-            <span style={{ fontSize: 18, color: '#64748b' }}>%</span>
-          </span>
-          <span className="font-mono text-xs mt-1" style={{ color: '#64748b', letterSpacing: '0.1em' }}>
-            CONSENSUS APR
+        <div className="absolute flex flex-col items-center bottom-4 translate-y-2">
+          <div className="flex items-baseline gap-1">
+            <h2 className="text-6xl font-heading font-bold tracking-tighter text-[#F5F7FA] leading-none">
+              {aprPct.toFixed(2)}
+            </h2>
+            <span className="text-xl font-heading font-bold text-[#484F58]">%</span>
+          </div>
+          <span className="text-[10px] font-mono font-bold text-[#C2E812] mt-4 tracking-[0.4em] uppercase">
+            Current APR
           </span>
         </div>
       </div>
 
-      {/* EWM smoothed */}
-      <div
-        className="w-full rounded-lg p-3 flex items-center justify-between"
-        style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)' }}
-      >
-        <span className="font-mono text-xs" style={{ color: '#64748b' }}>
-          {ewmIsLive ? 'SMOOTHED (EWMA)' : 'SMOOTHED (CONSENSUS)'}
+      <div className="w-full rounded-2xl p-6 bg-white/[0.02] border border-white/[0.04] flex items-center justify-between relative z-10">
+        <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
+          {ewmIsLive ? 'SMOOTHED (EWMA)' : 'CONSENSUS MEAN'}
         </span>
-        <span className="font-mono font-semibold text-sm" style={{ color: '#a78bfa' }}>
+        <span className="text-lg font-heading font-bold text-[#C2E812]">
           {ewmPct.toFixed(2)}%
         </span>
       </div>
 
-      {/* Source breakdown */}
       {sources.length > 0 && (
-        <div className="w-full flex flex-col gap-2">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Radio size={10} style={{ color: '#64748b' }} />
-            <span className="font-mono text-[10px] tracking-widest" style={{ color: '#64748b' }}>
-              DATA SOURCES
+        <div className="w-full flex flex-col gap-6 pt-4 relative z-10">
+          <div className="flex items-center gap-3 mb-2">
+            <Radio size={14} className="text-[#484F58]" />
+            <span className="text-[10px] font-mono font-bold tracking-[0.3em] text-[#484F58] uppercase">
+              Consensus Node Audit
             </span>
           </div>
-          {sources.map((s) => (
-            <div key={s.label} className="flex items-center justify-between">
-              <span className="font-mono text-[10px] tracking-widest" style={{ color: '#475569' }}>
-                {s.label}
-              </span>
-              <div className="flex items-center gap-2">
-                <div
-                  className="rounded-full"
-                  style={{ width: `${Math.min(s.value * 2, 80)}px`, height: 3, background: s.color, opacity: 0.6 }}
-                />
-                <span className="font-mono text-xs font-semibold" style={{ color: s.color, minWidth: 50, textAlign: 'right' }}>
-                  {s.value.toFixed(2)}%
+          <div className="space-y-4">
+            {sources.map((s) => (
+              <div key={s.label} className="flex items-center justify-between">
+                <span className="text-[10px] font-mono font-bold tracking-widest text-[#8B949E] uppercase">
+                  {s.label}
                 </span>
+                <div className="flex items-center gap-4">
+                  <div className="w-24 h-1.5 rounded-full bg-white/[0.03] overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-1000 ease-out"
+                      style={{
+                        width: `${Math.min(s.value, 100)}%`,
+                        backgroundColor: s.color
+                      }}
+                    />
+                  </div>
+                  <span className="text-[11px] font-mono font-bold text-[#F5F7FA] min-w-[50px] text-right">
+                    {s.value.toFixed(2)}%
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAccount, useWriteContract } from 'wagmi';
 import { parseUnits } from 'viem';
-import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2 } from 'lucide-react';
+import { baseSepolia } from 'wagmi/chains';
+import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2, Zap } from 'lucide-react';
 import { MOCK_USDC_ABI, ASSET_ADDRESS, OPERATOR_ADDRESS } from '@/lib/contracts';
 
 interface HardwareLog {
@@ -14,7 +15,8 @@ interface HardwareLog {
 }
 
 export function TestingSuite() {
-  const { isConnected, address } = useAccount();
+  const { isConnected, address, chainId } = useAccount();
+  const isTestnet = chainId === baseSepolia.id;
   const [logs, setLogs] = useState<HardwareLog[]>([]);
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
@@ -78,7 +80,6 @@ export function TestingSuite() {
         abi: MOCK_USDC_ABI,
         functionName: 'mint',
         args: [parseUnits('1000', 6)],
-        gas: BigInt(200000),
       });
       setMintSuccess(true);
       setTimeout(() => setMintSuccess(false), 3000);
@@ -91,64 +92,81 @@ export function TestingSuite() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Testnet Faucet */}
-      <div className="cyber-card p-6 flex flex-col gap-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Droplets size={16} style={{ color: '#00d4ff' }} />
-          <span className="font-mono font-bold tracking-widest" style={{ fontSize: 11, color: '#00d4ff', letterSpacing: '0.15em' }}>
-            TESTNET FAUCET
-          </span>
-        </div>
-
-        <p className="font-mono text-xs" style={{ color: '#94a3b8', lineHeight: 1.6 }}>
-          You need Base Sepolia ETH for gas and Mock USDC to deposit into the YieldSense vault.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-          {/* Base Sepolia ETH */}
-          <div className="rounded-lg p-4 flex flex-col justify-between gap-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div>
-              <span className="font-mono text-xs font-semibold" style={{ color: '#e2e8f0' }}>Base Sepolia ETH</span>
-              <p className="font-mono text-[10px] mt-1" style={{ color: '#64748b' }}>Required for transaction gas fees.</p>
-            </div>
-            <a
-              href="https://portal.cdp.coinbase.com/products/faucet"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between px-3 py-2 rounded-lg font-mono text-[10px] transition-all"
-              style={{ background: 'rgba(255,255,255,0.05)', color: '#94a3b8' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#00d4ff'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(0,212,255,0.06)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#94a3b8'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(255,255,255,0.05)'; }}
-            >
-              COINBASE FAUCET <ArrowRight size={12} />
-            </a>
+      {/* Testnet Faucet — only shown on Base Sepolia. On mainnet, real USDC has no public
+          mint() function and this button would revert on every click. */}
+      {isTestnet ? (
+        <div className="cyber-card p-6 flex flex-col gap-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Droplets size={16} style={{ color: '#00d4ff' }} />
+            <span className="font-mono font-bold tracking-widest" style={{ fontSize: 11, color: '#00d4ff', letterSpacing: '0.15em' }}>
+              TESTNET FAUCET
+            </span>
           </div>
 
-          {/* Mock USDC */}
-          <div className="rounded-lg p-4 flex flex-col justify-between gap-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div>
-              <span className="font-mono text-xs font-semibold" style={{ color: '#e2e8f0' }}>Mock USDC</span>
-              <p className="font-mono text-[10px] mt-1" style={{ color: '#64748b' }}>Testnet asset for the YieldSense vault.</p>
+          <p className="font-mono text-xs" style={{ color: '#94a3b8', lineHeight: 1.6 }}>
+            You need Base Sepolia ETH for gas and Mock USDC to deposit into the YieldSense vault.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+            {/* Base Sepolia ETH */}
+            <div className="rounded-lg p-4 flex flex-col justify-between gap-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div>
+                <span className="font-mono text-xs font-semibold" style={{ color: '#e2e8f0' }}>Base Sepolia ETH</span>
+                <p className="font-mono text-[10px] mt-1" style={{ color: '#64748b' }}>Required for transaction gas fees.</p>
+              </div>
+              <a
+                href="https://portal.cdp.coinbase.com/products/faucet"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between px-3 py-2 rounded-lg font-mono text-[10px] transition-all"
+                style={{ background: 'rgba(255,255,255,0.05)', color: '#94a3b8' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#00d4ff'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(0,212,255,0.06)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = '#94a3b8'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(255,255,255,0.05)'; }}
+              >
+                COINBASE FAUCET <ArrowRight size={12} />
+              </a>
             </div>
-            <button
-              onClick={handleMint}
-              disabled={!isConnected || minting}
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-mono text-[10px] font-bold transition-all"
-              style={{
-                background: mintSuccess ? 'rgba(0,255,159,0.1)' : 'rgba(0,212,255,0.1)',
-                border: `1px solid ${mintSuccess ? 'rgba(0,255,159,0.3)' : 'rgba(0,212,255,0.3)'}`,
-                color: mintSuccess ? '#00ff9f' : '#00d4ff',
-                cursor: (!isConnected || minting) ? 'not-allowed' : 'pointer',
-                opacity: (!isConnected || minting) && !mintSuccess ? 0.5 : 1
-              }}
-            >
-              {minting ? <><Loader2 size={12} className="animate-spin" /> MINTING...</> :
-                mintSuccess ? <><CheckCircle2 size={12} /> 1000 USDC MINTED</> :
-                  'MINT 1000 MOCK USDC'}
-            </button>
+
+            {/* Mock USDC */}
+            <div className="rounded-lg p-4 flex flex-col justify-between gap-4" style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div>
+                <span className="font-mono text-xs font-semibold" style={{ color: '#e2e8f0' }}>Mock USDC</span>
+                <p className="font-mono text-[10px] mt-1" style={{ color: '#64748b' }}>Testnet asset for the YieldSense vault.</p>
+              </div>
+              <button
+                onClick={handleMint}
+                disabled={!isConnected || minting}
+                className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-mono text-[10px] font-bold transition-all"
+                style={{
+                  background: mintSuccess ? 'rgba(0,255,159,0.1)' : 'rgba(0,212,255,0.1)',
+                  border: `1px solid ${mintSuccess ? 'rgba(0,255,159,0.3)' : 'rgba(0,212,255,0.3)'}`,
+                  color: mintSuccess ? '#00ff9f' : '#00d4ff',
+                  cursor: (!isConnected || minting) ? 'not-allowed' : 'pointer',
+                  opacity: (!isConnected || minting) && !mintSuccess ? 0.5 : 1
+                }}
+              >
+                {minting ? <><Loader2 size={12} className="animate-spin" /> MINTING...</> :
+                  mintSuccess ? <><CheckCircle2 size={12} /> 1000 USDC MINTED</> :
+                    'MINT 1000 MOCK USDC'}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        // Mainnet notice — replaces the faucet entirely
+        <div className="cyber-card p-6 flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Zap size={14} style={{ color: '#00ff9f' }} />
+            <span className="font-mono font-bold tracking-widest" style={{ fontSize: 11, color: '#00ff9f', letterSpacing: '0.15em' }}>
+              LIVE ON BASE MAINNET
+            </span>
+          </div>
+          <p className="font-mono text-xs" style={{ color: '#94a3b8', lineHeight: 1.6 }}>
+            Deposit real USDC into the vault using the Deposit Module above.
+            Gas fees are sponsored — no ETH required.
+          </p>
+        </div>
+      )}
 
       {/* Hardware Proof Log */}
       <div className="cyber-card flex flex-col overflow-hidden h-[300px]">

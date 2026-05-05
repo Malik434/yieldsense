@@ -31,12 +31,17 @@ import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
 
 const CONFIG = {
-  /** RPC for keeper reads, gas, and harvest transactions (e.g. Base Sepolia). */
+  /**
+   * RPC for keeper reads, gas, and harvest transactions.
+   * Defaults to Base Sepolia because the default KEEPER_ADDRESS is deployed there.
+   * For mainnet execution set: RPC_URL=https://mainnet.base.org and deploy a mainnet keeper.
+   */
   rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
   /**
    * Optional: RPC for yield math only (logs, pool, gauge). When set, APR uses live mainnet data
    * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
-   * Example: DATA_RPC_URL=https://mainnet.base.org with RPC_URL=Base Sepolia.
+   * Default: mainnet.base.org (real yield data even when executing on Sepolia).
+   * To use Sepolia data too: DATA_RPC_URL=https://sepolia.base.org
    */
   dataRpcUrl: process.env.DATA_RPC_URL?.trim() || process.env.MAINNET_DATA_RPC_URL?.trim() || "https://mainnet.base.org",
   /** Optional fixed chain id for yield engine (e.g. 8453); else inferred from `dataRpcUrl` provider. */
@@ -54,7 +59,7 @@ const CONFIG = {
   })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
-  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
+  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.0005),
   estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "400000"),
   minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
   maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
@@ -98,6 +103,12 @@ const CONFIG = {
    * Example: 1000000 = accept at least 1.00 USDC per harvest.
    */
   harvestMinAssetOut: Number(process.env.HARVEST_MIN_ASSET_OUT ?? 0),
+  /**
+   * When true: build and sign the payload but do NOT submit the on-chain transaction.
+   * Useful for local testing to verify the full pipeline without spending gas or hitting
+   * keeper attestation checks. Set DRY_RUN=true in .env to enable.
+   */
+  dryRun: process.env.DRY_RUN === "true",
 };
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
@@ -330,6 +341,7 @@ async function main(): Promise<void> {
       forwardAprEstimate: aprConsensus.forwardAprEstimate,
       diagnostics: aprConsensus.diagnostics,
       netRewardUsd: decision.netRewardUsd,
+      grossRewardUsd: decision.grossRewardUsd,
       gasCostUsd,
       thresholdUsd: decision.thresholdUsd,
       reason: decision.reason,
@@ -375,6 +387,17 @@ async function main(): Promise<void> {
       hint: "Run on an Acurast processor (hardware _STD_ signing) or set ACURAST_WORKER_KEY for local execution.",
     });
     return;
+  }
+
+  // When running locally with a plain private key (not Acurast hardware), the keeper
+  // contract will always revert because that address is not in attestedProcessors.
+  // DRY_RUN=true lets you validate the full pipeline locally without a real on-chain submit.
+  if (!acurastStd && privateKey && !CONFIG.dryRun) {
+    console.warn(
+      "[index] ACURAST_WORKER_KEY is set but you are NOT running on Acurast hardware. " +
+      "The keeper contract will reject the tx (attestation check). " +
+      "Add DRY_RUN=true to .env to simulate locally without submitting on-chain."
+    );
   }
 
   const aprBps = CONFIG.forceTestHarvest
@@ -434,6 +457,28 @@ async function main(): Promise<void> {
     const signed = signHarvestPayload(privateKey!, payloadHash);
     const wallet = new ethers.Wallet(privateKey!, executionProvider);
 
+    // DRY_RUN: sign + validate the payload without touching the chain.
+    // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
+    // and any real tx will revert. The payload hash + signature are logged so you can
+    // verify them off-chain or manually call the contract once the key is attested.
+    if (CONFIG.dryRun) {
+      await emitTelemetry({
+        event: "harvest_dry_run",
+        timestamp: nowSec,
+        payloadHash: signed.payloadHash,
+        r: signed.r,
+        s: signed.s,
+        v: signed.v,
+        signerAddress: wallet.address,
+        keeperAddress: CONFIG.keeperAddress,
+        note: "DRY_RUN=true — tx not submitted. Pipeline validated end-to-end.",
+        ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+      });
+      state.lastDecisionReason = "dry_run";
+      await saveState(CONFIG.statePath, state);
+      return;
+    }
+
     // ETH balance pre-flight — fail fast with a clear message before the RPC rejects the tx
     const workerBalance = await executionProvider.getBalance(wallet.address);
     const estimatedGasCost = (feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0)) * BigInt(400_000);
@@ -486,6 +531,7 @@ async function main(): Promise<void> {
   await emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
+    rewardUsd: rewardCents / 100,
     txHash,
   });
 }
