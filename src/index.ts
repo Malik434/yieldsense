@@ -186,11 +186,18 @@ async function ensureKeeperOnExecutionChain(
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
 
-  // 1. Send Heartbeat
+  // 1. Log Config for TEE Diagnostics
+  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
+  console.log(`[CONFIG] User: ${envUser || "MISSING"}`);
+  console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
+  console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
+
+  // 2. Send Heartbeat
   await emitTelemetry({
     event: "processor_heartbeat",
-    message: "Worker starting...",
-    timestamp: startNow
+    message: `Guardian starting for ${envUser?.slice(0, 10)}...`,
+    timestamp: startNow,
+    userAddress: envUser // Explicitly pass to ensure first log isn't anonymous
   });
 
   // 2. Run Grid/Stop-Loss Check

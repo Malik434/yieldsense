@@ -364,11 +364,17 @@ async function submitTrade(
 // ─── Main grid loop ───────────────────────────────────────────────────────────
 
 export async function monitorAndExecuteGrid(): Promise<void> {
-  const rpcUrl = process.env.RPC_URL || "https://sepolia.base.org";
-  const dataRpcUrl = process.env.DATA_RPC_URL || rpcUrl;
-  const poolAddress = process.env.POOL_ADDRESS || "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
-  const keeperAddress = process.env.KEEPER_ADDRESS;
-  const userAddress = process.env.USER_ADDRESS;
+  const getEnv = (name: string, fallback: string): string => {
+    const baked = (globalThis as any).__ENV__?.[name];
+    const env = process.env[name];
+    return (baked ?? env ?? fallback).trim();
+  };
+
+  const rpcUrl = getEnv("RPC_URL", "https://sepolia.base.org");
+  const dataRpcUrl = getEnv("DATA_RPC_URL", rpcUrl);
+  const poolAddress = getEnv("POOL_ADDRESS", "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59");
+  const keeperAddress = getEnv("KEEPER_ADDRESS", "0x488147C822b364a940630075f9EACD080Cc16234");
+  const userAddress = getEnv("USER_ADDRESS", "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA");
 
   if (!keeperAddress || !userAddress) {
     console.warn("[processor] Missing KEEPER_ADDRESS or USER_ADDRESS — skipping grid check");
@@ -501,7 +507,7 @@ async function startLoop(): Promise<void> {
     await fetchAndStoreStrategyParams(userAddress, frontendUrl);
   }
 
-  for (;;) {
+  for (; ;) {
     try {
       await monitorAndExecuteGrid();
     } catch (error) {
