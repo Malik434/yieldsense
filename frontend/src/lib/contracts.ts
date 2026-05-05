@@ -4,7 +4,7 @@ export const KEEPER_ADDRESS = (() => {
   if (!addr) throw new Error('[YieldSense] NEXT_PUBLIC_KEEPER_ADDRESS env var is not set. Add it to .env.local and Netlify.');
   return addr as `0x${string}`;
 })();
-export const ASSET_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`; // Base Mainnet USDC
+export const ASSET_ADDRESS = (process.env.NEXT_PUBLIC_ASSET_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`;
 export const AUTOCOMPOUNDER_ADDRESS = (process.env.NEXT_PUBLIC_AUTOCOMPOUNDER_ADDRESS ?? null) as `0x${string}` | null;
 export const MAINNET_USDC_WETH_POOL = '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59'; // Aerodrome SlipStream WETH/USDC 0.05%
 

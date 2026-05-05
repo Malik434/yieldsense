@@ -13,6 +13,7 @@ import { PnlChart } from '@/components/PnlChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { WithdrawModule } from '@/components/WithdrawModule';
 import { PortfolioTicker } from '@/components/PortfolioTicker';
+import { TestingSuite } from '@/components/TestingSuite';
 import {
   ShieldCheck,
   Layers,
@@ -229,11 +230,12 @@ export default function CommandCenter() {
         <div className="animate-fade-in space-y-10" style={{ animationDelay: '0.1s' }}>
           <PnlChart
             currentBalance={balance}
-            initialDeposit={balance} // Using current balance as base for demo
+            initialDeposit={balance} 
             totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
             unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
           />
           <TransactionHistory />
+          <TestingSuite />
         </div>
 
         {/* ─── SECTION 3: WITHDRAW ─── */}
