@@ -69,7 +69,7 @@ async function main() {
   let processorAddress = process.env.PROCESSOR_ADDRESS?.trim();
 
   if (!processorAddress) {
-    const frontendUrl = process.env.FRONTEND_URL || "https://yieldsense.netlify.app";
+    const frontendUrl = process.env.FRONTEND_URL || "https://yieldsense.huzaifamalik.tech";
     console.log(`  No PROCESSOR_ADDRESS — querying ${frontendUrl} for hw_address_report…`);
     processorAddress = await fetchLatestHwAddress(frontendUrl);
     if (processorAddress) {

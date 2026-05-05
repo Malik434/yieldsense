@@ -27,7 +27,7 @@ const DEFAULT_PARAMS: StrategyParams = {
 const DOMAIN = {
   name: 'YieldSense',
   version: '1',
-  chainId: 84532, 
+  chainId: 84532,
   verifyingContract: KEEPER_ADDRESS,
 } as const;
 
@@ -58,9 +58,9 @@ export function ConfidentialStrategyBox() {
     if (!address) return;
     const stored = localStorage.getItem(`ys_strategy_${address}`);
     if (stored) {
-      try { 
+      try {
         const parsed = JSON.parse(stored);
-        setParams(prev => ({ ...prev, ...parsed })); 
+        setParams(prev => ({ ...prev, ...parsed }));
       } catch { /* ignore */ }
     }
   }, [address]);
@@ -101,7 +101,7 @@ export function ConfidentialStrategyBox() {
 
       setCommitStatus('submitting');
 
-      const res = await fetch('https://yieldsense.netlify.app/.netlify/functions/update-strategy', {
+      const res = await fetch('https://yieldsense.huzaifamalik.tech/.netlify/functions/update-strategy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -155,7 +155,7 @@ export function ConfidentialStrategyBox() {
 
       <div className="ys-card p-12 flex flex-col gap-10 h-full relative group">
         <div className="absolute top-0 right-0 p-12 bg-[#00FFA3]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-        
+
         <div className="flex items-center justify-between relative z-10">
           <div className="flex items-center gap-4">
             <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
@@ -169,7 +169,7 @@ export function ConfidentialStrategyBox() {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
               <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Auto-Compound</span>
-              <button 
+              <button
                 onClick={() => setParams(p => ({ ...p, autoReinvest: !p.autoReinvest }))}
                 className={`w-10 h-5 rounded-full transition-all relative ${params.autoReinvest ? 'bg-[#00FFA3]' : 'bg-white/10'}`}
               >
@@ -217,12 +217,12 @@ export function ConfidentialStrategyBox() {
             <div className="relative h-6 flex items-center">
               <div className="absolute w-full h-1 bg-white/5 rounded-full" />
               <div className="absolute h-1 bg-[#C2E812]/40 rounded-full" style={{ width: `${(params.maxSlippage / 2) * 100}%` }} />
-              <input 
-                type="range" 
-                min="0.1" 
-                max="2.0" 
-                step="0.1" 
-                value={params.maxSlippage} 
+              <input
+                type="range"
+                min="0.1"
+                max="2.0"
+                step="0.1"
+                value={params.maxSlippage}
                 onChange={e => setParams(p => ({ ...p, maxSlippage: parseFloat(e.target.value) }))}
                 className="absolute w-full h-1 bg-transparent appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#C2E812] [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-lg"
               />
@@ -259,8 +259,8 @@ export function ConfidentialStrategyBox() {
                   disabled={isBusy}
                   className={`
                     flex-1 h-12 rounded-2xl font-heading text-[10px] font-bold transition-all duration-300
-                    ${params.rebalanceInterval === v 
-                      ? 'bg-[#C2E812] text-[#030605] shadow-lg shadow-[#C2E812]/10' 
+                    ${params.rebalanceInterval === v
+                      ? 'bg-[#C2E812] text-[#030605] shadow-lg shadow-[#C2E812]/10'
                       : 'bg-white/5 border border-white/5 text-[#484F58] hover:text-[#8B949E]'}
                     border-none uppercase tracking-widest
                   `}
@@ -289,7 +289,7 @@ export function ConfidentialStrategyBox() {
               )}
             </div>
           </button>
-          
+
           {commitStatus === 'error' && (
             <p className="text-[9px] font-mono text-[#FF4466] mt-4 text-center uppercase tracking-widest">
               {errorMsg || 'Commitment Failed. Verify Network.'}

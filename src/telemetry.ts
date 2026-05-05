@@ -5,7 +5,7 @@ export interface TelemetryEvent {
   [key: string]: unknown;
 }
 
-const BUILTIN_TELEMETRY_URL = "https://yieldsense.netlify.app/api/telemetry";
+const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetry";
 
 /**
  * Emits a structured telemetry event to the Next.js telemetry API.
@@ -30,7 +30,7 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   if (!secret) {
     console.warn("[TELEMETRY_WARN] PROCESSOR_SHARED_SECRET is missing. API will reject logs.");
   }
-  
+
   if (!event.userAddress) {
     console.warn("[TELEMETRY_WARN] USER_ADDRESS is missing. Logs will be anonymous and likely ignored by frontend.");
   }
