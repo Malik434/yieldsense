@@ -94,7 +94,13 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
         timestamp: Date.now() - 86400000 * 7
       });
 
+      const seenHashes = new Set<string>();
+
       logs.forEach((log: any) => {
+        // Skip duplicate txHashes to prevent PnL double-counting
+        if (log.txHash && seenHashes.has(log.txHash)) return;
+        if (log.txHash) seenHashes.add(log.txHash);
+
         const ts = (log.timestamp || 0) * 1000;
         if (log.event === 'harvest_confirmed') {
           const reward = (log.rewardUsd || 0);

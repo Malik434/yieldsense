@@ -37,10 +37,16 @@ export function TransactionHistory() {
       const data = await res.json();
       const logs: any[] = data.logs ?? [];
       
+      const seenHashes = new Set<string>();
       const mapped = logs.map(log => {
         const ts = (log.timestamp ?? 0) * 1000;
         const txHash = log.txHash ?? '';
         if (!txHash) return null;
+
+        // Deduplication: only show one entry per hash.
+        // We handle confirm/submit logic by checking the 'confirmed' status later.
+        if (seenHashes.has(txHash)) return null;
+        seenHashes.add(txHash);
 
         if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') {
           return { type: 'HARVEST', timestamp: ts, txHash };

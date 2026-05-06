@@ -128,6 +128,15 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       break;
 
     case 'harvest_confirmed':
+      // Deduplication check: Don't process the same harvest twice
+      const existingLogs = await getLogs(normalised);
+      const isDuplicate = event.txHash && existingLogs.some((l: any) => l.txHash === event.txHash && l.event === 'harvest_confirmed');
+      
+      if (isDuplicate) {
+        console.warn(`[stateStore] Ignoring duplicate harvest_confirmed for tx: ${event.txHash}`);
+        return;
+      }
+
       patch.lastDecisionReason = 'executed';
       patch.lastExecutionAt = event.timestamp as number;
       patch.apiFailureStreak = 0;
