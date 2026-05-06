@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAccount, useReadContract, useBlockNumber } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
-import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
+import { KEEPER_ADDRESS, KEEPER_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
 import { Header } from '@/components/Header';
 import { DepositModule } from '@/components/DepositModule';
 import { ConfidentialStrategyBox } from '@/components/ConfidentialStrategyBox';
@@ -76,20 +76,20 @@ function SectionHeading({ id, label, sublabel }: { id: string; label: string; su
 
 export default function CommandCenter() {
   const { address } = useAccount();
-  const [workerState, setWorkerState] = useState<WorkerState | null>(null);
+
+  // vaultState holds the operator-level telemetry (APR, realized/unrealized profit,
+  // trade counts). Telemetry is always written to OPERATOR_ADDRESS regardless of
+  // which user is connected — this is the single source of truth for the shared pool.
+  const [vaultState, setVaultState] = useState<WorkerState | null>(null);
   const [consensus, setConsensus] = useState<ConsensusData | null>(null);
   const [mounted, setMounted] = useState(false);
 
-  const fetchState = async () => {
-    if (!address) {
-      setWorkerState(null);
-      return;
-    }
+  const fetchVaultState = async () => {
     try {
-      const res = await fetch(`/api/state?userAddress=${address}`);
+      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
       if (res.ok) {
         const data = await res.json();
-        setWorkerState(data);
+        setVaultState(data);
       }
     } catch { }
   };
@@ -106,23 +106,20 @@ export default function CommandCenter() {
 
   useEffect(() => {
     setMounted(true);
-    if (address) {
-      fetchState();
-    }
+    fetchVaultState();
     fetchConsensus();
-    const stateInterval = setInterval(() => {
-      if (address) fetchState();
-    }, 10000);
-    const consensusInterval = setInterval(fetchConsensus, 30000);
+    const vaultInterval = setInterval(fetchVaultState, 10_000);
+    const consensusInterval = setInterval(fetchConsensus, 30_000);
     return () => {
-      clearInterval(stateInterval);
+      clearInterval(vaultInterval);
       clearInterval(consensusInterval);
     };
-  }, [address]);
+  }, []);
 
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const queryClient = useQueryClient();
 
+  // User's redeemable USDC value (principal + any compounded yield in share price)
   const { data: maxWithdraw, refetch: refetchUserData } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
@@ -131,6 +128,16 @@ export default function CommandCenter() {
     query: { enabled: !!address },
   });
 
+  // User's vault shares — used to compute their proportional fraction of vault profit
+  const { data: userSharesRaw, refetch: refetchUserShares } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  });
+
+  // Total vault shares outstanding
   const { data: globalTvlRaw } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
@@ -140,19 +147,38 @@ export default function CommandCenter() {
   useEffect(() => {
     if (blockNumber) {
       refetchUserData();
+      refetchUserShares();
     }
-  }, [blockNumber, refetchUserData]);
+  }, [blockNumber, refetchUserData, refetchUserShares]);
 
+  // balance = what the connected user can withdraw right now (USDC, 6 decimals)
   const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
+  // globalTvl = total vault shares (≈ total USDC deposited for 1:1 mock vault)
   const globalTvl = globalTvlRaw ? parseFloat(formatUnits(globalTvlRaw as bigint, 6)) : 0;
+  // userShares = the connected user's share count
+  const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
 
-  const isHealthy = workerState?.apiFailureStreak === 0 && !workerState?.defaultState;
-  const isWarning = (workerState?.apiFailureStreak ?? 0) > 0 && (workerState?.apiFailureStreak ?? 0) < 3;
+  // The fraction of the vault owned by the connected user (shares-based, unit-agnostic).
+  // Falls back to 1 when on-chain data is still loading but the user clearly has a balance
+  // (prevents the dashboard showing $0 profit on first render).
+  const vaultShareFraction: number =
+    globalTvl > 0 && userShares > 0
+      ? Math.min(userShares / globalTvl, 1)
+      : balance > 0 ? 1 : 0;
+
+  // Scale vault-level profit/yield to this user's proportional share.
+  // This ensures every depositor — not just the operator — sees their earned yield.
+  const vaultTotalRealized = vaultState?.totalRealizedProfitUsd ?? 0;
+  const vaultUnrealized = vaultState?.unrealizedYieldUsd ?? 0;
+  const userProfit = vaultTotalRealized * vaultShareFraction;
+  const userUnrealized = vaultUnrealized * vaultShareFraction;
+
+  const isHealthy = vaultState?.apiFailureStreak === 0 && !vaultState?.defaultState;
+  const isWarning = (vaultState?.apiFailureStreak ?? 0) > 0 && (vaultState?.apiFailureStreak ?? 0) < 3;
 
   const prevApr =
     consensus?.consensus ??
-    (workerState?.previousApr != null ? Math.round(workerState.previousApr * 10_000) : null);
-  const ewmMean = workerState?.rewardAprEwm?.mean ?? null;
+    (vaultState?.previousApr != null ? Math.round(vaultState.previousApr * 10_000) : null);
 
   if (!mounted) return null;
 
@@ -166,8 +192,8 @@ export default function CommandCenter() {
         <div className="pt-12 mb-16">
           <PortfolioTicker
             balance={balance}
-            unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
-            totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
+            unrealizedYield={userUnrealized}
+            totalRealized={userProfit}
             apr={prevApr != null ? prevApr / 100 : 0}
             globalTvl={globalTvl}
           />
@@ -192,18 +218,18 @@ export default function CommandCenter() {
               <div className="flex items-center gap-3">
                 <Activity size={16} className="text-[#C2E812]" />
                 <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
-                  Trades: <span className="text-[#F5F7FA]">{workerState?.gridTradesExecuted ?? 0}</span>
+                  Trades: <span className="text-[#F5F7FA]">{vaultState?.gridTradesExecuted ?? 0}</span>
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 <Cpu size={16} className="text-[#00FFA3]" />
                 <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
-                  Checkpoint: <span className="text-[#F5F7FA]">{workerState?.yieldIndexerCheckpointBlock ?? '0'}</span>
+                  Checkpoint: <span className="text-[#F5F7FA]">{vaultState?.yieldIndexerCheckpointBlock ?? '0'}</span>
                 </span>
               </div>
-              {workerState?.lastDecisionReason && (
+              {vaultState?.lastDecisionReason && (
                 <div className="px-4 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-[#8B949E] font-bold tracking-widest uppercase">
-                  {workerState.lastDecisionReason}
+                  {vaultState.lastDecisionReason}
                 </div>
               )}
             </div>
@@ -229,10 +255,12 @@ export default function CommandCenter() {
         />
         <div className="animate-fade-in space-y-10" style={{ animationDelay: '0.1s' }}>
           <PnlChart
-            currentBalance={balance + (workerState?.totalRealizedProfitUsd ?? 0)}
-            initialDeposit={balance} 
-            totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
-            unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
+            currentBalance={balance + userProfit}
+            initialDeposit={balance}
+            totalRealized={userProfit}
+            unrealizedYield={userUnrealized}
+            userAddress={OPERATOR_ADDRESS}
+            vaultShareFraction={vaultShareFraction}
           />
           <TransactionHistory />
           <TestingSuite />

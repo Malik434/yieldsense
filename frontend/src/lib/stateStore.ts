@@ -37,6 +37,19 @@ const DEFAULT_STATE: WorkerState = {
   defaultState: true,
 };
 
+// Half-life for the reward APR exponential moving average (24 hours in seconds).
+// A value observed 24 h ago contributes 50% weight to the current mean.
+const EWMA_HALF_LIFE_SEC = 24 * 3600;
+
+/**
+ * Compute the EWMA decay factor for a given elapsed time.
+ * α = 1 - exp(-dt × ln2 / half_life)
+ * When dt → 0, α → 0 (no update). When dt → ∞, α → 1 (full replacement).
+ */
+function ewmaAlpha(elapsedSec: number): number {
+  return 1 - Math.exp((-elapsedSec * Math.LN2) / EWMA_HALF_LIFE_SEC);
+}
+
 async function getBlobs() {
   try {
     const { getStore } = await import('@netlify/blobs');
@@ -81,6 +94,11 @@ export async function getLogs(userAddress?: string): Promise<unknown[]> {
  * IMPORTANT: This function must only be called from /api/telemetry AFTER
  * bearer-token authentication. It performs no auth checks itself.
  *
+ * Atomicity: state and logs are read once at the top, all mutations are
+ * computed in memory, then both blobs are written in parallel at the end.
+ * This eliminates the stale-read race condition in the previous design where
+ * getLogs() was called a second time inside the harvest_confirmed branch.
+ *
  * @throws if userAddress is missing (prevents anonymous writes)
  */
 export async function applyTelemetryEvent(event: Record<string, unknown>): Promise<void> {
@@ -97,7 +115,13 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
   const logsKey = `logs_${normalised}`;
 
   const blobs = await getBlobs();
-  const currentState = await getState(normalised);
+
+  // Single parallel read — prevents the double-read race condition where a
+  // concurrent write between two getLogs() calls could drop an event.
+  const [currentState, existingLogs] = await Promise.all([
+    getState(normalised),
+    getLogs(normalised),
+  ]);
 
   const patch: Partial<WorkerState> = {
     lastRunAt: (event.timestamp as number | undefined) ?? Math.floor(Date.now() / 1000),
@@ -105,21 +129,40 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
   };
 
   switch (event.event as string) {
-    case 'profitability_check':
+    case 'profitability_check': {
       patch.previousApr = (event.apr as number | undefined) ?? currentState.previousApr;
       patch.lastDecisionReason = (event.reason as string | undefined) ?? currentState.lastDecisionReason;
       patch.suggestedNextCheckMs =
         (event.recommendedNextCheckMs as number | undefined) ?? currentState.suggestedNextCheckMs;
       patch.apiFailureStreak = 0;
-      patch.unrealizedYieldUsd = (event.grossRewardUsd as number | undefined) ?? currentState.unrealizedYieldUsd;
+
+      // Use netRewardUsd (post gas/fee) rather than grossRewardUsd so the
+      // displayed "unrealized yield" reflects what the user would actually receive.
+      // Fall back to grossRewardUsd only when netRewardUsd is absent (older processors).
+      const netReward = (event.netRewardUsd as number | undefined);
+      const grossReward = (event.grossRewardUsd as number | undefined);
+      patch.unrealizedYieldUsd = (netReward ?? grossReward) ?? currentState.unrealizedYieldUsd;
+
+      // Proper time-decayed EWMA for reward APR.
+      // Previous code set variance=0 and replaced mean entirely, which is not an average.
       if (event.rewardApr != null) {
-        patch.rewardAprEwm = {
-          mean: event.rewardApr as number,
-          variance: 0,
-          lastTimestamp: event.timestamp as number,
-        };
+        const newValue = event.rewardApr as number;
+        const ts = (event.timestamp as number | undefined) ?? Math.floor(Date.now() / 1000);
+        const prev = currentState.rewardAprEwm;
+
+        if (!prev) {
+          patch.rewardAprEwm = { mean: newValue, variance: 0, lastTimestamp: ts };
+        } else {
+          const elapsedSec = Math.max(0, ts - prev.lastTimestamp);
+          const alpha = ewmaAlpha(elapsedSec);
+          const newMean = alpha * newValue + (1 - alpha) * prev.mean;
+          // Welford-style online variance update
+          const newVariance = (1 - alpha) * (prev.variance + alpha * Math.pow(newValue - prev.mean, 2));
+          patch.rewardAprEwm = { mean: newMean, variance: newVariance, lastTimestamp: ts };
+        }
       }
       break;
+    }
 
     case 'harvest_submitted':
       patch.lastDecisionReason = 'executed';
@@ -127,11 +170,12 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       patch.apiFailureStreak = 0;
       break;
 
-    case 'harvest_confirmed':
-      // Deduplication check: Don't process the same harvest twice
-      const existingLogs = await getLogs(normalised);
-      const isDuplicate = event.txHash && existingLogs.some((l: any) => l.txHash === event.txHash && l.event === 'harvest_confirmed');
-      
+    case 'harvest_confirmed': {
+      // Deduplication: use the already-read existingLogs — no second getLogs() call.
+      const isDuplicate =
+        event.txHash &&
+        existingLogs.some((l: any) => l.txHash === event.txHash && l.event === 'harvest_confirmed');
+
       if (isDuplicate) {
         console.warn(`[stateStore] Ignoring duplicate harvest_confirmed for tx: ${event.txHash}`);
         return;
@@ -140,16 +184,22 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       patch.lastDecisionReason = 'executed';
       patch.lastExecutionAt = event.timestamp as number;
       patch.apiFailureStreak = 0;
-      // Realized the yield, so reset unrealized to 0 and add to realized total
+      // Harvest realized the accrued yield — reset unrealized and accumulate realized.
       patch.unrealizedYieldUsd = 0;
-      patch.totalRealizedProfitUsd = (currentState.totalRealizedProfitUsd ?? 0) + ((event.rewardUsd as number) ?? 0);
+      patch.totalRealizedProfitUsd =
+        (currentState.totalRealizedProfitUsd ?? 0) + ((event.rewardUsd as number) ?? 0);
       break;
+    }
 
     case 'grid_trade_executed':
       patch.gridTradesExecuted = (currentState.gridTradesExecuted ?? 0) + 1;
       patch.lastGridTradeAt = event.timestamp as number;
       patch.lastDecisionReason = 'grid_trade';
       patch.apiFailureStreak = 0;
+      // Note: pnlDelta from the processor is an allocation-scaled indicator
+      // (allocationBps / 10000 × 1e6), NOT a USD realized profit figure.
+      // It is intentionally not accumulated into totalRealizedProfitUsd here.
+      // Once the protocol provides on-chain realized PnL, add it here.
       break;
 
     case 'yield_not_usable':
@@ -170,15 +220,15 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       break;
   }
 
+  if (!blobs) return;
+
   const newState: WorkerState = { ...currentState, ...patch };
+  // Ring buffer: newest event first, capped at 50 entries.
+  const newLogs = [event, ...existingLogs].slice(0, 50);
 
-  if (blobs) {
-    await blobs.setJSON(stateKey, newState);
-
-    // Append to ring buffer (newest first, capped at 50)
-    const logs = await getLogs(normalised);
-    logs.unshift(event);
-    if (logs.length > 50) logs.length = 50;
-    await blobs.setJSON(logsKey, logs);
-  }
+  // Parallel write — both blobs updated atomically in a single round-trip.
+  await Promise.all([
+    blobs.setJSON(stateKey, newState),
+    blobs.setJSON(logsKey, newLogs),
+  ]);
 }

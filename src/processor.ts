@@ -221,16 +221,19 @@ function loadStrategyParams(userAddress: string): UserStrategyParams | null {
  * The POOL_DECIMAL_FACTOR corrects for token decimal differences.
  * For WETH (18 dec) / USDC (6 dec): factor = 10^(18-6) = 10^12.
  *
- * Without this correction the raw price is off by 10^12, causing every grid
- * trigger comparison and stop-loss check to use a wildly incorrect value.
+ * Precision note: sqrtPriceX96^2 is a ~320-bit integer. Converting it
+ * directly to Number before dividing silently truncates to 53-bit float
+ * precision, introducing significant rounding error at high price values.
+ * We maintain BigInt arithmetic through the division by scaling the result
+ * by a large integer factor first, then convert only at the final step.
  */
 function calculatePriceFromSqrtX96(sqrtPriceX96: bigint): number {
   const Q96 = 2n ** 96n;
-  // Use BigInt division to avoid precision loss at extreme sqrtPrice values,
-  // then switch to floating point for the final multiplication.
-  const numerator = Number(sqrtPriceX96 * sqrtPriceX96);
-  const denominator = Number(Q96 * Q96);
-  return (numerator / denominator) * POOL_DECIMAL_FACTOR;
+  // Scale factor keeps 18 decimal places of precision in the integer domain
+  // before we convert to float for the final POOL_DECIMAL_FACTOR multiply.
+  const PRECISION = 10n ** 18n;
+  const scaled = (sqrtPriceX96 * sqrtPriceX96 * PRECISION) / (Q96 * Q96);
+  return (Number(scaled) / Number(PRECISION)) * POOL_DECIMAL_FACTOR;
 }
 
 function variationPercent(referencePrice: number, currentPrice: number): number {

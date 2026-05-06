@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   AreaChart,
   Area,
@@ -13,17 +13,13 @@ import {
 import {
   Activity,
   TrendingUp,
-  TrendingDown,
   Shield,
-  Info,
-  Clock,
   RefreshCw,
   CheckCircle2,
   Target,
   Zap,
   ArrowUpDown
 } from 'lucide-react';
-import { useAccount } from 'wagmi';
 import { OPERATOR_ADDRESS } from '@/lib/contracts';
 
 interface PnlDataPoint {
@@ -38,7 +34,26 @@ interface PnlChartProps {
   initialDeposit: number;
   totalRealized?: number;
   unrealizedYield?: number;
+  /** Address to scope telemetry log fetch. Falls back to OPERATOR_ADDRESS. */
+  userAddress?: string;
+  /**
+   * The connected user's fractional share of the vault (userShares / totalShares).
+   * Harvest rewards in the telemetry logs represent vault-wide income, so each
+   * user's chart curve is scaled to their ownership fraction.
+   * Defaults to 1 (show full vault amounts — correct for the operator / sole depositor).
+   */
+  vaultShareFraction?: number;
 }
+
+// How often the chart auto-refreshes in the background (ms).
+// Decoupled from block production so we don't hammer the API every 2 s.
+const CHART_REFRESH_INTERVAL_MS = 60_000;
+
+const PERIOD_WINDOWS: Record<string, number> = {
+  '1D': 86_400_000,
+  '1W': 86_400_000 * 7,
+  '1M': 86_400_000 * 30,
+};
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -65,110 +80,163 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, unrealizedYield = 0 }: PnlChartProps) {
-  const { address } = useAccount();
+export function PnlChart({
+  currentBalance,
+  initialDeposit,
+  totalRealized = 0,
+  unrealizedYield = 0,
+  userAddress,
+  vaultShareFraction = 1,
+}: PnlChartProps) {
   const [data, setData] = useState<PnlDataPoint[]>([]);
   const [mounted, setMounted] = useState(false);
   const [period, setPeriod] = useState('1D');
   const [loading, setLoading] = useState(true);
-  const [attribution, setAttribution] = useState({ harvest: 0, trade: 0 });
+  const [attribution, setAttribution] = useState({ harvest: 0, gridTrades: 0 });
 
-  const fetchHistory = async () => {
+  // Refs hold the latest balance/yield values so the "Now" anchor in the chart
+  // always reflects the current on-chain state without triggering a full API
+  // refetch on every block.
+  const currentBalanceRef = useRef(currentBalance);
+  const unrealizedYieldRef = useRef(unrealizedYield);
+  useEffect(() => {
+    currentBalanceRef.current = currentBalance;
+    unrealizedYieldRef.current = unrealizedYield;
+  }, [currentBalance, unrealizedYield]);
+
+  const fetchHistory = useCallback(async () => {
     setLoading(true);
+    const targetAddress = userAddress ?? OPERATOR_ADDRESS;
     try {
-      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
+      const res = await fetch(`/api/state?userAddress=${targetAddress}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
-      const logs = (state.logs || []).reverse();
+
+      // logs are stored newest-first; reverse to get chronological order
+      const logs: any[] = (state.logs ?? []).slice().reverse();
 
       let cumulativePnl = 0;
       let harvestTotal = 0;
-      let tradeTotal = 0;
+      let gridTradeCount = 0;
       const points: PnlDataPoint[] = [];
 
+      const now = Date.now();
+      const windowMs = PERIOD_WINDOWS[period] ?? Infinity;
+
+      // Anchor the chart at the start of the selected period.
+      // Using a fixed 7-day offset caused the anchor to be filtered out
+      // for shorter periods (1D), leading to the fallback showing all data.
       points.push({
         time: 'Start',
         balance: initialDeposit,
         deposit: initialDeposit,
-        timestamp: Date.now() - 86400000 * 7
+        timestamp: period === 'ALL' ? 0 : now - windowMs,
       });
 
       const seenHashes = new Set<string>();
 
-      logs.forEach((log: any) => {
-        // Skip duplicate txHashes to prevent PnL double-counting
-        if (log.txHash && seenHashes.has(log.txHash)) return;
-        if (log.txHash) seenHashes.add(log.txHash);
+      for (const log of logs) {
+        // Skip events with missing or invalid timestamps (epoch 0 = garbage data)
+        if (!log.timestamp || log.timestamp <= 0) continue;
 
-        const ts = (log.timestamp || 0) * 1000;
+        // Deduplicate by txHash to prevent PnL double-counting from retries
+        if (log.txHash) {
+          if (seenHashes.has(log.txHash)) continue;
+          seenHashes.add(log.txHash);
+        }
+
+        const ts = log.timestamp * 1000;
+
         if (log.event === 'harvest_confirmed') {
-          const reward = (log.rewardUsd || 0);
+          // Scale the vault-wide harvest to this user's ownership fraction.
+          // A harvest of $2.50 for a user with 30% of the vault = $0.75 for them.
+          const reward = Number(log.rewardUsd ?? 0) * vaultShareFraction;
           cumulativePnl += reward;
           harvestTotal += reward;
         } else if (log.event === 'grid_trade_executed') {
-          const profit = (Number(log.pnlDelta || 0) / 1_000_000);
-          cumulativePnl += profit;
-          tradeTotal += profit;
+          // pnlDelta is an allocation-indicator in micro-units, NOT a real USD
+          // profit figure (see processor.ts: allocationBps / 10000 × 1e6).
+          // It is tracked for the grid trade count display only and intentionally
+          // excluded from the cumulative PnL balance curve.
+          gridTradeCount += 1;
+          continue;
         } else {
-          return;
+          continue;
         }
 
-        const date = new Date(ts);
         points.push({
-          time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+          time: '',
           balance: initialDeposit + cumulativePnl,
           deposit: initialDeposit,
-          timestamp: ts
-        });
-      });
-
-      setAttribution({ harvest: harvestTotal, trade: tradeTotal });
-
-      // Only add 'Now' point if we have a balance or logs, and prevent it from dropping to 0 if it's just a test
-      const finalBalance = currentBalance + unrealizedYield;
-      if (points.length > 0) {
-        points.push({
-          time: 'Now',
-          balance: Math.max(finalBalance, (points[points.length - 1]?.balance || 0)),
-          deposit: initialDeposit,
-          timestamp: Date.now()
+          timestamp: ts,
         });
       }
 
-      // Sort by timestamp to prevent "weird lines" if logs arrive out of order
+      setAttribution({ harvest: harvestTotal, gridTrades: gridTradeCount });
+
+      // "Now" anchor: uses the ref so it reflects live balance without
+      // re-running the full fetch on every block update.
+      points.push({
+        time: 'Now',
+        balance: currentBalanceRef.current + unrealizedYieldRef.current,
+        deposit: initialDeposit,
+        timestamp: now,
+      });
+
+      // Sort chronologically — logs can arrive out of order
       points.sort((a, b) => a.timestamp - b.timestamp);
 
-      const now = Date.now();
-      let filtered = points;
-      if (period === '1D') filtered = points.filter(p => now - p.timestamp < 86400000);
-      else if (period === '1W') filtered = points.filter(p => now - p.timestamp < 86400000 * 7);
-      else if (period === '1M') filtered = points.filter(p => now - p.timestamp < 86400000 * 30);
+      // Filter to the selected period; the anchor was placed at period-start
+      // so it is always included after filtering.
+      let filtered =
+        period === 'ALL'
+          ? points
+          : points.filter(p => now - p.timestamp <= windowMs);
 
-      // If filtering leaves us with nothing, show everything
+      // Safety net: if fewer than 2 points survived, show all
       if (filtered.length < 2) filtered = points;
 
-      // Final mapping for display
       const finalData = filtered.map(p => ({
         ...p,
-        time: new Date(p.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+        time:
+          p.time === 'Now' || p.time === 'Start'
+            ? p.time
+            : new Date(p.timestamp).toLocaleDateString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              }),
       }));
 
       setData(finalData);
     } catch (err) {
-      console.error('Failed to fetch chart history:', err);
+      console.error('[PnlChart] Failed to fetch chart history:', err);
+      // Fallback: two-point flat line using real timestamps
+      const fallbackNow = Date.now();
       setData([
-        { time: 'May 01', balance: initialDeposit, deposit: initialDeposit, timestamp: 0 },
-        { time: 'May 04', balance: currentBalance + unrealizedYield, deposit: initialDeposit, timestamp: 0 },
+        { time: 'Start', balance: initialDeposit, deposit: initialDeposit, timestamp: fallbackNow - 86_400_000 },
+        { time: 'Now', balance: currentBalanceRef.current + unrealizedYieldRef.current, deposit: initialDeposit, timestamp: fallbackNow },
       ]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [userAddress, initialDeposit, period, vaultShareFraction]);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Fetch on mount and whenever the address, initial deposit, or period changes.
+  // currentBalance and unrealizedYield are intentionally excluded — they change
+  // every block and would trigger 30+ API calls per minute. The "Now" point
+  // reads them via refs instead.
+  useEffect(() => {
     fetchHistory();
-  }, [address, currentBalance, initialDeposit, period]);
+    const id = setInterval(fetchHistory, CHART_REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fetchHistory]);
 
   if (!mounted) return null;
 
@@ -227,22 +295,26 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
                   <Zap size={14} className="text-[#00FFA3]" />
                   Protocol Harvests
                 </div>
-                <span className="text-[#00FFA3] font-mono font-bold">+${attribution.harvest.toFixed(2)}</span>
+                <span className={`font-mono font-bold ${attribution.harvest >= 0 ? 'text-[#00FFA3]' : 'text-[#FF4466]'}`}>
+                  {attribution.harvest >= 0 ? '+' : ''}${attribution.harvest.toFixed(2)}
+                </span>
               </div>
               <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-[#00FFA3]" style={{ width: `${(attribution.harvest / (attribution.harvest + attribution.trade || 1)) * 100}%` }} />
+                <div className="h-full bg-[#00FFA3]" style={{ width: '100%' }} />
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 text-[#F5F7FA] font-heading font-bold">
                   <ArrowUpDown size={14} className="text-[#C2E812]" />
-                  Grid Execution Fees
+                  Grid Trades
                 </div>
-                <span className="text-[#C2E812] font-mono font-bold">+${attribution.trade.toFixed(2)}</span>
+                <span className="text-[#C2E812] font-mono font-bold">
+                  {attribution.gridTrades} executed
+                </span>
               </div>
               <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-[#C2E812]" style={{ width: `${(attribution.trade / (attribution.harvest + attribution.trade || 1)) * 100}%` }} />
+                <div className="h-full bg-[#C2E812]" style={{ width: attribution.gridTrades > 0 ? '100%' : '0%' }} />
               </div>
             </div>
           </div>

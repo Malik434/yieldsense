@@ -25,9 +25,27 @@ export async function POST(request: Request) {
   console.log(`[telemetry] Incoming POST from IP=${incomingIp} UA=${incomingUA.substring(0, 80)}`);
 
   // ── Authentication ────────────────────────────────────────────────────────
-  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() ?? 'e10383a7f06075735018c89582bd53f966981ab0a386d35763776f0c490fdc58';
+  // PROCESSOR_SHARED_SECRET must be set in the environment.
+  // There is no hardcoded fallback — a missing secret means the server is
+  // misconfigured, not that it should accept all requests. The previous
+  // fallback value was committed to the repository and is therefore public.
+  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim();
 
-  if (secret) {
+  if (!secret) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(
+        '[telemetry] PROCESSOR_SHARED_SECRET is not set. ' +
+        'Accepting request in local dev mode only. ' +
+        'Set this env var before deploying to production.'
+      );
+    } else {
+      console.error('[telemetry] REJECTED 503 — PROCESSOR_SHARED_SECRET is not set in production environment.');
+      return NextResponse.json(
+        { error: 'Server not configured — PROCESSOR_SHARED_SECRET must be set' },
+        { status: 503 }
+      );
+    }
+  } else {
     const authHeader = request.headers.get('Authorization') ?? '';
     const providedToken = authHeader.startsWith('Bearer ')
       ? authHeader.slice(7).trim()
@@ -41,13 +59,6 @@ export async function POST(request: Request) {
       );
     }
     console.log('[telemetry] Auth OK');
-  } else {
-    // Local dev only — loudly warn so this is never silently deployed to production
-    console.warn(
-      '[telemetry] PROCESSOR_SHARED_SECRET is not set. ' +
-      'Running in unauthenticated local dev mode. ' +
-      'Set this env var before deploying to production.'
-    );
   }
 
   // ── Payload validation ────────────────────────────────────────────────────
