@@ -17,3 +17,6 @@ proposal_text.md
 
 # Local Netlify folder
 .netlify
+.acurast/bundles/YieldSense.zip
+.acurast/keys.json
+
