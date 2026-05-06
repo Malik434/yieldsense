@@ -11,7 +11,7 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 3600000,
-        "numberOfExecutions": 5
+        "numberOfExecutions": 60
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -22,7 +22,7 @@
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
-      "maxCostPerExecution": 10000000000,
+      "maxCostPerExecution": 5500000000,
       "includeEnvironmentVariables": [
         "RPC_URL",
         "KEEPER_ADDRESS",

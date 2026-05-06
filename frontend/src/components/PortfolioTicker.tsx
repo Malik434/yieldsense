@@ -12,7 +12,7 @@ interface PortfolioTickerProps {
 }
 
 export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, globalTvl = 0 }: PortfolioTickerProps) {
-  const [tickerBalance, setTickerBalance] = useState(balance + unrealizedYield);
+  const [tickerBalance, setTickerBalance] = useState(balance + totalRealized + unrealizedYield);
 
   // Velocity calculation
   const msInYear = 365 * 24 * 60 * 60 * 1000;
@@ -21,7 +21,7 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
   }, [balance, apr]);
 
   useEffect(() => {
-    setTickerBalance(balance + unrealizedYield);
+    setTickerBalance(balance + totalRealized + unrealizedYield);
 
     const interval = setInterval(() => {
       setTickerBalance(prev => prev + yieldPerMs * 100);
