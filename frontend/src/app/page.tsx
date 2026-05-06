@@ -230,7 +230,7 @@ export default function CommandCenter() {
         <div className="animate-fade-in space-y-10" style={{ animationDelay: '0.1s' }}>
           <PnlChart
             currentBalance={balance}
-            initialDeposit={balance} 
+            initialDeposit={balance - (workerState?.totalRealizedProfitUsd ?? 0)} 
             totalRealized={workerState?.totalRealizedProfitUsd ?? 0}
             unrealizedYield={workerState?.unrealizedYieldUsd ?? 0}
           />

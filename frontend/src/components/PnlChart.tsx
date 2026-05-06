@@ -45,13 +45,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   const balance = payload.find((p: any) => p.dataKey === 'balance')?.value ?? 0;
   const deposit = payload.find((p: any) => p.dataKey === 'deposit')?.value ?? 0;
   const pnl = balance - deposit;
-  let pnlPct = '0.00';
-  if (deposit > 0) {
-    pnlPct = ((pnl / deposit) * 100).toFixed(2);
-  } else if (balance > 0) {
-    // If no deposit but we have a balance (testing), show growth relative to $1 or just 100%
-    pnlPct = '100.00';
-  }
+  const pnlPct = deposit > 0 ? ((pnl / deposit) * 100).toFixed(2) : '0.00';
 
   return (
     <div className="ys-card bg-[#0B0F0D]/95 border-white/10 p-5 shadow-2xl backdrop-blur-xl">
