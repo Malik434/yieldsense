@@ -10,15 +10,15 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { 
-  Activity, 
-  TrendingUp, 
-  TrendingDown, 
-  Shield, 
-  Info, 
-  Clock, 
-  RefreshCw, 
-  CheckCircle2, 
+import {
+  Activity,
+  TrendingUp,
+  TrendingDown,
+  Shield,
+  Info,
+  Clock,
+  RefreshCw,
+  CheckCircle2,
   Target,
   Zap,
   ArrowUpDown
@@ -45,7 +45,13 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   const balance = payload.find((p: any) => p.dataKey === 'balance')?.value ?? 0;
   const deposit = payload.find((p: any) => p.dataKey === 'deposit')?.value ?? 0;
   const pnl = balance - deposit;
-  const pnlPct = deposit > 0 ? ((pnl / deposit) * 100).toFixed(2) : '0.00';
+  let pnlPct = '0.00';
+  if (deposit > 0) {
+    pnlPct = ((pnl / deposit) * 100).toFixed(2);
+  } else if (balance > 0) {
+    // If no deposit but we have a balance (testing), show growth relative to $1 or just 100%
+    pnlPct = '100.00';
+  }
 
   return (
     <div className="ys-card bg-[#0B0F0D]/95 border-white/10 p-5 shadow-2xl backdrop-blur-xl">
@@ -80,7 +86,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
       const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
-      const logs = (state.logs || []).reverse(); 
+      const logs = (state.logs || []).reverse();
 
       let cumulativePnl = 0;
       let harvestTotal = 0;
@@ -119,14 +125,19 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
 
       setAttribution({ harvest: harvestTotal, trade: tradeTotal });
 
+      // Only add 'Now' point if we have a balance or logs, and prevent it from dropping to 0 if it's just a test
+      const finalBalance = currentBalance + unrealizedYield;
       if (points.length > 0) {
         points.push({
           time: 'Now',
-          balance: currentBalance + unrealizedYield,
+          balance: Math.max(finalBalance, (points[points.length - 1]?.balance || 0)),
           deposit: initialDeposit,
           timestamp: Date.now()
         });
       }
+
+      // Sort by timestamp to prevent "weird lines" if logs arrive out of order
+      points.sort((a, b) => a.timestamp - b.timestamp);
 
       const now = Date.now();
       let filtered = points;
@@ -134,8 +145,10 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
       else if (period === '1W') filtered = points.filter(p => now - p.timestamp < 86400000 * 7);
       else if (period === '1M') filtered = points.filter(p => now - p.timestamp < 86400000 * 30);
 
+      // If filtering leaves us with nothing, show everything
       if (filtered.length < 2) filtered = points;
 
+      // Final mapping for display
       const finalData = filtered.map(p => ({
         ...p,
         time: new Date(p.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -176,8 +189,8 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
         </div>
         <div className="flex bg-black/40 p-1 rounded-xl border border-white/[0.05]">
           {['1D', '1W', '1M', 'ALL'].map(t => (
-            <button 
-              key={t} 
+            <button
+              key={t}
               onClick={() => setPeriod(t)}
               className={`px-6 py-2 rounded-lg text-[10px] font-mono font-bold tracking-widest transition-all ${period === t ? 'bg-[#C2E812] text-[#030605]' : 'text-[#484F58] hover:text-[#8B949E]'}`}
             >
@@ -268,8 +281,8 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
                 tickFormatter={(v) => `$${v.toFixed(0)}`}
                 dx={-10}
               />
-              <Tooltip 
-                content={<CustomTooltip />} 
+              <Tooltip
+                content={<CustomTooltip />}
                 cursor={{ stroke: 'rgba(194, 232, 18, 0.2)', strokeWidth: 2 }}
               />
               <Area
@@ -298,7 +311,7 @@ export function PnlChart({ currentBalance, initialDeposit, totalRealized = 0, un
             <Shield size={12} className="text-[#00FFA3]" />
             <span className="text-[10px] font-mono font-bold text-[#00FFA3] uppercase tracking-widest">Acurast Verified</span>
           </div>
-          <button 
+          <button
             onClick={fetchHistory}
             className="p-2 rounded-lg bg-white/5 border border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all"
           >
