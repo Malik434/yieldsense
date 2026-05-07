@@ -571,20 +571,13 @@ executeTrade(user, pnlDelta, nonce, signature):
 
 ### Worker Issues
 
-1. **`Date.now()` as nonce in `processor.ts`.**
-   Using millisecond timestamps as nonces is susceptible to collision if two executions happen within the same millisecond. Consider a monotonic counter or a cryptographic random nonce.
-
-2. **Single-user assumption in workers.** Both workers are configured for one `USER_ADDRESS` / one pool. Multi-user operation would require looping over users or a registry contract.
+1. **Single-user assumption in workers.** Both workers are configured for one `USER_ADDRESS` / one pool. Multi-user operation would require looping over users or a registry contract.
 3. **ETH price fallback is hardcoded.** If CoinGecko is unreachable, ETH price defaults to `$3500`. This could cause incorrect gas cost estimates.
 4. **No retry logic for RPC failures.** The worker exits with `process.exitCode = 1` on any unhandled error. Acurast will reschedule according to its job config, but transient RPC errors will count as full failures.
 
 ---
 
 ## 9. Next Steps / Roadmap
-
-### High Priority
-
-- [ ] **Fix nonce generation in `processor.ts`** — replace `Date.now()` with a cryptographic random or per-user on-chain nonce read.
 
 ### Medium Priority
 
@@ -604,14 +597,9 @@ executeTrade(user, pnlDelta, nonce, signature):
 
 ## 10. Additional Notes
 
-### Two Separate Contract Contexts
+### Unified Contract Context
 
-The codebase contains references to **two conceptually distinct keeper contracts**:
-
-- The **harvest keeper** — referenced in `src/index.ts` with `executeHarvest(payloadHash, r, s, v)` and `lastHarvest()`. This contract is not present in the `contracts/` directory.
-- The **trade/vault keeper** — `contracts/YieldSenseKeeper.sol` with `executeTrade`, `deposit`, and `withdraw`. This is referenced in `src/processor.ts` and `acurast.config.ts`.
-
-New developers should be aware that `YieldSenseKeeper.sol` is **not** the contract that `index.ts` calls.
+Previously, the codebase utilized two separate keeper contracts. This has now been updated so that both **harvesting** (`executeHarvest`) and **grid trading** (`executeTrade`) are managed by a single unified contract: `contracts/YieldSenseKeeper.sol`.
 
 ### Hybrid RPC Mode
 
