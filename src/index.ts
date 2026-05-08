@@ -353,6 +353,7 @@ async function main(): Promise<void> {
       thresholdUsd: decision.thresholdUsd,
       reason: decision.reason,
       recommendedNextCheckMs: decision.recommendedNextCheckMs,
+      chainId: executionChainId,
     });
 
     state.previousApr = aprConsensus.totalApr;
@@ -540,6 +541,7 @@ async function main(): Promise<void> {
     timestamp: Math.floor(Date.now() / 1000),
     rewardUsd: rewardCents / 100,
     txHash,
+    chainId: executionChainId,
   });
 }
 

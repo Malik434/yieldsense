@@ -23,6 +23,11 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
     event.userAddress = envUser;
   }
 
+  const envChainId = process.env.CHAIN_ID || (globalThis as any).__ENV__?.CHAIN_ID;
+  if (envChainId && !event.chainId) {
+    event.chainId = Number(envChainId);
+  }
+
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
   const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET || BAKED_SECRET;
 

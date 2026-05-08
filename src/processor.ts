@@ -463,6 +463,7 @@ export async function monitorAndExecuteGrid(): Promise<void> {
       nonce: trade.nonce.toString(),
       pnlDelta: trade.pnlDelta.toString(),
       txHash,
+      chainId: Number(chainId),
     });
 
     state.gridTradesExecuted = (state.gridTradesExecuted || 0) + 1;

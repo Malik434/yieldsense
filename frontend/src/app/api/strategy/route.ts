@@ -54,6 +54,7 @@ interface StoredStrategy {
   signer: string;
   signature: string;
   timestamp: number;
+  chainId?: number;
 }
 
 // ─── POST /api/strategy ───────────────────────────────────────────────────────
