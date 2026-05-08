@@ -131,23 +131,21 @@ export function signHarvestPayloadWithAcurastHardware(
   payloadHash: string,
   expectedSigner: string
 ): HarvestSignaturePayload {
-  // Use ethers.hashMessage to add the "\x19Ethereum Signed Message:\n32" prefix
-  // so it matches the contract's MessageHashUtils.toEthSignedMessageHash(digest).
-  const ethDigest = ethers.hashMessage(ethers.getBytes(payloadHash));
-  const sigHex = std.signers.secp256k1.sign(ethDigest.replace(/^0x/, ""));
+  // With EIP-712, payloadHash is already the final EIP-191 compliant digest.
+  const sigHex = std.signers.secp256k1.sign(payloadHash.replace(/^0x/, ""));
   
-  const { r, s, v } = parseSecp256k1SignOutput(ethDigest, sigHex, expectedSigner);
+  const { r, s, v } = parseSecp256k1SignOutput(payloadHash, sigHex, expectedSigner);
   return { payloadHash, r, s, v };
 }
 
-const EXECUTE_HARVEST_MODERN = "executeHarvest(bytes32,bytes32,bytes32,uint8,uint256)";
+const EXECUTE_HARVEST_MODERN = "executeHarvest(uint256,address,bytes32,bytes32,uint8,uint256,uint256,uint256,(address,address,bool,address)[])";
 
 function encodeExecuteHarvestArgs(
-  payloadHash: string, r: string, s: string, v: number, minAssetOut: bigint
+  nonce: string, targetPool: string, r: string, s: string, v: number, minLpOut: string, amountToSwap: string, deadline: number, routes: any[]
 ): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(
-    ["bytes32", "bytes32", "bytes32", "uint8", "uint256"],
-    [payloadHash, r, s, v, minAssetOut]
+    ["uint256", "address", "bytes32", "bytes32", "uint8", "uint256", "uint256", "uint256", "tuple(address from, address to, bool stable, address factory)[]"],
+    [nonce, targetPool, r, s, v, minLpOut, amountToSwap, deadline, routes]
   );
 }
 
@@ -160,18 +158,22 @@ export function fulfillEthereumHarvest(
     rpcUrl: string;
     keeperAddress: string;
     payloadHash: string;
+    nonce: string;
+    targetPool: string;
     r: string;
     s: string;
     v: number;
-    /** Minimum USDC (6 dec) to accept from AERO→USDC swap inside the autocompounder. */
-    minAssetOut: bigint;
+    minLpOut: string;
+    amountToSwap: string;
+    deadline: number;
+    routes: any[];
     gasLimit: string;
     maxFeePerGas: string;
     maxPriorityFeePerGas: string;
   }
 ): Promise<{ hash: string }> {
   const payload = encodeExecuteHarvestArgs(
-    params.payloadHash, params.r, params.s, params.v, params.minAssetOut
+    params.nonce, params.targetPool, params.r, params.s, params.v, params.minLpOut, params.amountToSwap, params.deadline, params.routes
   );
   return new Promise((resolve, reject) => {
     std.chains.ethereum.fulfill(

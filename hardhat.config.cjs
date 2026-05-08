@@ -16,6 +16,9 @@ module.exports = {
     }
   },
   networks: {
+    hardhat: {
+      chainId: 1
+    },
     baseSepolia: {
       url: process.env.RPC_URL || "https://sepolia.base.org",
       accounts: process.env.ACURAST_WORKER_KEY ? [process.env.ACURAST_WORKER_KEY] : [],

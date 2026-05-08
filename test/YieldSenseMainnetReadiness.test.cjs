@@ -191,14 +191,14 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     const payloadHash = ethers.keccak256(ethers.toUtf8Bytes("harvest-payload"));
     const { r, s, v } = await getSignature(payloadHash);
     
-    const deadline = (await ethers.provider.getBlock("latest")).timestamp + 3600;
+    const deadline = (await ethers.provider.getBlock("latest")).timestamp + 300;
 
     // A: Empty routes
-    await expect(keeper.executeHarvest(payloadHash, r, s, v, 0, 0, deadline, []))
+    await expect(keeper.executeHarvest(1, await autocompounder.getAddress(), r, s, v, 0, 0, deadline, []))
       .to.be.revertedWith("Empty routes");
 
     // B: Expired deadline
-    await expect(keeper.executeHarvest(payloadHash, r, s, v, 0, 0, deadline - 7200, [{from: await usdc.getAddress(), to: await usdc.getAddress(), stable: false, factory: owner.address}]))
+    await expect(keeper.executeHarvest(2, await autocompounder.getAddress(), r, s, v, 0, 0, deadline - 7200, [{from: await usdc.getAddress(), to: await usdc.getAddress(), stable: false, factory: owner.address}]))
       .to.be.revertedWith("Stale quote");
       
     // Note: the "wrong token start" check is in the Autocompounder logic which we mocked.

@@ -7,40 +7,109 @@ export interface HarvestSignaturePayload {
   v: number;
 }
 
-export function buildPayloadHash(
-  keeperAddress: string,
-  poolAddress: string,
-  aprBps: number,
-  netRewardCents: number,
-  timestampSec: number
-): string {
-  return ethers.solidityPackedKeccak256(
-    ["address", "address", "uint256", "uint256", "uint256"],
-    [keeperAddress, poolAddress, aprBps, netRewardCents, timestampSec]
-  );
+export interface Route {
+  from: string;
+  to: string;
+  stable: boolean;
+  factory: string;
 }
 
-export function signHarvestPayload(privateKey: string, payloadHash: string): HarvestSignaturePayload {
+export interface HarvestParams {
+  nonce: string;
+  targetPool: string;
+  minLpOut: string;
+  amountToSwap: string;
+  deadline: number;
+  routes: Route[];
+}
+
+export function getDomain(chainId: number, keeperAddress: string) {
+  return {
+    name: "YieldSense",
+    version: "1",
+    chainId: chainId,
+    verifyingContract: ethers.getAddress(keeperAddress),
+  };
+}
+
+export const EIP712_TYPES = {
+  HarvestPayload: [
+    { name: "keeper", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "targetPool", type: "address" },
+    { name: "minLpOut", type: "uint256" },
+    { name: "amountToSwap", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+    { name: "routes", type: "Route[]" },
+  ],
+  Route: [
+    { name: "from", type: "address" },
+    { name: "to", type: "address" },
+    { name: "stable", type: "bool" },
+    { name: "factory", type: "address" },
+  ],
+};
+
+export async function signHarvestPayloadEIP712(
+  privateKey: string,
+  chainId: number,
+  keeperAddress: string,
+  params: HarvestParams
+): Promise<HarvestSignaturePayload> {
   const wallet = new ethers.Wallet(privateKey);
-  // The contract verifies via: ECDSA.recover(toEthSignedMessageHash(digest), signature)
-  // So we must sign the EIP-191 prefixed hash to match.
-  const ethSignedHash = ethers.hashMessage(ethers.getBytes(payloadHash));
-  const signature = wallet.signingKey.sign(ethSignedHash);
+  const domain = getDomain(chainId, keeperAddress);
+  
+  const value = {
+    keeper: ethers.getAddress(wallet.address),
+    nonce: params.nonce,
+    targetPool: ethers.getAddress(params.targetPool),
+    minLpOut: params.minLpOut,
+    amountToSwap: params.amountToSwap,
+    deadline: params.deadline,
+    routes: params.routes.map(r => ({
+      from: ethers.getAddress(r.from),
+      to: ethers.getAddress(r.to),
+      stable: r.stable,
+      factory: ethers.getAddress(r.factory)
+    }))
+  };
+
+  const payloadHash = ethers.TypedDataEncoder.hash(domain, EIP712_TYPES, value);
+  const signatureHex = await wallet.signTypedData(domain, EIP712_TYPES, value);
+  const signature = ethers.Signature.from(signatureHex);
+
   return {
     payloadHash,
     r: signature.r,
     s: signature.s,
-    v: signature.yParity + 27,
+    v: signature.v,
   };
 }
 
-export function verifyPayloadSigner(
+export function verifyPayloadSignerEIP712(
   expectedSigner: string,
-  payloadHash: string,
+  chainId: number,
+  keeperAddress: string,
+  params: HarvestParams,
   r: string,
   s: string,
   v: number
 ): boolean {
-  const recovered = ethers.recoverAddress(payloadHash, { r, s, v });
+  const domain = getDomain(chainId, keeperAddress);
+  const value = {
+    keeper: ethers.getAddress(expectedSigner),
+    nonce: params.nonce,
+    targetPool: ethers.getAddress(params.targetPool),
+    minLpOut: params.minLpOut,
+    amountToSwap: params.amountToSwap,
+    deadline: params.deadline,
+    routes: params.routes.map(r => ({
+      from: ethers.getAddress(r.from),
+      to: ethers.getAddress(r.to),
+      stable: r.stable,
+      factory: ethers.getAddress(r.factory)
+    }))
+  };
+  const recovered = ethers.verifyTypedData(domain, EIP712_TYPES, value, { r, s, v });
   return recovered.toLowerCase() === expectedSigner.toLowerCase();
 }

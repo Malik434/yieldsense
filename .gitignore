@@ -21,3 +21,9 @@ proposal_text.md
 .acurast/keys.json
 
 yieldsense_mainnet_mvp_contract_audit.md
+test_output_debug_utf8.txt
+test_output_debug.txt
+test_output_utf8.txt
+test_output_final_utf8.txt
+test_output_final.txt
+test_output.txt

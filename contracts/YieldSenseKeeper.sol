@@ -12,6 +12,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 struct Route {
     address from;
@@ -41,13 +42,38 @@ interface IAerodromeAutocompounder {
  *    other shareholders. A per-user ledger upgrade is tracked for a future release.
  *  - Performance fees are taken as newly minted shares on harvest profit only.
  */
-contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
+contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, EIP712 {
     using SafeERC20 for IERC20;
 
     uint256 public constant PERFORMANCE_FEE_BPS = 1000; // 10%
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant TIMELOCK_DELAY = 2 days;
     uint256 public constant MIN_HARVEST_INTERVAL = 1 hours;
+    uint256 public constant MAX_DEADLINE_WINDOW = 10 minutes;
+
+    bytes32 private constant ROUTE_TYPEHASH = keccak256(
+        "Route(address from,address to,bool stable,address factory)"
+    );
+
+    bytes32 private constant HARVEST_PAYLOAD_TYPEHASH = keccak256(
+        "HarvestPayload(address keeper,uint256 nonce,address targetPool,uint256 minLpOut,uint256 amountToSwap,uint256 deadline,Route[] routes)Route(address from,address to,bool stable,address factory)"
+    );
+
+    function _hashRoutes(Route[] calldata routes) private pure returns (bytes32) {
+        bytes32[] memory routeHashes = new bytes32[](routes.length);
+        for (uint256 i = 0; i < routes.length; i++) {
+            routeHashes[i] = keccak256(
+                abi.encode(
+                    ROUTE_TYPEHASH,
+                    routes[i].from,
+                    routes[i].to,
+                    routes[i].stable,
+                    routes[i].factory
+                )
+            );
+        }
+        return keccak256(abi.encodePacked(routeHashes));
+    }
 
     struct PendingAddress {
         address value;
@@ -73,6 +99,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
 
     mapping(bytes32 => PendingAddress) public pendingUpdates;
     mapping(address => mapping(uint256 => uint256)) private _nonceBitmap;
+    mapping(uint256 => bool) public usedHarvestNonces;
 
     uint256 public lastHarvest;
 
@@ -81,7 +108,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      * @dev pnlDelta is in 6-decimal precision (USDC units).
      */
     event TradeExecuted(address indexed user, int256 pnlDelta, uint256 nonce, bytes32 indexed digest);
-    event HarvestExecuted(bytes32 indexed payloadHash, uint256 profitCredited);
+    event HarvestExecuted(bytes32 indexed digest, uint256 profitCredited);
     event PoolDeployed(uint256 usdcAmount, uint256 minLpOut);
     event UpdateInitiated(bytes32 indexed key, address indexed newValue, uint256 effectiveTime);
     event UpdateApplied(bytes32 indexed key, address indexed newValue);
@@ -93,7 +120,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
 
     error Unauthorized();
     error InvalidAddress();
-    error InvalidAmount();
+    error AmountZero();
     error InvalidSignature();
     error NonceAlreadyUsed();
     error InsufficientBalance();
@@ -106,17 +133,17 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     error NoProfitReceived();
 
     constructor(
-        address asset_,
-        address yieldSource_,
-        address counterparty_,
-        address autocompounder_
-    ) ERC4626(IERC20(asset_)) ERC20("YieldSense Vault", "YSV") Ownable(msg.sender) {
-        if (asset_ == address(0)) revert InvalidAddress();
+        address _asset,
+        address _yieldSource,
+        address _counterparty,
+        address _autocompounder
+    ) ERC4626(IERC20(_asset)) ERC20("YieldSense Vault", "ysUSDC") Ownable(msg.sender) EIP712("YieldSense", "1") {
+        if (_yieldSource == address(0) || _counterparty == address(0)) revert InvalidAddress();
         feeRecipient = msg.sender;
-        yieldSource = yieldSource_;
-        counterparty = counterparty_;
-        if (autocompounder_ != address(0)) {
-            autocompounder = IAerodromeAutocompounder(autocompounder_);
+        yieldSource = _yieldSource;
+        counterparty = _counterparty;
+        if (_autocompounder != address(0)) {
+            autocompounder = IAerodromeAutocompounder(_autocompounder);
         }
     }
 
@@ -251,17 +278,19 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      * @notice Triggers a harvest+compound cycle and credits real profit into the vault.
      *         Profit increases totalAssets() without new shares, raising share price
      *         for all depositors proportionally (mutualized yield distribution).
-     * @param payloadHash Hash of the harvest parameters signed by the processor.
+     * @param nonce       Unique nonce to prevent replay attacks.
+     * @param targetPool  Target Aerodrome pool address.
      * @param r           ECDSA signature component.
      * @param s           ECDSA signature component.
      * @param v           ECDSA recovery id (27 or 28).
-     * @param minLpOut Minimum LP tokens to accept from compounding.
+     * @param minLpOut    Minimum LP tokens to accept from compounding.
      * @param amountToSwap Precise amount of USDC to swap (from TEE Zap calc).
-     * @param deadline Maximum block timestamp for execution.
-     * @param routes Route path for Aerodrome swaps.
+     * @param deadline    Maximum block timestamp for execution.
+     * @param routes      Route path for Aerodrome swaps.
      */
     function executeHarvest(
-        bytes32 payloadHash,
+        uint256 nonce,
+        address targetPool,
         bytes32 r,
         bytes32 s,
         uint8 v,
@@ -270,13 +299,30 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         uint256 deadline,
         Route[] calldata routes
     ) external nonReentrant whenNotPaused {
+        if (usedHarvestNonces[nonce]) revert NonceAlreadyUsed();
+        usedHarvestNonces[nonce] = true;
+
+        require(deadline <= block.timestamp + MAX_DEADLINE_WINDOW, "Deadline too far in future");
         require(block.timestamp <= deadline, "Stale quote");
         require(routes.length > 0, "Empty routes");
         if (block.timestamp < lastHarvest + MIN_HARVEST_INTERVAL) revert HarvestTooFrequent();
 
+        bytes32 structHash = keccak256(
+            abi.encode(
+                HARVEST_PAYLOAD_TYPEHASH,
+                msg.sender,
+                nonce,
+                targetPool,
+                minLpOut,
+                amountToSwap,
+                deadline,
+                _hashRoutes(routes)
+            )
+        );
+        bytes32 digest = _hashTypedDataV4(structHash);
+        
         bytes memory signature = abi.encodePacked(r, s, v);
-        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(payloadHash);
-        address recovered = ECDSA.recover(ethHash, signature);
+        address recovered = ECDSA.recover(digest, signature);
 
         if (!attestedProcessors[recovered]) revert ProcessorNotAttested();
 
@@ -308,7 +354,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
             }
         }
 
-        emit HarvestExecuted(payloadHash, profitCredited);
+        emit HarvestExecuted(digest, profitCredited);
     }
 
     /**
@@ -322,7 +368,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         onlyOwner
     {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
-        if (amount == 0) revert InvalidAmount();
+        if (amount == 0) revert AmountZero();
 
         IERC20(asset()).forceApprove(address(autocompounder), amount);
         autocompounder.depositIntoPool(amount, amountToSwap);
@@ -410,7 +456,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         whenNotPaused
         returns (uint256)
     {
-        require(block.number > lastDepositBlock[owner_], "Same block withdrawal not allowed");
+        require(block.number > lastDepositBlock[owner_], "Same block redemption not allowed");
         return super.withdraw(assets, receiver, owner_);
     }
 
