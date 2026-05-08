@@ -80,6 +80,17 @@ interface IAerodromeRouter {
         uint256 amountBDesired
     ) external view returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        bool stable,
+        uint256 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external returns (uint256 amountA, uint256 amountB);
+
     function defaultFactory() external view returns (address);
 }
 
@@ -137,6 +148,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
     /// @notice Slippage tolerance for swaps/liquidity in BPS (e.g. 50 = 0.5%).
     uint256 public slippageBps = 50;
+
+    /// @notice Profit share percentage in BPS (e.g. 2000 = 20%).
+    uint256 public profitShareBps = 2000;
 
     uint256 private constant BPS = 10_000;
 
@@ -214,9 +228,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      *         - Volatile pair → split 50/50 by value (router handles imbalance dust).
      *
      * @param usdcAmount  The amount of USDC (asset) to deploy.
-     * @param minLpOut    Minimum LP tokens to receive (slippage guard set off-chain).
+     * @param amountToSwap  Exact USDC amount to zap to otherToken.
      */
-    function depositIntoPool(uint256 usdcAmount, uint256 minLpOut)
+    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap)
         external
         nonReentrant
         onlyKeeper
@@ -225,7 +239,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
         asset.safeTransferFrom(msg.sender, address(this), usdcAmount);
 
-        uint256 lpMinted = _convertAssetToLp(usdcAmount, minLpOut);
+        uint256 lpMinted = _convertAssetToLp(usdcAmount, amountToSwap, block.timestamp + 60);
 
         // Stake LP in gauge
         IERC20(address(pool)).approve(address(gauge), lpMinted);
@@ -254,16 +268,22 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      *         This split maximizes long-term position growth while still providing
      *         realized USDC profit that the Vault can credit to depositors.
      *
-     * @param  minAssetOut     Minimum USDC to receive from the profit-share swap.
-     * @param  profitShareBps  Fraction of reward to realize as USDC profit (BPS).
-     *                         E.g. 2000 = 20% to profit, 80% re-compounded.
+     * @param  minLpOut      Minimum LP tokens to receive from compounding.
+     * @param  amountToSwap  Exact USDC amount to zap to otherToken.
+     * @param  deadline      Deadline for execution.
+     * @param  routes        Routes for swap.
      */
-    function harvestAndCompound(uint256 minAssetOut, uint256 profitShareBps)
+    function harvestAndCompound(
+        uint256 minLpOut,
+        uint256 amountToSwap,
+        uint256 deadline,
+        IAerodromeRouter.Route[] calldata routes
+    )
         external
         nonReentrant
         onlyKeeper
     {
-        if (profitShareBps > BPS) revert SlippageTooHigh();
+        require(block.timestamp <= deadline, "Stale quote");
 
         // 1. Claim AERO from gauge
         gauge.getReward(address(this));
@@ -278,15 +298,16 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
         // 3. Swap profit-share AERO → USDC
         if (profitReward > 0) {
-            profitUsdc = _swapRewardToAsset(profitReward, minAssetOut);
+            profitUsdc = _swapRewardToAsset(profitReward, _minOut(profitReward), deadline, routes);
             pendingProfit += profitUsdc;
         }
 
         // 4. Compound: swap remaining AERO → LP and stake
         uint256 newLp = 0;
         if (compoundReward > 0) {
-            newLp = _compoundRewardToLp(compoundReward);
+            newLp = _compoundRewardToLp(compoundReward, amountToSwap, deadline, routes);
             if (newLp > 0) {
+                require(newLp >= minLpOut, "SlippageTooHigh");
                 IERC20(address(pool)).approve(address(gauge), newLp);
                 gauge.deposit(newLp);
                 totalStakedLp += newLp;
@@ -338,6 +359,68 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         return gauge.balanceOf(address(this));
     }
 
+    /// @notice Computes total value of staked LP and accumulated dust in terms of USDC.
+    function getDeployedValueInUSDC() external view returns (uint256) {
+        uint256 staked = gauge.balanceOf(address(this));
+        uint256 totalSupply = pool.totalSupply();
+        if (totalSupply == 0) return 0;
+
+        (uint256 reserve0, uint256 reserve1, ) = pool.getReserves();
+        bool isToken0 = pool.token0() == address(asset);
+        uint256 reserveAsset = isToken0 ? reserve0 : reserve1;
+
+        uint256 lpValue = (2 * reserveAsset * staked) / totalSupply;
+
+        uint256 assetDust = asset.balanceOf(address(this)) - pendingProfit;
+        address otherToken = isToken0 ? pool.token1() : pool.token0();
+        uint256 otherDust = IERC20(otherToken).balanceOf(address(this));
+
+        uint256 otherReserve = isToken0 ? reserve1 : reserve0;
+        uint256 otherDustValueInAsset = otherReserve == 0 ? 0 : (otherDust * reserveAsset) / otherReserve;
+
+        return lpValue + assetDust + otherDustValueInAsset;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // UNWIND LP
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @notice Unstakes LP from gauge and removes liquidity to free up USDC.
+     * @param lpAmount The amount of LP to unwind.
+     * @return usdcUnwound The amount of USDC recovered.
+     */
+    function unwindLp(uint256 lpAmount) external nonReentrant onlyKeeper returns (uint256 usdcUnwound) {
+        if (lpAmount == 0) return 0;
+
+        gauge.withdraw(lpAmount);
+        totalStakedLp -= lpAmount;
+
+        IERC20(address(pool)).approve(address(router), lpAmount);
+
+        address token0 = pool.token0();
+        address token1 = pool.token1();
+        bool stable = pool.stable();
+
+        (uint256 amount0, uint256 amount1) = router.removeLiquidity(
+            token0,
+            token1,
+            stable,
+            lpAmount,
+            0,
+            0,
+            address(this),
+            block.timestamp + 60
+        );
+
+        bool isToken0 = token0 == address(asset);
+        usdcUnwound = isToken0 ? amount0 : amount1;
+
+        if (usdcUnwound > 0) {
+            asset.safeTransfer(msg.sender, usdcUnwound);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // EMERGENCY
     // ─────────────────────────────────────────────────────────────────────────
@@ -385,6 +468,11 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         router = IAerodromeRouter(newRouter);
     }
 
+    function setProfitShareBps(uint256 newBps) external onlyOwner {
+        if (newBps > BPS) revert SlippageTooHigh();
+        profitShareBps = newBps;
+    }
+
     function setSlippage(uint256 newBps) external onlyOwner {
         if (newBps > 500) revert SlippageTooHigh(); // max 5%
         emit SlippageUpdated(slippageBps, newBps);
@@ -401,7 +489,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      *      2. Adding both tokens as liquidity.
      *      Returns the LP tokens received.
      */
-    function _convertAssetToLp(uint256 usdcAmount, uint256 minLpOut)
+    function _convertAssetToLp(uint256 usdcAmount, uint256 amountToSwap, uint256 deadline)
         internal
         returns (uint256 lpReceived)
     {
@@ -414,12 +502,11 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         bool assetIsToken0 = (token0 == address(asset));
         address otherToken = assetIsToken0 ? token1 : token0;
 
-        // Swap half to the other token
-        uint256 halfIn = usdcAmount / 2;
-        uint256 otherOut = _swap(address(asset), otherToken, stable, factory, halfIn, 0);
+        uint256 actualSwap = (amountToSwap == 0 || amountToSwap >= usdcAmount) ? usdcAmount / 2 : amountToSwap;
+        uint256 otherOut = _swap(address(asset), otherToken, stable, factory, actualSwap, _minOut(actualSwap), deadline);
 
         // Remaining asset balance
-        uint256 assetRemaining = usdcAmount - halfIn;
+        uint256 assetRemaining = usdcAmount - actualSwap;
 
         uint256 amountA; uint256 amountB; uint256 liquidity;
 
@@ -432,7 +519,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
                 assetRemaining, otherOut,
                 _minOut(assetRemaining), _minOut(otherOut),
                 address(this),
-                block.timestamp + 60
+                deadline
             );
         } else {
             (amountA, amountB, liquidity) = router.addLiquidity(
@@ -440,56 +527,53 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
                 otherOut, assetRemaining,
                 _minOut(otherOut), _minOut(assetRemaining),
                 address(this),
-                block.timestamp + 60
+                deadline
             );
         }
 
-        require(liquidity >= minLpOut, "AeroComp: slippage on deposit");
         lpReceived = liquidity;
-
-        // Sweep any dust back to the caller (keeper / vault)
-        uint256 assetDust = asset.balanceOf(address(this)) - pendingProfit;
-        if (assetDust > 0) asset.safeTransfer(msg.sender, assetDust);
-        uint256 otherDust = IERC20(otherToken).balanceOf(address(this));
-        if (otherDust > 0) IERC20(otherToken).safeTransfer(msg.sender, otherDust);
     }
 
     /**
      * @dev Swaps `rewardIn` AERO → USDC (asset). Returns USDC received.
      */
-    function _swapRewardToAsset(uint256 rewardIn, uint256 minOut)
+    function _swapRewardToAsset(uint256 rewardIn, uint256 minOut, uint256 deadline, IAerodromeRouter.Route[] calldata routes)
         internal
         returns (uint256 assetOut)
     {
-        address factory = router.defaultFactory();
-        // AERO → USDC: check stable=false (AERO is not a stablecoin)
-        assetOut = _swap(address(rewardToken), address(asset), false, factory, rewardIn, minOut);
+        IERC20(address(rewardToken)).approve(address(router), rewardIn);
+        uint256[] memory amounts = router.swapExactTokensForTokens(
+            rewardIn,
+            minOut,
+            routes,
+            address(this),
+            deadline
+        );
+        assetOut = amounts[amounts.length - 1];
     }
 
     /**
      * @dev Compounds `rewardIn` AERO by splitting → half to token0, half to token1,
      *      then adding liquidity. Returns new LP tokens minted.
      */
-    function _compoundRewardToLp(uint256 rewardIn)
+    function _compoundRewardToLp(uint256 rewardIn, uint256 amountToSwap, uint256 deadline, IAerodromeRouter.Route[] calldata routes)
         internal
         returns (uint256 lpMinted)
     {
+        uint256 assetTotal = _swapRewardToAsset(rewardIn, _minOut(rewardIn), deadline, routes);
+        if (assetTotal == 0) return 0;
+
         address token0 = pool.token0();
         address token1 = pool.token1();
         bool    stable = pool.stable();
         address factory = router.defaultFactory();
 
-        // Swap all reward → asset first, then split to both sides
-        uint256 assetTotal = _swap(address(rewardToken), address(asset), false, factory, rewardIn, 0);
-        if (assetTotal == 0) return 0;
-
-        // Now: assetTotal USDC → split into LP
         bool assetIsToken0 = (token0 == address(asset));
         address otherToken = assetIsToken0 ? token1 : token0;
 
-        uint256 halfIn  = assetTotal / 2;
-        uint256 otherOut = _swap(address(asset), otherToken, stable, factory, halfIn, 0);
-        uint256 assetRem = assetTotal - halfIn;
+        uint256 actualSwap = (amountToSwap == 0 || amountToSwap >= assetTotal) ? assetTotal / 2 : amountToSwap;
+        uint256 otherOut = _swap(address(asset), otherToken, stable, factory, actualSwap, _minOut(actualSwap), deadline);
+        uint256 assetRem = assetTotal - actualSwap;
 
         asset.approve(address(router), assetRem);
         IERC20(otherToken).approve(address(router), otherOut);
@@ -501,7 +585,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
                 assetRem, otherOut,
                 _minOut(assetRem), _minOut(otherOut),
                 address(this),
-                block.timestamp + 60
+                deadline
             );
         } else {
             (,, liq) = router.addLiquidity(
@@ -509,7 +593,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
                 otherOut, assetRem,
                 _minOut(otherOut), _minOut(assetRem),
                 address(this),
-                block.timestamp + 60
+                deadline
             );
         }
 
@@ -525,7 +609,8 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         bool stable,
         address factory,
         uint256 amountIn,
-        uint256 minOut
+        uint256 minOut,
+        uint256 deadline
     ) internal returns (uint256 amountOut) {
         IERC20(from).approve(address(router), amountIn);
         IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
@@ -535,7 +620,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
             minOut,
             routes,
             address(this),
-            block.timestamp + 60
+            deadline
         );
         amountOut = amounts[amounts.length - 1];
     }

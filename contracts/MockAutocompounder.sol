@@ -5,6 +5,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+struct Route {
+    address from;
+    address to;
+    bool stable;
+    address factory;
+}
+
 /**
  * @title MockAutocompounder
  * @notice Testnet stub for the AerodromeAutocompounder interface.
@@ -53,10 +60,9 @@ contract MockAutocompounder is Ownable {
     }
 
     /**
-     * @notice Simulates a harvest: sets pendingProfit to 10% of contract balance.
-     *         In the real autocompounder this would claim AERO + swap + compound.
+     * @notice Simulates a harvest.
      */
-    function harvestAndCompound(uint256 /*minAssetOut*/, uint256 /*profitShareBps*/) external onlyKeeper {
+    function harvestAndCompound(uint256 /*minLpOut*/, uint256 /*amountToSwap*/, uint256 /*deadline*/, Route[] calldata /*routes*/) external onlyKeeper {
         uint256 bal = asset.balanceOf(address(this));
         // Simulate: 10% of held balance becomes profit
         pendingProfit = bal / 10;
@@ -73,9 +79,22 @@ contract MockAutocompounder is Ownable {
         emit ProfitPulled(to, amount);
     }
 
-    function depositIntoPool(uint256 usdcAmount, uint256 /*minLpOut*/) external onlyKeeper {
+    function depositIntoPool(uint256 usdcAmount, uint256 /*amountToSwap*/) external onlyKeeper {
         // Simulate receiving funds — just hold them
         asset.safeTransferFrom(msg.sender, address(this), usdcAmount);
+    }
+
+    function unwindLp(uint256 lpAmount) external onlyKeeper returns (uint256 usdcUnwound) {
+        // In this mock, we treat lpAmount as asset units 1:1 for simplicity
+        asset.safeTransfer(msg.sender, lpAmount);
+        return lpAmount;
+    }
+
+    function getDeployedValueInUSDC() external view returns (uint256) {
+        // Mock returns its entire balance minus pending profit (which is already accounted for in vault usually)
+        // Actually, YieldSenseKeeper.totalAssets adds deployedValue + vaultBalance.
+        // If pendingProfit is in autocompounder, it should be included in deployedValue.
+        return asset.balanceOf(address(this));
     }
 
     function pendingRewards() external pure returns (uint256) { return 0; }
