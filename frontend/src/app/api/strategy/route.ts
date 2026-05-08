@@ -12,19 +12,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { getStore } from '@netlify/blobs';
 
-const KEEPER_ADDRESS = process.env.NEXT_PUBLIC_KEEPER_ADDRESS ?? '';
-if (!KEEPER_ADDRESS) {
-  console.error('[strategy] NEXT_PUBLIC_KEEPER_ADDRESS is not set — EIP-712 domain will be invalid');
-}
+const MAINNET_KEEPER = process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || '';
+const TESTNET_KEEPER = process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '';
 
-/**
- * Chain ID for EIP-712 domain separation.
- * Must match the chain the keeper contract is deployed on.
- * Set CHAIN_ID in the server environment:
- *   Base Sepolia = 84532
- *   Base Mainnet = 8453
- */
-const CHAIN_ID = parseInt(process.env.CHAIN_ID ?? '84532');
+function getConfig(chainId: number) {
+  return {
+    keeper: chainId === 8453 ? MAINNET_KEEPER : TESTNET_KEEPER,
+    chainId: chainId === 8453 ? 8453 : 84532,
+  };
+}
 
 const localStrategyStore = new Map<string, any>();
 
@@ -39,13 +35,6 @@ async function getStrategyStore() {
   }
 }
 
-// EIP-712 domain — must exactly match the processor's domain in processor.ts
-const DOMAIN = {
-  name: 'YieldSense',
-  version: '1',
-  chainId: CHAIN_ID,
-  verifyingContract: KEEPER_ADDRESS as `0x${string}`,
-};
 
 const TYPES = {
   StrategyParams: [
@@ -76,11 +65,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { stopLossPrice, gridUpper, gridLower, rebalanceInterval, signer, signature, timestamp } = body;
+  const { stopLossPrice, gridUpper, gridLower, rebalanceInterval, signer, signature, timestamp, chainId } = body;
 
   if (!signer || !signature || !timestamp) {
     return NextResponse.json({ error: 'Missing required fields: signer, signature, timestamp' }, { status: 400 });
   }
+
+  const config = getConfig(Number(chainId || 84532));
+
+  // EIP-712 domain — must exactly match the processor's domain in processor.ts
+  const domain = {
+    name: 'YieldSense',
+    version: '1',
+    chainId: config.chainId,
+    verifyingContract: config.keeper as `0x${string}`,
+  };
 
   // Reconstruct EIP-712 value object (all numeric fields serialized as strings to match frontend)
   const value = {
@@ -94,7 +93,7 @@ export async function POST(req: NextRequest) {
   // Verify the EIP-712 signature — recovers the signer from the typed data
   let recoveredSigner: string;
   try {
-    recoveredSigner = ethers.verifyTypedData(DOMAIN, TYPES, value, signature);
+    recoveredSigner = ethers.verifyTypedData(domain, TYPES, value, signature);
   } catch (err) {
     return NextResponse.json({ error: 'Signature verification failed', detail: String(err) }, { status: 422 });
   }

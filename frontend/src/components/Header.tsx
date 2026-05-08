@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useDisconnect, useConnect } from 'wagmi';
-import { ShieldCheck, Cpu, Bell, Activity, RotateCw, ChevronDown, Shield, LogOut, Wallet } from 'lucide-react';
+import { useAccount, useDisconnect } from 'wagmi';
+import { ShieldCheck, Cpu, Shield, LogOut, Wallet } from 'lucide-react';
 import { ProofOfExecutionModal } from './ProofOfExecutionModal';
 import { WalletSelectionModal } from './WalletSelectionModal';
+import { NetworkToggle } from './NetworkToggle';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 interface HeaderProps {
   isHealthy?: boolean;
@@ -14,6 +16,7 @@ interface HeaderProps {
 export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
+  const { config } = useNetwork();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
@@ -38,13 +41,17 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
               <div className="flex flex-col">
                 <span className="font-heading font-bold text-2xl text-[#F5F7FA] tracking-tight">YieldSense</span>
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#00FFA3] animate-pulse" />
-                  <span className="text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">Base Testnet</span>
+                  <div className={`w-1.5 h-1.5 rounded-full ${config.name.includes('Mainnet') ? 'bg-[#C2E812]' : 'bg-[#00FFA3]'} animate-pulse`} />
+                  <span className="text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">{config.name}</span>
                 </div>
               </div>
             </div>
 
             <div className="h-8 w-px bg-white/[0.08] mx-2 hidden md:block" />
+            
+            <div className="hidden md:block">
+              <NetworkToggle />
+            </div>
           </div>
 
           {/* Actions & Status */}

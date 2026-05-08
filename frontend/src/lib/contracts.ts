@@ -1,11 +1,35 @@
-// Critical addresses — throw at startup rather than silently sending txs to address(0).
-export const KEEPER_ADDRESS = (() => {
-  const addr = process.env.NEXT_PUBLIC_KEEPER_ADDRESS;
-  if (!addr) throw new Error('[YieldSense] NEXT_PUBLIC_KEEPER_ADDRESS env var is not set. Add it to .env.local and Netlify.');
-  return addr as `0x${string}`;
-})();
-export const ASSET_ADDRESS = (process.env.NEXT_PUBLIC_ASSET_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`;
-export const AUTOCOMPOUNDER_ADDRESS = (process.env.NEXT_PUBLIC_AUTOCOMPOUNDER_ADDRESS ?? null) as `0x${string}` | null;
+import { base, baseSepolia } from 'wagmi/chains';
+
+// Chain Configuration Mapping
+export const CHAIN_CONFIG = {
+  [base.id]: {
+    name: 'Base Mainnet',
+    explorer: 'https://base.blockscout.com',
+    keeper: (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS) as `0x${string}`,
+    asset: (process.env.NEXT_PUBLIC_MAINNET_ASSET_ADDRESS || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`,
+    autocompounder: (process.env.NEXT_PUBLIC_MAINNET_AUTOCOMPOUNDER_ADDRESS ?? null) as `0x${string}` | null,
+    rpc: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org',
+  },
+  [baseSepolia.id]: {
+    name: 'Base Testnet',
+    explorer: 'https://base-sepolia.blockscout.com',
+    keeper: (process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS) as `0x${string}`,
+    asset: (process.env.NEXT_PUBLIC_TESTNET_ASSET_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e') as `0x${string}`,
+    autocompounder: (process.env.NEXT_PUBLIC_TESTNET_AUTOCOMPOUNDER_ADDRESS ?? null) as `0x${string}` | null,
+    rpc: process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org',
+  }
+};
+
+export const DEFAULT_CHAIN_ID = baseSepolia.id;
+
+export function getContractConfig(chainId: number | undefined) {
+  return CHAIN_CONFIG[chainId as keyof typeof CHAIN_CONFIG] || CHAIN_CONFIG[DEFAULT_CHAIN_ID];
+}
+
+// Keep legacy exports as fallbacks but encourage using getContractConfig
+export const KEEPER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).keeper;
+export const ASSET_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).asset;
+export const AUTOCOMPOUNDER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).autocompounder;
 export const MAINNET_USDC_WETH_POOL = '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59'; // Aerodrome SlipStream WETH/USDC 0.05%
 
 /**

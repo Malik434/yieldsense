@@ -3,14 +3,18 @@
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits } from 'viem';
-import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
+import { KEEPER_ABI } from '@/lib/contracts';
 import { LogOut, AlertTriangle, CheckCircle2, Loader2, Shield, Info } from 'lucide-react';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 /**
  * WithdrawModule — full-balance withdrawal from the ERC-4626 vault.
  */
 export function WithdrawModule() {
   const { address, isConnected } = useAccount();
+  const { config } = useNetwork();
+  const KEEPER_ADDRESS = config.keeper;
+  
   const [confirming, setConfirming] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -20,7 +24,7 @@ export function WithdrawModule() {
     abi: KEEPER_ABI,
     functionName: 'maxWithdraw',
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
 
   const { writeContractAsync } = useWriteContract();

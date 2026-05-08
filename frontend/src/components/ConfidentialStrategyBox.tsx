@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Lock, Shield, EyeOff, AlertTriangle, CheckCircle2, Loader2, Cpu, Fingerprint, TrendingUp, TrendingDown, Target, SlidersHorizontal, MousePointer2, RefreshCcw } from 'lucide-react';
+import { Lock, Shield, CheckCircle2, Loader2, Fingerprint, Target, SlidersHorizontal } from 'lucide-react';
 import { useAccount, useSignTypedData } from 'wagmi';
-import { KEEPER_ADDRESS } from '@/lib/contracts';
 import { SecureSignatureAnimation } from './SecureSignatureAnimation';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 interface StrategyParams {
   stopLossPrice: string;
@@ -24,13 +24,6 @@ const DEFAULT_PARAMS: StrategyParams = {
   autoReinvest: true,
 };
 
-const DOMAIN = {
-  name: 'YieldSense',
-  version: '1',
-  chainId: 84532,
-  verifyingContract: KEEPER_ADDRESS,
-} as const;
-
 const TYPES = {
   StrategyParams: [
     { name: 'stopLossPrice', type: 'string' },
@@ -47,6 +40,9 @@ type CommitStatus = 'idle' | 'signing' | 'submitting' | 'success' | 'error';
 
 export function ConfidentialStrategyBox() {
   const { address, isConnected } = useAccount();
+  const { config, chainId } = useNetwork();
+  const KEEPER_ADDRESS = config.keeper;
+
   const [params, setParams] = useState<StrategyParams>(DEFAULT_PARAMS);
   const [commitStatus, setCommitStatus] = useState<CommitStatus>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -56,14 +52,14 @@ export function ConfidentialStrategyBox() {
 
   useEffect(() => {
     if (!address) return;
-    const stored = localStorage.getItem(`ys_strategy_${address}`);
+    const stored = localStorage.getItem(`ys_strategy_${address}_${chainId}`);
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         setParams(prev => ({ ...prev, ...parsed }));
       } catch { /* ignore */ }
     }
-  }, [address]);
+  }, [address, chainId]);
 
   const hasValues = !!(params.stopLossPrice || params.gridUpper || params.gridLower);
   const isBusy = commitStatus === 'signing' || commitStatus === 'submitting';
@@ -93,7 +89,12 @@ export function ConfidentialStrategyBox() {
       };
 
       const signature = await signTypedDataAsync({
-        domain: DOMAIN,
+        domain: {
+          name: 'YieldSense',
+          version: '1',
+          chainId,
+          verifyingContract: KEEPER_ADDRESS,
+        },
         types: TYPES,
         primaryType: 'StrategyParams',
         message,
@@ -101,7 +102,7 @@ export function ConfidentialStrategyBox() {
 
       setCommitStatus('submitting');
 
-      const res = await fetch('https://yieldsense.huzaifamalik.tech/.netlify/functions/update-strategy', {
+      const res = await fetch('/api/strategy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -110,6 +111,7 @@ export function ConfidentialStrategyBox() {
           signer: address,
           signature,
           timestamp,
+          chainId,
         }),
       });
 
@@ -118,7 +120,7 @@ export function ConfidentialStrategyBox() {
         throw new Error(body.error ?? `API returned ${res.status}`);
       }
 
-      localStorage.setItem(`ys_strategy_${address}`, JSON.stringify(params));
+      localStorage.setItem(`ys_strategy_${address}_${chainId}`, JSON.stringify(params));
       setCommitStatus('success');
       setTimeout(() => setCommitStatus('idle'), 4000);
     } catch (err: any) {

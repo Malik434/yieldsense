@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { useAccount, useReadContract, useBlockNumber } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
-import { KEEPER_ADDRESS, KEEPER_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
+import { useNetwork } from '@/providers/NetworkProvider';
+
+import { KEEPER_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
 import { Header } from '@/components/Header';
 import { DepositModule } from '@/components/DepositModule';
 import { ConfidentialStrategyBox } from '@/components/ConfidentialStrategyBox';
@@ -16,15 +18,11 @@ import { PortfolioTicker } from '@/components/PortfolioTicker';
 import { TestingSuite } from '@/components/TestingSuite';
 import {
   ShieldCheck,
-  Layers,
-  TrendingUp,
-  LogOut,
-  ChevronRight,
   Activity,
   Cpu,
   ArrowRight,
   LayoutDashboard,
-  Settings,
+  LogOut,
   History
 } from 'lucide-react';
 
@@ -52,12 +50,6 @@ interface ConsensusData {
   consensus: number;
 }
 
-const SECTIONS = [
-  { id: 'command-center', label: 'Allocation', icon: <LayoutDashboard size={14} /> },
-  { id: 'live-alpha', label: 'Activity', icon: <History size={14} /> },
-  { id: 'exit-flow', label: 'Withdraw', icon: <LogOut size={14} /> },
-];
-
 function SectionHeading({ id, label, sublabel }: { id: string; label: string; sublabel: string }) {
   return (
     <div id={id} className="mb-12 pt-24 group">
@@ -76,6 +68,8 @@ function SectionHeading({ id, label, sublabel }: { id: string; label: string; su
 
 export default function CommandCenter() {
   const { address } = useAccount();
+  const { config, chainId } = useNetwork();
+  const KEEPER_ADDRESS = config.keeper;
 
   // vaultState holds the operator-level telemetry (APR, realized/unrealized profit,
   // trade counts). Telemetry is always written to OPERATOR_ADDRESS regardless of
@@ -86,7 +80,7 @@ export default function CommandCenter() {
 
   const fetchVaultState = async () => {
     try {
-      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
+      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
       if (res.ok) {
         const data = await res.json();
         setVaultState(data);
@@ -96,7 +90,7 @@ export default function CommandCenter() {
 
   const fetchConsensus = async () => {
     try {
-      const res = await fetch('/api/consensus');
+      const res = await fetch(`/api/consensus?chainId=${chainId}`);
       if (res.ok) {
         const data = await res.json();
         setConsensus(data);
@@ -114,7 +108,7 @@ export default function CommandCenter() {
       clearInterval(vaultInterval);
       clearInterval(consensusInterval);
     };
-  }, []);
+  }, [chainId]); // Refetch when network changes
 
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const queryClient = useQueryClient();
@@ -125,7 +119,7 @@ export default function CommandCenter() {
     abi: KEEPER_ABI,
     functionName: 'maxWithdraw',
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
 
   // User's vault shares — used to compute their proportional fraction of vault profit
@@ -134,7 +128,7 @@ export default function CommandCenter() {
     abi: KEEPER_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
 
   // Total vault shares outstanding
@@ -142,6 +136,7 @@ export default function CommandCenter() {
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'totalSupply',
+    query: { enabled: !!KEEPER_ADDRESS },
   });
 
   useEffect(() => {
@@ -263,7 +258,7 @@ export default function CommandCenter() {
             vaultShareFraction={vaultShareFraction}
           />
           <TransactionHistory />
-          <TestingSuite />
+          {!config.name.includes('Mainnet') && <TestingSuite />}
         </div>
 
         {/* ─── SECTION 3: WITHDRAW ─── */}
@@ -297,7 +292,7 @@ export default function CommandCenter() {
 
             <div className="flex flex-col items-end gap-8">
               <a
-                href={`https://base-sepolia.blockscout.com/address/${KEEPER_ADDRESS}`}
+                href={`${config.explorer}/address/${KEEPER_ADDRESS}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group flex items-center gap-4 text-[11px] font-mono font-bold text-[#8B949E] hover:text-[#C2E812] transition-all duration-500 uppercase tracking-[0.4em]"

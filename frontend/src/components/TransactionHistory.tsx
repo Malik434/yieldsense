@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ShieldCheck, ExternalLink, Zap, ArrowUpDown, Search, RefreshCw, LogOut, Clock } from 'lucide-react';
+import { ShieldCheck, ExternalLink, Zap, ArrowUpDown, Search, RefreshCw, Clock, LogOut } from 'lucide-react';
 import { OPERATOR_ADDRESS } from '@/lib/contracts';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 interface TxEvent {
   type: 'HARVEST' | 'TRADE' | 'DEPOSIT' | 'WITHDRAW';
@@ -10,9 +11,8 @@ interface TxEvent {
   txHash: string;
   amount?: number;
   pnlDelta?: number;
+  chainId?: number;
 }
-
-const BLOCKSCOUT = 'https://base-sepolia.blockscout.com';
 
 function shortHash(hash: string): string {
   if (!hash || hash.length < 12) return hash;
@@ -27,33 +27,48 @@ const TYPE_CONFIG = {
 };
 
 export function TransactionHistory() {
+  const { chainId: activeChainId, config } = useNetwork();
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchTxs = async () => {
     try {
-      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
+      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${activeChainId}`);
       if (!res.ok) return;
       const data = await res.json();
       const logs: any[] = data.logs ?? [];
       
       const seenHashes = new Set<string>();
-      const mapped = logs.map(log => {
+      const mapped = logs.map((log): TxEvent | null => {
         const ts = (log.timestamp ?? 0) * 1000;
         const txHash = log.txHash ?? '';
+        const logChainId = Number(log.chainId || log.CHAIN_ID || 0);
+        console.log(`[TransactionHistory] Processing log: event=${log.event} logChainId=${logChainId} activeChainId=${activeChainId}`);
+
         if (!txHash) return null;
 
+        // --- Network Filtering Logic ---
+        // 1. If log has a chainId, it MUST match the active network.
+        // 2. If log has NO chainId (logChainId === 0), it's considered legacy:
+        //    - Only show legacy logs on Testnet (84532). 
+        //    - Hide legacy logs on Mainnet to avoid showing old testnet data.
+        if (logChainId !== 0) {
+          if (logChainId !== activeChainId) return null;
+        } else {
+          // Legacy log (no chainId)
+          if (activeChainId === 8453) return null; // Hide on Mainnet
+        }
+
         // Deduplication: only show one entry per hash.
-        // We handle confirm/submit logic by checking the 'confirmed' status later.
         if (seenHashes.has(txHash)) return null;
         seenHashes.add(txHash);
 
         if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') {
-          return { type: 'HARVEST', timestamp: ts, txHash };
+          return { type: 'HARVEST', timestamp: ts, txHash, chainId: logChainId };
         }
         if (log.event === 'grid_trade_executed') {
           const pnlRaw = log.pnlDelta ? Number(log.pnlDelta) / 1_000_000 : 0;
-          return { type: 'TRADE', timestamp: ts, txHash, pnlDelta: pnlRaw };
+          return { type: 'TRADE', timestamp: ts, txHash, pnlDelta: pnlRaw, chainId: logChainId };
         }
         return null;
       }).filter((t): t is TxEvent => t !== null);
@@ -70,7 +85,7 @@ export function TransactionHistory() {
     fetchTxs();
     const id = setInterval(fetchTxs, 15000);
     return () => clearInterval(id);
-  }, []);
+  }, [activeChainId]);
 
   return (
     <div className="flex flex-col gap-6 mt-12 animate-fade-in">
@@ -90,8 +105,8 @@ export function TransactionHistory() {
         </div>
       </div>
 
-      <div className="ys-card bg-[#0B0F0D]/50 border border-white/[0.05] rounded-[32px] overflow-hidden">
-        <div className="grid grid-cols-4 md:grid-cols-6 gap-4 px-8 py-5 bg-white/[0.02] border-b border-white/[0.05]">
+      <div className="ys-card bg-[#0B0F0D]/50 border border-white/[0.05] rounded-[32px] overflow-hidden flex flex-col">
+        <div className="grid grid-cols-4 md:grid-cols-6 gap-4 px-8 py-5 bg-white/[0.02] border-b border-white/[0.05] shrink-0">
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em]">Timestamp</span>
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] md:col-span-1">Processor</span>
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] md:col-span-2">Execution Details</span>
@@ -99,7 +114,7 @@ export function TransactionHistory() {
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] text-right">Receipt</span>
         </div>
 
-        <div className="flex flex-col divide-y divide-white/[0.03]">
+        <div className="flex flex-col divide-y divide-white/[0.03] max-h-[520px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
           {loading ? (
             <div className="flex items-center justify-center py-24">
               <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
@@ -159,16 +174,16 @@ export function TransactionHistory() {
                     <span className="text-xs font-mono font-bold text-[#484F58]">{shortHash(OPERATOR_ADDRESS)}</span>
                   </div>
 
-                  <div className="flex justify-end">
-                    <a 
-                      href={`${BLOCKSCOUT}/tx/${tx.txHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2.5 rounded-xl bg-white/0 hover:bg-white/5 border border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
-                    >
-                      <ExternalLink size={16} className="group-hover/link:scale-110 transition-transform" />
-                    </a>
-                  </div>
+                    <div className="flex justify-end">
+                      <a 
+                        href={`${config.explorer}/tx/${tx.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2.5 rounded-xl bg-white/0 hover:bg-white/5 border border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
+                      >
+                        <ExternalLink size={16} className="group-hover/link:scale-110 transition-transform" />
+                      </a>
+                    </div>
                 </div>
               );
             })

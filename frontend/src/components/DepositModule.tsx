@@ -3,11 +3,16 @@
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
-import { ASSET_ADDRESS, KEEPER_ADDRESS, ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
-import { ShieldCheck, ArrowDownToLine, Unlock, Lock, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
+import { ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
+import { ShieldCheck, ArrowDownToLine, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 export function DepositModule() {
   const { address, isConnected } = useAccount();
+  const { config } = useNetwork();
+  const KEEPER_ADDRESS = config.keeper;
+  const ASSET_ADDRESS = config.asset;
+  
   const [depositAmount, setDepositAmount] = useState('');
   const [txState, setTxState] = useState<'idle' | 'approving' | 'depositing' | 'success'>('idle');
 
@@ -15,6 +20,7 @@ export function DepositModule() {
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'asset',
+    query: { enabled: !!KEEPER_ADDRESS },
   });
   const actualAssetAddress = (ASSET_ADDRESS || dynamicAssetAddress) as `0x${string}` | undefined;
 
@@ -22,8 +28,8 @@ export function DepositModule() {
     address: actualAssetAddress,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: address && actualAssetAddress ? [address, KEEPER_ADDRESS] : undefined,
-    query: { enabled: !!address && !!actualAssetAddress },
+    args: address && actualAssetAddress && KEEPER_ADDRESS ? [address, KEEPER_ADDRESS] : undefined,
+    query: { enabled: !!address && !!actualAssetAddress && !!KEEPER_ADDRESS },
   });
 
   const { data: assetBalance } = useReadContract({

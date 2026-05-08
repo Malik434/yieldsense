@@ -25,11 +25,6 @@ import { PROCESSOR_BUNDLE } from '@/lib/processorBundle';
  *   to prevent replay attacks.
  */
 
-const DEPLOY_DOMAIN = {
-  name: 'YieldSense',
-  version: '1',
-  chainId: parseInt(process.env.CHAIN_ID ?? '84532'),
-} as const;
 
 const DEPLOY_TYPES: Record<string, { name: string; type: string }[]> = {
   DeployRequest: [
@@ -42,12 +37,16 @@ const DEPLOY_TYPES: Record<string, { name: string; type: string }[]> = {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { ownerAddress, workerAddress, signature, timestamp } = body as {
+    const { ownerAddress, workerAddress, signature, timestamp, chainId: reqChainId } = body as {
       ownerAddress: string;
       workerAddress: string;
       signature: string;
       timestamp: number;
+      chainId?: number;
     };
+
+    const chainId = reqChainId || 84532;
+    const isMainnet = chainId === 8453;
 
     // ── Authentication ──────────────────────────────────────────────────────
     if (!ownerAddress || !workerAddress || !signature || !timestamp) {
@@ -74,7 +73,16 @@ export async function POST(req: Request) {
 
     let recoveredSigner: string;
     try {
-      recoveredSigner = ethers.verifyTypedData(DEPLOY_DOMAIN, DEPLOY_TYPES, value, signature);
+      recoveredSigner = ethers.verifyTypedData(
+        {
+          name: 'YieldSense',
+          version: '1',
+          chainId,
+        }, 
+        DEPLOY_TYPES, 
+        value, 
+        signature
+      );
     } catch {
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 422 });
     }
@@ -87,40 +95,27 @@ export async function POST(req: Request) {
     }
 
     // ── Build per-user bundle ───────────────────────────────────────────────
-    //
-    // The base bundle (PROCESSOR_BUNDLE) is the pre-compiled processor, already
-    // containing all dependencies (ethers, acurastHardware, runtimeState,
-    // telemetry).  We prepend a tiny IIFE that assigns user-specific values to
-    // process.env before any processor code runs.  All other env vars
-    // (RPC_URL, DATA_RPC_URL, POOL_ADDRESS, FORCE_TEST_HARVEST, etc.) are
-    // injected by the Acurast TEE at job start via includeEnvironmentVariables.
-    //
-    // The Acurast TEE injects its env vars BEFORE the script executes, so the
-    // prepended IIFE always runs after TEE injection — which is intentional.
-    // USER_ADDRESS and KEEPER_ADDRESS are set here so they are always correct
-    // for this user's bundle regardless of the Acurast job-level env config.
+    
+    const keeperAddress = isMainnet 
+      ? (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.KEEPER_ADDRESS || '')
+      : (process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '');
 
-    const keeperAddress =
-      process.env.KEEPER_ADDRESS ??
-      process.env.NEXT_PUBLIC_KEEPER_ADDRESS ??
-      '';
-
-    if (!keeperAddress) {
-      console.warn('[deploy] KEEPER_ADDRESS not configured — bundle will have empty keeper address');
-    }
+    const rpcUrl = isMainnet
+      ? (process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org')
+      : (process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org');
 
     const envInjection = [
       '// YieldSense — per-user env var injection (generated at deploy time)',
       ';(function(e){',
       `  e.USER_ADDRESS=${JSON.stringify(ownerAddress)};`,
       `  e.KEEPER_ADDRESS=${JSON.stringify(keeperAddress)};`,
-      `  e.CHAIN_ID=${JSON.stringify(process.env.CHAIN_ID ?? '84532')};`,
+      `  e.CHAIN_ID=${JSON.stringify(chainId.toString())};`,
       `  e.PROCESSOR_SHARED_SECRET=${JSON.stringify(process.env.PROCESSOR_SHARED_SECRET ?? 'e10383a7f06075735018c89582bd53f966981ab0a386d35763776f0c490fdc58')};`,
       `  e.TELEMETRY_URL=${JSON.stringify(process.env.TELEMETRY_URL ?? 'https://yieldsense.huzaifamalik.tech/api/telemetry')};`,
-      `  e.RPC_URL=${JSON.stringify(process.env.RPC_URL ?? 'https://sepolia.base.org')};`,
+      `  e.RPC_URL=${JSON.stringify(rpcUrl)};`,
       `  e.DATA_RPC_URL=${JSON.stringify(process.env.DATA_RPC_URL ?? 'https://mainnet.base.org')};`,
       `  e.POOL_ADDRESS=${JSON.stringify(process.env.POOL_ADDRESS ?? '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59')};`,
-      `  e.FORCE_TEST_HARVEST=${JSON.stringify(process.env.FORCE_TEST_HARVEST ?? 'true')};`,
+      `  e.FORCE_TEST_HARVEST=${JSON.stringify(isMainnet ? 'false' : 'true')};`,
       `  e.FRONTEND_URL=${JSON.stringify(process.env.FRONTEND_URL ?? 'https://yieldsense.huzaifamalik.tech')};`,
       `  e.GRID_CONFIG_JSON=${JSON.stringify(process.env.GRID_CONFIG_JSON ?? 'W3siaWQiOiJnMSIsInJlZmVyZW5jZVByaWNlIjoxLjAsInRyaWdnZXJQZXJjZW50IjowLjAsImFsbG9jYXRpb25CcHMiOjUwMH1d')};`,
       `  e.STOP_LOSS_SECRET_JSON='';`,

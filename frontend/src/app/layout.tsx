@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Web3Provider } from "@/providers/Web3Provider";
+import { NetworkProvider } from "@/providers/NetworkProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +23,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <Web3Provider>
-          {children}
+          <NetworkProvider>
+            {children}
+          </NetworkProvider>
         </Web3Provider>
       </body>
     </html>
