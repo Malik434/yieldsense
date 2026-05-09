@@ -410,9 +410,10 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Unstakes LP from gauge and removes liquidity to free up USDC.
+     * @notice Unstakes LP from gauge, removes liquidity, and swaps any non-USDC
+     *         tokens back to the vault asset so the full position value is returned.
      * @param lpAmount The amount of LP to unwind.
-     * @return usdcUnwound The amount of USDC recovered.
+     * @return usdcUnwound The total amount of USDC (asset) recovered.
      */
     function unwindLp(uint256 lpAmount) external nonReentrant onlyKeeper returns (uint256 usdcUnwound) {
         if (lpAmount == 0) return 0;
@@ -439,6 +440,23 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
         bool isToken0 = token0 == address(asset);
         usdcUnwound = isToken0 ? amount0 : amount1;
+
+        // Swap the non-asset token (e.g. AERO) back to USDC
+        address otherToken = isToken0 ? token1 : token0;
+        uint256 otherAmount = isToken0 ? amount1 : amount0;
+
+        if (otherAmount > 0) {
+            uint256 swappedUsdc = _swap(
+                otherToken,
+                address(asset),
+                stable,
+                factory,
+                otherAmount,
+                0,
+                block.timestamp + 60
+            );
+            usdcUnwound += swappedUsdc;
+        }
 
         if (usdcUnwound > 0) {
             asset.safeTransfer(msg.sender, usdcUnwound);

@@ -17,7 +17,11 @@ module.exports = {
   },
   networks: {
     hardhat: {
-      chainId: 1
+      chainId: 8453,
+      forking: {
+        url: process.env.BASE_MAINNET_RPC || "https://mainnet.base.org",
+        blockNumber: 45783135
+      }
     },
     baseSepolia: {
       url: process.env.RPC_URL || "https://sepolia.base.org",
