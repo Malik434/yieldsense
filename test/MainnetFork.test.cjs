@@ -83,6 +83,10 @@ describe("Mainnet Fork Integration & Security Tests", function () {
         await asset.connect(user1).approve(await yieldSenseKeeper.getAddress(), ethers.MaxUint256);
         await asset.connect(user2).approve(await yieldSenseKeeper.getAddress(), ethers.MaxUint256);
         await asset.connect(attacker).approve(await yieldSenseKeeper.getAddress(), ethers.MaxUint256);
+
+        // Set a generous deposit cap for fork tests (default is 0 = disabled).
+        // In production the Safe sets this explicitly after accepting ownership.
+        await yieldSenseKeeper.connect(deployer).setMaxTotalAssets(ethers.parseUnits("100000", 6));
     });
 
     beforeEach(async function () {
@@ -144,18 +148,19 @@ describe("Mainnet Fork Integration & Security Tests", function () {
         const deadline = block.timestamp + 240;
         const routes = [{ from: AERO_ADDRESS, to: USDC_ADDRESS, stable: false, factory: FACTORY_ADDRESS }];
 
-        const sig = await signPayload(nonce, await autocompounder.getAddress(), 0, 0, deadline, routes, keeper);
+        // targetPool must be the actual LP pool address, not the autocompounder contract
+        const sig = await signPayload(nonce, POOL_ADDRESS, 0, 0, deadline, routes, keeper);
 
         // First execution should succeed
         const tx = await yieldSenseKeeper.connect(keeper).executeHarvest(
-            nonce, await autocompounder.getAddress(), sig.r, sig.s, sig.v, 0, 0, deadline, routes
+            nonce, POOL_ADDRESS, sig.r, sig.s, sig.v, 0, 0, deadline, routes
         );
         const receipt = await tx.wait();
 
         // Second execution should fail
         await expect(
             yieldSenseKeeper.connect(keeper).executeHarvest(
-                nonce, await autocompounder.getAddress(), sig.r, sig.s, sig.v, 0, 0, deadline, routes
+                nonce, POOL_ADDRESS, sig.r, sig.s, sig.v, 0, 0, deadline, routes
             )
         ).to.be.revertedWithCustomError(yieldSenseKeeper, "NonceAlreadyUsed");
     });
@@ -165,14 +170,18 @@ describe("Mainnet Fork Integration & Security Tests", function () {
         const block = await ethers.provider.getBlock("latest");
         const deadline = block.timestamp + 300;
         const validRoutes = [{ from: AERO_ADDRESS, to: USDC_ADDRESS, stable: false, factory: FACTORY_ADDRESS }];
-        const invalidRoutes = [{ from: AERO_ADDRESS, to: USDC_ADDRESS, stable: true, factory: FACTORY_ADDRESS }]; // Tampered
+        // Tampered: stable flag changed — signature will not match, but route validation
+        // fires first (before sig check), so we expect InvalidRouteFactory or ProcessorNotAttested.
+        // The correct targetPool must be passed so route pool validation passes; tampered routes
+        // contain the correct factory here, so the sig mismatch is the final gate.
+        const invalidRoutes = [{ from: AERO_ADDRESS, to: USDC_ADDRESS, stable: true, factory: FACTORY_ADDRESS }];
 
-        const sig = await signPayload(nonce, await autocompounder.getAddress(), 0, 0, deadline, validRoutes, keeper);
+        const sig = await signPayload(nonce, POOL_ADDRESS, 0, 0, deadline, validRoutes, keeper);
 
-        // Execute with tampered routes
+        // Execute with tampered routes — route hashes differ from signed payload → sig mismatch
         await expect(
             yieldSenseKeeper.connect(keeper).executeHarvest(
-                nonce, await autocompounder.getAddress(), sig.r, sig.s, sig.v, 0, 0, deadline, invalidRoutes
+                nonce, POOL_ADDRESS, sig.r, sig.s, sig.v, 0, 0, deadline, invalidRoutes
             )
         ).to.be.revertedWithCustomError(yieldSenseKeeper, "ProcessorNotAttested");
     });
@@ -222,7 +231,7 @@ describe("Mainnet Fork Integration & Security Tests", function () {
         // Deploy assets to autocompounder
         const amount = ethers.parseUnits("1000", 6);
         await yieldSenseKeeper.connect(user1).deposit(amount, user1.address);
-        await yieldSenseKeeper.connect(deployer).deployToPool(amount, 0);
+        await yieldSenseKeeper.connect(deployer).deployToPool(amount, 0, 1n);
 
         // Force some USDC "dust" into the autocompounder
         const dustAmount = ethers.parseUnits("10", 6);
@@ -238,8 +247,8 @@ describe("Mainnet Fork Integration & Security Tests", function () {
         const amount = ethers.parseUnits("5000", 6);
         await yieldSenseKeeper.connect(user1).deposit(amount, user1.address);
 
-        // Deploy to pool (pass 0 for amountToSwap to use default 50/50 split)
-        await yieldSenseKeeper.connect(deployer).deployToPool(amount, 0);
+        // Deploy to pool (pass 0 for amountToSwap to use default 50/50 split; 1n minimum LP for test)
+        await yieldSenseKeeper.connect(deployer).deployToPool(amount, 0, 1n);
 
         // User1 tries to withdraw but vault is empty (all deployed)
         const vaultBal = await asset.balanceOf(await yieldSenseKeeper.getAddress());

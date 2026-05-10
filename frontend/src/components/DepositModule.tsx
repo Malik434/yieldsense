@@ -40,6 +40,20 @@ export function DepositModule() {
     query: { enabled: !!address && !!actualAssetAddress },
   });
 
+  const { data: totalAssets } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'totalAssets',
+    query: { enabled: !!KEEPER_ADDRESS },
+  });
+
+  const { data: maxTotalAssets } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'maxTotalAssets',
+    query: { enabled: !!KEEPER_ADDRESS },
+  });
+
   const { writeContractAsync } = useWriteContract();
 
   const ZERO = BigInt(0);
@@ -53,6 +67,12 @@ export function DepositModule() {
   const isApprovedForAmount = depositAmountParsed > ZERO && currentAllowance >= depositAmountParsed;
 
   const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
+  const totalAssetsNum = totalAssets ? Number(formatUnits(totalAssets as bigint, 6)) : 0;
+  const maxAssetsNum = maxTotalAssets ? Number(formatUnits(maxTotalAssets as bigint, 6)) : 0;
+  
+  const capReached = maxAssetsNum > 0 && totalAssetsNum >= maxAssetsNum;
+  const depositsDisabled = maxAssetsNum === 0;
+
   const isLoading = txState === 'approving' || txState === 'depositing';
 
   const handleApprove = async () => {
@@ -172,21 +192,50 @@ export function DepositModule() {
       </div>
 
       {/* Info Notice */}
-      <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10">
-        <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
-        <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
-          Allocation will be processed through the YieldSense autonomous engine. Funds remain accessible via the exit flow at any time.
-        </p>
+      <div className="space-y-4 mt-auto">
+        {/* Deposit Cap Progress */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-end">
+            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em]">Pilot Capacity</p>
+            <p className="text-[10px] font-mono font-bold text-[#8B949E]">
+              {depositsDisabled ? (
+                <span className="text-[#FF4D4D]">PAUSED</span>
+              ) : (
+                <>{totalAssetsNum.toLocaleString()} / {maxAssetsNum.toLocaleString()} USDC</>
+              )}
+            </p>
+          </div>
+          <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-1000 ${depositsDisabled ? 'bg-[#FF4D4D]' : 'bg-[#C2E812]'}`}
+              style={{ width: `${maxAssetsNum > 0 ? Math.min(100, (totalAssetsNum / maxAssetsNum) * 100) : 0}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10">
+          <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
+          <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
+            {depositsDisabled 
+              ? "Deposits are currently disabled for security maintenance. Withdrawal remains active."
+              : "Allocation will be processed through the YieldSense autonomous engine. Funds remain accessible via the exit flow at any time."
+            }
+          </p>
+        </div>
       </div>
 
       {/* Action Button */}
       <div className="mt-auto">
         <button
           onClick={handleDeposit}
-          disabled={isLoading || depositAmountParsed === ZERO}
+          disabled={isLoading || depositAmountParsed === ZERO || capReached || depositsDisabled}
           className="ys-btn-primary w-full h-16 text-sm"
         >
-          {txState === 'approving' ? (
+          {depositsDisabled ? (
+            'Deposits Paused'
+          ) : capReached ? (
+            'Vault Cap Reached'
+          ) : txState === 'approving' ? (
             <><Loader2 size={20} className="animate-spin" /> Authorizing Assets...</>
           ) : txState === 'depositing' ? (
             <><Loader2 size={20} className="animate-spin" /> Executing Inflow...</>

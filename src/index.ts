@@ -482,7 +482,7 @@ async function main(): Promise<void> {
   const harvestParams: HarvestParams = {
     nonce,
     targetPool: CONFIG.poolAddress,
-    minLpOut: "0",
+    minLpOut: "1", // Pass minimum 1 to avoid ZeroAmount() revert; ideally compute real slippage bound
     amountToSwap: amountToSwap.toString(),
     deadline,
     routes

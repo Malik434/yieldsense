@@ -23,11 +23,19 @@ struct Route {
 
 interface IAerodromeAutocompounder {
     function harvestAndCompound(uint256 minLpOut, uint256 amountToSwap, uint256 deadline, Route[] calldata routes) external;
-    function pullProfit(uint256 amount, address to) external;
-    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap) external;
+    function pullProfit(uint256 amount) external;
+    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap, uint256 minLpOut) external;
     function pendingProfit() external view returns (uint256);
     function getDeployedValueInUSDC() external view returns (uint256);
     function unwindLp(uint256 lpAmount) external returns (uint256 usdcUnwound);
+    function pool() external view returns (address);
+    function factory() external view returns (address);
+    function asset() external view returns (address);
+    function rewardToken() external view returns (address);
+    function keeper() external view returns (address);
+    function router() external view returns (address);
+    function maxTotalAssets() external view returns (uint256);
+    function slippageBps() external view returns (uint256);
 }
 
 /**
@@ -88,6 +96,15 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     uint256 public profitShareBps = 2000;
     uint256 public minHarvestProfitUsdc = 1e6;
 
+    /// @notice On-chain deposit cap. Defaults to 0 (deposits disabled) until explicitly set.
+    uint256 public maxTotalAssets;
+
+    /// @notice Allowlisted tokens that may appear in harvest routes.
+    mapping(address => bool) public allowedRouteToken;
+
+    /// @notice Allowlisted factories that may appear in harvest routes.
+    mapping(address => bool) public allowedRouteFactory;
+
     bytes32 public attestationRootQx;
     bytes32 public attestationRootQy;
 
@@ -117,6 +134,9 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     event AttestationRootUpdated(bytes32 qx, bytes32 qy);
     event AutocompounderSet(address indexed autocompounder);
     event ProfitCredited(uint256 amount);
+    event MaxTotalAssetsUpdated(uint256 oldCap, uint256 newCap);
+    event RouteTokenAllowlisted(address indexed token, bool allowed);
+    event RouteFactoryAllowlisted(address indexed factory, bool allowed);
 
     error Unauthorized();
     error InvalidAddress();
@@ -131,6 +151,14 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     error InvalidAttestationSignature();
     error HarvestTooFrequent();
     error NoProfitReceived();
+    error DepositCapExceeded();
+    error InvalidRoute();
+    error InvalidRoutePool();
+    error InvalidRouteStart();
+    error InvalidRouteEnd();
+    error InvalidRouteContinuity();
+    error InvalidRouteFactory();
+    error InvalidRouteToken();
 
     constructor(
         address _asset,
@@ -142,8 +170,15 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         feeRecipient = msg.sender;
         yieldSource = _yieldSource;
         counterparty = _counterparty;
+        // maxTotalAssets starts at 0 — deposits are DISABLED until the Safe
+        // explicitly calls setMaxTotalAssets() after accepting ownership.
+        maxTotalAssets = 0;
         if (_autocompounder != address(0)) {
             autocompounder = IAerodromeAutocompounder(_autocompounder);
+            // Seed route allowlists from the configured autocompounder
+            allowedRouteFactory[IAerodromeAutocompounder(_autocompounder).factory()] = true;
+            allowedRouteToken[_asset] = true;
+            allowedRouteToken[_yieldSource] = true;
         }
     }
 
@@ -155,6 +190,30 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /**
+     * @notice Sets the on-chain deposit cap.
+     * @dev    Must be called by the Safe AFTER it has accepted ownership.
+     *         Set to 10e6–100e6 for smoke test, 500e6–1000e6 for capped pilot.
+     */
+    function setMaxTotalAssets(uint256 newCap) external onlyOwner {
+        emit MaxTotalAssetsUpdated(maxTotalAssets, newCap);
+        maxTotalAssets = newCap;
+    }
+
+    /// @notice Adds or removes a token from the harvest route allowlist.
+    function setAllowedRouteToken(address token, bool allowed) external onlyOwner {
+        if (token == address(0)) revert InvalidAddress();
+        allowedRouteToken[token] = allowed;
+        emit RouteTokenAllowlisted(token, allowed);
+    }
+
+    /// @notice Adds or removes a factory from the harvest route allowlist.
+    function setAllowedRouteFactory(address factory_, bool allowed) external onlyOwner {
+        if (factory_ == address(0)) revert InvalidAddress();
+        allowedRouteFactory[factory_] = allowed;
+        emit RouteFactoryAllowlisted(factory_, allowed);
     }
 
     // ─── USER PROCESSOR MAPPING ───────────────────────────────────────────────
@@ -307,6 +366,9 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         require(routes.length > 0, "Empty routes");
         if (block.timestamp < lastHarvest + MIN_HARVEST_INTERVAL) revert HarvestTooFrequent();
 
+        // Validate harvest routes against the configured strategy
+        _validateHarvestRoutes(targetPool, routes);
+
         bytes32 structHash = keccak256(
             abi.encode(
                 HARVEST_PAYLOAD_TYPEHASH,
@@ -335,7 +397,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
             uint256 pending = autocompounder.pendingProfit();
             if (pending >= minHarvestProfitUsdc) {
                 uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
-                autocompounder.pullProfit(pending, address(this));
+                autocompounder.pullProfit(pending);
                 uint256 actualProfit = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
 
                 if (actualProfit == 0) revert NoProfitReceived();
@@ -362,18 +424,25 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
      * @dev Restricted to owner only. Attested processors should signal deployment
      *      need via off-chain telemetry; owner executes on-chain.
      */
-    function deployToPool(uint256 amount, uint256 amountToSwap)
+    /**
+     * @notice Deploys idle vault assets into the yield-bearing pool.
+     * @param amount       USDC to deploy.
+     * @param amountToSwap Exact USDC to swap to the other pool token (TEE-calculated).
+     * @param minLpOut     Minimum LP tokens to receive. MUST be non-zero on mainnet.
+     */
+    function deployToPool(uint256 amount, uint256 amountToSwap, uint256 minLpOut)
         external
         nonReentrant
         onlyOwner
     {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
         if (amount == 0) revert AmountZero();
+        if (minLpOut == 0) revert AmountZero();
 
         IERC20(asset()).forceApprove(address(autocompounder), amount);
-        autocompounder.depositIntoPool(amount, amountToSwap);
+        autocompounder.depositIntoPool(amount, amountToSwap, minLpOut);
 
-        emit PoolDeployed(amount, amountToSwap);
+        emit PoolDeployed(amount, minLpOut);
     }
 
     /**
@@ -436,6 +505,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         whenNotPaused
         returns (uint256)
     {
+        if (totalAssets() + assets > maxTotalAssets) revert DepositCapExceeded();
         lastDepositBlock[receiver] = block.number;
         return super.deposit(assets, receiver);
     }
@@ -446,6 +516,8 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         whenNotPaused
         returns (uint256)
     {
+        uint256 assets = previewMint(shares);
+        if (totalAssets() + assets > maxTotalAssets) revert DepositCapExceeded();
         lastDepositBlock[receiver] = block.number;
         return super.mint(shares, receiver);
     }
@@ -479,5 +551,36 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         uint256 flipped = _nonceBitmap[user][wordPos] ^ mask;
         if (flipped & mask == 0) revert NonceAlreadyUsed();
         _nonceBitmap[user][wordPos] = flipped;
+    }
+
+    /**
+     * @notice Validates harvest routes against the configured strategy.
+     *         Enforces: correct pool, correct start/end tokens, route continuity,
+     *         allowlisted factory, and allowlisted tokens.
+     */
+    function _validateHarvestRoutes(address targetPool, Route[] calldata routes) internal view {
+        if (address(autocompounder) == address(0)) revert InvalidAddress();
+
+        // Pool must match the configured Aerodrome strategy pool
+        if (targetPool == address(0)) revert InvalidRoutePool();
+        if (targetPool != autocompounder.pool()) revert InvalidRoutePool();
+
+        // Routes must start with the yield source (AERO)
+        if (routes[0].from != yieldSource) revert InvalidRouteStart();
+
+        // Routes must end with the vault asset (USDC)
+        if (routes[routes.length - 1].to != asset()) revert InvalidRouteEnd();
+
+        for (uint256 i = 0; i < routes.length; i++) {
+            // Each factory must be allowlisted
+            if (!allowedRouteFactory[routes[i].factory]) revert InvalidRouteFactory();
+
+            // Each token in the route must be allowlisted
+            if (!allowedRouteToken[routes[i].from]) revert InvalidRouteToken();
+            if (!allowedRouteToken[routes[i].to]) revert InvalidRouteToken();
+
+            // Continuity: each route hop must start where the previous ended
+            if (i > 0 && routes[i].from != routes[i - 1].to) revert InvalidRouteContinuity();
+        }
     }
 }

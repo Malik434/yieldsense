@@ -1,0 +1,18 @@
+{
+  "network": "baseMainnet",
+  "chainId": 8453,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "ownerExpected": "0x081a4954638f739C2A2Ce84073842FCD5091c64a",
+  "ownerAccepted": false,
+  "yieldSenseKeeper": "0x6FD5E73e3b8BD74f6b31cA47edF4a45d0B287b24",
+  "aerodromeAutocompounder": "0x57F68eB95Fd0F6aaB576d6177EF55a7d8044AAC5",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "aero": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+  "router": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
+  "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+  "pool": "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d",
+  "gauge": "0x4F09bAb2f0E15e2A078A227FE1537665F55b8360",
+  "deploymentBlock": 45783147,
+  "gitCommit": "207df75",
+  "timestamp": "2026-05-09T23:11:43.308Z"
+}

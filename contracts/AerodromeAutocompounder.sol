@@ -11,10 +11,6 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 // External Protocol Interfaces
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * @dev Aerodrome gauge interface (compatible with Velodrome V2 gauges on Base).
- *      The gauge holds the LP tokens and emits AERO rewards.
- */
 interface IAerodromeGauge {
     function deposit(uint256 amount) external;
     function withdraw(uint256 amount) external;
@@ -24,9 +20,6 @@ interface IAerodromeGauge {
     function rewardToken() external view returns (address);
 }
 
-/**
- * @dev Aerodrome pool/LP interface (IPool is the same as the LP token ERC-20).
- */
 interface IAerodromePool {
     function token0() external view returns (address);
     function token1() external view returns (address);
@@ -41,9 +34,6 @@ interface IAerodromePool {
     function totalSupply() external view returns (uint256);
 }
 
-/**
- * @dev Aerodrome Router interface — used to swap AERO → USDC and add liquidity.
- */
 interface IAerodromeRouter {
     struct Route {
         address from;
@@ -104,21 +94,12 @@ interface IAerodromeRouter {
  *         swaps them back to the vault asset (USDC), and makes the compounded
  *         profit available to YieldSenseKeeper as the `yieldSource`.
  *
- * @dev Flow:
- *   1. Users deposit USDC into YieldSenseKeeper (the "Vault").
- *   2. The Vault owner (or TEE-authorized call) calls `depositIntoPool()` here,
- *      which converts USDC → LP tokens and stakes them in the Aerodrome gauge.
- *   3. The Acurast TEE worker monitors yield and calls `harvestAndCompound()`
- *      when it is provably profitable (gas < reward).
- *   4. `harvestAndCompound()` claims AERO from the gauge, swaps half to USDC
- *      (or the vault asset), re-adds liquidity, and updates `pendingProfit`.
- *   5. YieldSenseKeeper calls `pullProfit(amount)` to transfer the realized
- *      USDC profit into the Vault (crediting all depositors).
- *
- * Authorization:
- *   - Only the designated `keeper` address (the YieldSenseKeeper contract or the
- *     Acurast TEE worker) can call `harvestAndCompound()` and `pullProfit()`.
- *   - Owner (protocol multisig / timelock) can update addresses with a 2-day delay.
+ * Trust Model:
+ *   - The `keeper` MUST be the YieldSenseKeeper contract. The Acurast TEE
+ *     calls YieldSenseKeeper, which in turn calls this contract.
+ *   - The `router` is immutable for v1 to eliminate router-swap attack surface.
+ *   - `pullProfit` and `emergencyWithdraw` always send funds to `keeper` (the
+ *     vault) to preserve accounting and prevent admin sweeps to arbitrary addresses.
  */
 contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
@@ -137,22 +118,23 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     /// @notice AERO reward token emitted by the gauge.
     IERC20 public immutable rewardToken;
 
-    // ── Mutable config ────────────────────────────────────────────────────────
-
-    /// @notice Aerodrome router used for swaps and liquidity additions.
-    IAerodromeRouter public router;
-
-    /// @notice Aerodrome pool factory address.
+    /// @notice Aerodrome pool factory address (immutable).
     address public immutable factory;
 
+    /// @notice Aerodrome router — immutable for v1 to eliminate router-swap surface.
+    IAerodromeRouter public immutable router;
+
+    // ── Mutable config ────────────────────────────────────────────────────────
+
     /**
-     * @notice The authorized caller that can trigger harvests and pull profit.
-     *         Set to the YieldSenseKeeper address after deployment.
+     * @notice The YieldSenseKeeper contract address.
+     *         MUST always be the vault contract — not an EOA or TEE worker.
+     *         Set to the YieldSenseKeeper address immediately after deployment.
      */
     address public keeper;
 
-    /// @notice Slippage tolerance for swaps/liquidity in BPS (e.g. 50 = 0.5%).
-    uint256 public slippageBps = 500; // 5% default for fork robustness
+    /// @notice Slippage tolerance for swaps/liquidity in BPS (e.g. 100 = 1%).
+    uint256 public slippageBps = 100; // 1% default — conservative for production
 
     /// @notice Profit share percentage in BPS (e.g. 2000 = 20%).
     uint256 public profitShareBps = 2000;
@@ -186,19 +168,27 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     event ProfitPulled(address indexed to, uint256 amount);
     event EmergencyWithdrawn(address indexed to, uint256 lpAmount, uint256 usdcAmount);
     event KeeperUpdated(address indexed oldKeeper, address indexed newKeeper);
-    event RouterUpdated(address indexed oldRouter, address indexed newRouter);
     event SlippageUpdated(uint256 oldBps, uint256 newBps);
 
     // ── Errors ────────────────────────────────────────────────────────────────
 
     error Unauthorized();
     error ZeroAmount();
+    error ZeroAddress();
     error InsufficientPendingProfit();
     error SlippageTooHigh();
+    error MinLpOutNotMet();
 
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// @dev Only the YieldSenseKeeper vault contract may call these functions.
     modifier onlyKeeper() {
+        if (msg.sender != keeper) revert Unauthorized();
+        _;
+    }
+
+    /// @dev Keeper or owner may call — for emergency unwind fallback.
+    modifier onlyKeeperOrOwner() {
         if (msg.sender != keeper && msg.sender != owner()) revert Unauthorized();
         _;
     }
@@ -227,26 +217,25 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
     /**
      * @notice Converts USDC into LP tokens and stakes them in the Aerodrome gauge.
-     * @dev    The Vault (YieldSenseKeeper) calls this to deploy idle USDC into yield.
-     *         Assumes the pool is a USDC/X stable or volatile pair.
-     *
-     *         Split strategy: 
-     *         - Stable pair   → split 50/50 by value using pool reserves.
-     *         - Volatile pair → split 50/50 by value (router handles imbalance dust).
-     *
-     * @param usdcAmount  The amount of USDC (asset) to deploy.
-     * @param amountToSwap  Exact USDC amount to zap to otherToken.
+     * @dev    Only callable by the YieldSenseKeeper (keeper). NOT callable by owner
+     *         or Acurast TEE directly.
+     * @param usdcAmount   The amount of USDC (asset) to deploy.
+     * @param amountToSwap Exact USDC amount to zap to otherToken.
+     * @param minLpOut     Minimum LP tokens to receive — MUST be non-zero on mainnet.
      */
-    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap)
+    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap, uint256 minLpOut)
         external
         nonReentrant
         onlyKeeper
     {
         if (usdcAmount == 0) revert ZeroAmount();
+        if (minLpOut == 0) revert ZeroAmount();
 
         asset.safeTransferFrom(msg.sender, address(this), usdcAmount);
 
         uint256 lpMinted = _convertAssetToLp(usdcAmount, amountToSwap, block.timestamp + 60);
+
+        if (lpMinted < minLpOut) revert MinLpOutNotMet();
 
         // Stake LP in gauge
         IERC20(address(pool)).approve(address(gauge), lpMinted);
@@ -263,18 +252,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     /**
      * @notice Claims AERO rewards from the gauge, swaps a portion to USDC (profit),
      *         and re-invests the rest as additional LP (compounding).
-     *
-     * @dev    Called exclusively by the Acurast TEE worker via YieldSenseKeeper's
-     *         `executeHarvest()`, which verifies the profitability proof before
-     *         forwarding here.
-     *
-     *         Split of claimed AERO:
-     *           - `profitShareBps` (e.g. 20%) → swapped to USDC → `pendingProfit`
-     *           - Remainder (e.g. 80%) → re-added as LP → compounded into position
-     *
-     *         This split maximizes long-term position growth while still providing
-     *         realized USDC profit that the Vault can credit to depositors.
-     *
      * @param  minLpOut      Minimum LP tokens to receive from compounding.
      * @param  amountToSwap  Exact USDC amount to zap to otherToken.
      * @param  deadline      Deadline for execution.
@@ -332,13 +309,11 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Transfers realized USDC profit to the Vault (YieldSenseKeeper).
-     * @dev    Called by YieldSenseKeeper after `harvestAndCompound()` has run.
-     *         The Vault distributes the profit proportionally to all depositors.
-     * @param  amount   Amount of USDC to transfer to `to`.
-     * @param  to       Recipient — always the YieldSenseKeeper vault address.
+     * @notice Transfers realized USDC profit to the YieldSenseKeeper vault.
+     * @dev    Recipient is always `keeper` (the vault). Cannot be redirected.
+     * @param  amount   Amount of USDC to transfer to the vault.
      */
-    function pullProfit(uint256 amount, address to)
+    function pullProfit(uint256 amount)
         external
         nonReentrant
         onlyKeeper
@@ -347,9 +322,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         if (amount > pendingProfit) revert InsufficientPendingProfit();
 
         pendingProfit -= amount;
-        asset.safeTransfer(to, amount);
+        asset.safeTransfer(keeper, amount);
 
-        emit ProfitPulled(to, amount);
+        emit ProfitPulled(keeper, amount);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -370,8 +345,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     function getDeployedValueInUSDC() external view returns (uint256) {
         if (address(gauge) == address(0) || address(pool) == address(0)) return 0;
         
-        uint256 staked = totalStakedLp; // Use tracked state to be safer, or call gauge
-        // But the user suggested checking if lp exists.
+        uint256 staked = totalStakedLp;
         
         uint256 totalSupply;
         try pool.totalSupply() returns (uint256 ts) {
@@ -387,7 +361,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         bool isToken0 = t0 == address(asset);
         uint256 reserveAsset = isToken0 ? reserve0 : reserve1;
 
-        // Formula: 2 * reserveAsset * staked / totalSupply
         uint256 lpValue = (2 * reserveAsset * staked) / totalSupply;
 
         uint256 assetDust = 0;
@@ -410,12 +383,12 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Unstakes LP from gauge, removes liquidity, and swaps any non-USDC
-     *         tokens back to the vault asset so the full position value is returned.
+     * @notice Unstakes LP from gauge, removes liquidity, and returns USDC to caller.
+     * @dev    Callable by keeper (vault) OR owner (multisig emergency fallback).
      * @param lpAmount The amount of LP to unwind.
-     * @return usdcUnwound The total amount of USDC (asset) recovered.
+     * @return usdcUnwound The total amount of USDC recovered.
      */
-    function unwindLp(uint256 lpAmount) external nonReentrant onlyKeeper returns (uint256 usdcUnwound) {
+    function unwindLp(uint256 lpAmount) external nonReentrant onlyKeeperOrOwner returns (uint256 usdcUnwound) {
         if (lpAmount == 0) return 0;
 
         gauge.withdraw(lpAmount);
@@ -441,7 +414,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         bool isToken0 = token0 == address(asset);
         usdcUnwound = isToken0 ? amount0 : amount1;
 
-        // Swap the non-asset token (e.g. AERO) back to USDC
         address otherToken = isToken0 ? token1 : token0;
         uint256 otherAmount = isToken0 ? amount1 : amount0;
 
@@ -468,11 +440,14 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Emergency: unstakes all LP from the gauge and withdraws to `to`.
-     *         Also claims any pending AERO and sweeps remaining USDC.
-     * @dev    Only callable by the owner (protocol multisig).
+     * @notice Emergency: unstakes all LP from the gauge and sends to the keeper vault.
+     * @dev    Funds always go to `keeper` (YieldSenseKeeper) to preserve accounting.
+     *         Only callable by the owner (protocol multisig).
      */
-    function emergencyWithdraw(address to) external onlyOwner nonReentrant {
+    function emergencyWithdraw() external onlyOwner nonReentrant {
+        address to = keeper;
+        if (to == address(0)) revert ZeroAddress();
+
         uint256 staked = gauge.balanceOf(address(this));
 
         if (staked > 0) {
@@ -500,14 +475,14 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     // ADMIN
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * @notice Sets the keeper to the YieldSenseKeeper contract address.
+     * @dev    Must never be an EOA or TEE worker. Zero address rejected.
+     */
     function setKeeper(address newKeeper) external onlyOwner {
+        if (newKeeper == address(0)) revert ZeroAddress();
         emit KeeperUpdated(keeper, newKeeper);
         keeper = newKeeper;
-    }
-
-    function setRouter(address newRouter) external onlyOwner {
-        emit RouterUpdated(address(router), newRouter);
-        router = IAerodromeRouter(newRouter);
     }
 
     function setProfitShareBps(uint256 newBps) external onlyOwner {
@@ -516,7 +491,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     }
 
     function setSlippage(uint256 newBps) external onlyOwner {
-        if (newBps > 500) revert SlippageTooHigh(); // max 5%
+        if (newBps > 300) revert SlippageTooHigh(); // max 3% for production safety
         emit SlippageUpdated(slippageBps, newBps);
         slippageBps = newBps;
     }
@@ -533,12 +508,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         bool assetIsToken0;
     }
 
-    /**
-     * @dev Converts `usdcAmount` into LP tokens by:
-     *      1. Swapping ~half the USDC to token1 of the pool.
-     *      2. Adding both tokens as liquidity.
-     *      Returns the LP tokens received.
-     */
     function _convertAssetToLp(uint256 usdcAmount, uint256 amountToSwap, uint256 deadline)
         internal
         returns (uint256 lpReceived)
@@ -548,7 +517,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         p.token1 = pool.token1();
         p.stable = pool.stable();
 
-        // Determine which side is the vault asset
         p.assetIsToken0 = (p.token0 == address(asset));
         p.otherToken = p.assetIsToken0 ? p.token1 : p.token0;
 
@@ -556,27 +524,26 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         if (actualSwap == 0) return 0;
         uint256 otherOut = _swap(address(asset), p.otherToken, p.stable, factory, actualSwap, 0, deadline);
 
-        // Remaining asset balance
         uint256 assetRemaining = usdcAmount - actualSwap;
 
-        uint256 amountA; uint256 amountB; uint256 liquidity;
+        uint256 liquidity;
 
         asset.approve(address(router), assetRemaining);
         IERC20(p.otherToken).approve(address(router), otherOut);
 
         if (p.assetIsToken0) {
-            (amountA, amountB, liquidity) = router.addLiquidity(
+            (,, liquidity) = router.addLiquidity(
                 address(asset), p.otherToken, p.stable,
                 assetRemaining, otherOut,
-                0, 0, // Minimums set to 0 for fork testing robustness
+                _minOut(assetRemaining), _minOut(otherOut),
                 address(this),
                 deadline
             );
         } else {
-            (amountA, amountB, liquidity) = router.addLiquidity(
+            (,, liquidity) = router.addLiquidity(
                 p.otherToken, address(asset), p.stable,
                 otherOut, assetRemaining,
-                0, 0,
+                _minOut(otherOut), _minOut(assetRemaining),
                 address(this),
                 deadline
             );
@@ -585,9 +552,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         lpReceived = liquidity;
     }
 
-    /**
-     * @dev Swaps `rewardIn` AERO → USDC (asset). Returns USDC received.
-     */
     function _swapRewardToAsset(uint256 rewardIn, uint256 deadline, IAerodromeRouter.Route[] calldata routes)
         internal
         returns (uint256 assetOut)
@@ -604,10 +568,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         assetOut = amounts[amounts.length - 1];
     }
 
-    /**
-     * @dev Compounds `rewardIn` AERO by splitting → half to token0, half to token1,
-     *      then adding liquidity. Returns new LP tokens minted.
-     */
     function _compoundRewardToLp(uint256 rewardIn, uint256 amountToSwap, uint256 deadline, IAerodromeRouter.Route[] calldata routes)
         internal
         returns (uint256 lpMinted)
@@ -652,9 +612,6 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         lpMinted = liq;
     }
 
-    /**
-     * @dev Generic single-hop swap via Aerodrome router.
-     */
     function _swap(
         address from,
         address to,
@@ -679,20 +636,19 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         amountOut = amounts[amounts.length - 1];
     }
 
-    /**
-     * @dev Applies the configured slippage tolerance to derive a `minAmountOut`.
-     */
     function _minOut(uint256 amount) internal view returns (uint256) {
         return (amount * (BPS - slippageBps)) / BPS;
     }
 
     /**
-     * @dev Dynamically calculates minOut based on getAmountsOut.
+     * @dev Calculates minOut based on getAmountsOut quote.
+     *      If slippageBps == 0, returns exact expected output (no slippage tolerance),
+     *      which is the strictest possible protection rather than no protection.
      */
     function _dynamicMinOut(uint256 amountIn, IAerodromeRouter.Route[] memory routes) internal view returns (uint256) {
-        if (slippageBps == 0) return 0;
         uint256[] memory amounts = router.getAmountsOut(amountIn, routes);
         uint256 expectedOut = amounts[amounts.length - 1];
+        if (slippageBps == 0) return expectedOut; // zero tolerance = exact output required
         return _minOut(expectedOut);
     }
 }

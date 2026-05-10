@@ -49,6 +49,10 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     await ethers.provider.send("evm_increaseTime", [2 * 24 * 3600 + 1]);
     await ethers.provider.send("evm_mine");
     await keeper.applyUpdate(key);
+
+    // Set a generous deposit cap (defaults to 0 = disabled).
+    // In production the Safe sets this AFTER accepting ownership.
+    await keeper.setMaxTotalAssets(ethers.parseUnits("100000", 6));
   });
 
   async function getSignature(payloadHash) {
@@ -67,8 +71,8 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     await keeper.connect(alice).deposit(depositAlice, alice.address);
     expect(await keeper.balanceOf(alice.address)).to.equal(depositAlice);
 
-    // Deploy to pool
-    await keeper.deployToPool(depositAlice, 0);
+    // Deploy to pool — minLpOut = 1 (minimum, mock ignores it)
+    await keeper.deployToPool(depositAlice, 0, 1n);
     expect(await usdc.balanceOf(await keeper.getAddress())).to.equal(0);
     expect(await keeper.totalAssets()).to.equal(depositAlice);
 
@@ -118,8 +122,8 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     await usdc.connect(alice).approve(await keeper.getAddress(), depositAmount);
     await keeper.connect(alice).deposit(depositAmount, alice.address);
 
-    // Deploy all to pool
-    await keeper.deployToPool(depositAmount, 0);
+    // Deploy all to pool — minLpOut = 1 (minimum, mock ignores it)
+    await keeper.deployToPool(depositAmount, 0, 1n);
     
     // maxWithdraw should be 0 because idle USDC is 0
     expect(await keeper.maxWithdraw(alice.address)).to.equal(0);
@@ -174,8 +178,8 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     await usdc.connect(alice).approve(await keeper.getAddress(), depositAmount);
     await keeper.connect(alice).deposit(depositAmount, alice.address);
 
-    // Deploy to pool
-    await keeper.deployToPool(depositAmount, 0);
+    // Deploy to pool — minLpOut = 1 (minimum, mock ignores it)
+    await keeper.deployToPool(depositAmount, 0, 1n);
 
     // Manually add some "dust" to autocompounder (e.g. random USDC transfer)
     const dust = ethers.parseUnits("5", 6);
@@ -198,11 +202,10 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
       .to.be.revertedWith("Empty routes");
 
     // B: Expired deadline
-    await expect(keeper.executeHarvest(2, await autocompounder.getAddress(), r, s, v, 0, 0, deadline - 7200, [{from: await usdc.getAddress(), to: await usdc.getAddress(), stable: false, factory: owner.address}]))
-      .to.be.revertedWith("Stale quote");
-      
-    // Note: the "wrong token start" check is in the Autocompounder logic which we mocked.
-    // In our implementation of harvestAndCompound in MockAutocompounder, we don't check routes[0].from.
-    // But we can verify it fails if we added it.
+    const staleDeadline = (await ethers.provider.getBlock("latest")).timestamp - 1;
+    await expect(
+      keeper.executeHarvest(2, await autocompounder.getAddress(), r, s, v, 0, 0, staleDeadline,
+        [{from: await usdc.getAddress(), to: await usdc.getAddress(), stable: false, factory: owner.address}])
+    ).to.be.revertedWith("Stale quote");
   });
 });
