@@ -191,11 +191,33 @@ async function main(): Promise<void> {
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
 
+  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
+  const dataProvider =
+    CONFIG.dataRpcUrl.length > 0
+      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
+      : executionProvider;
+  const executionChainId = Number((await executionProvider.getNetwork()).chainId);
+  const dataChainId = Number((await dataProvider.getNetwork()).chainId);
+  let yieldChainId = CONFIG.yieldChainId;
+  if (yieldChainId == null || !Number.isFinite(yieldChainId)) {
+    yieldChainId = dataChainId;
+  }
+
+  if (yieldChainId !== dataChainId) {
+    throw new Error(
+      `YIELD_CHAIN_ID ${yieldChainId} does not match DATA_RPC_URL chainId ${dataChainId}. ` +
+      `Set YIELD_CHAIN_ID=${dataChainId} or point DATA_RPC_URL at the intended network.`
+    );
+  }
+
+  await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
+
   // 2. Send Heartbeat
   await emitTelemetry({
     event: "processor_heartbeat",
     message: `Guardian starting for ${envUser?.slice(0, 10)}...`,
     timestamp: startNow,
+    chainId: executionChainId,
     userAddress: envUser // Explicitly pass to ensure first log isn't anonymous
   });
 
@@ -207,24 +229,10 @@ async function main(): Promise<void> {
   }
 
   // 2. Continue with Harvest Profitability Check
-  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
-  const dataProvider =
-    CONFIG.dataRpcUrl.length > 0
-      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
-      : executionProvider;
-
-  await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
-
-
   const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, executionProvider);
   const state = await loadState(CONFIG.statePath);
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const executionChainId = Number((await executionProvider.getNetwork()).chainId);
-  let yieldChainId = CONFIG.yieldChainId;
-  if (yieldChainId == null || !Number.isFinite(yieldChainId)) {
-    yieldChainId = Number((await dataProvider.getNetwork()).chainId);
-  }
   const hybridMainnetRead = CONFIG.dataRpcUrl.length > 0;
 
   const elapsedEwma =
@@ -290,7 +298,7 @@ async function main(): Promise<void> {
 
 
   const BASE_SEPOLIA_CHAIN_ID = 84532;
-  if (CONFIG.forceTestHarvest) {
+  if (CONFIG.forceTestHarvest && !CONFIG.dryRun) {
     const onSepolia = executionChainId === BASE_SEPOLIA_CHAIN_ID;
     if (!onSepolia && !CONFIG.forceTestAllowMainnet) {
       state.lastRunAt = nowSec;
@@ -422,7 +430,7 @@ async function main(): Promise<void> {
   // Dynamic Routing & Zap Math
   const AERO = "0x940181a94A35A4569E4529A3CDfB74e38FD98631";
   const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-  const FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFeCE40Da";
+  const FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da";
   const ROUTER_ADDRESS = "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43";
   
   const directRoute = [{ from: AERO, to: USDC, stable: false, factory: FACTORY }];

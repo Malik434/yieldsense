@@ -375,7 +375,13 @@ export async function monitorAndExecuteGrid(): Promise<void> {
 
   const rpcUrl = getEnv("RPC_URL", "https://sepolia.base.org");
   const dataRpcUrl = getEnv("DATA_RPC_URL", rpcUrl);
-  const poolAddress = getEnv("POOL_ADDRESS", "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59");
+  const poolAddress = getEnv(
+    "GRID_POOL_ADDRESS",
+    getEnv(
+      "UNISWAP_POOL_ADDRESS",
+      getEnv("POOL_ADDRESS", "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59")
+    )
+  );
   const keeperAddress = getEnv("KEEPER_ADDRESS", "0x488147C822b364a940630075f9EACD080Cc16234");
   const userAddress = getEnv("USER_ADDRESS", "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA");
 
@@ -412,6 +418,10 @@ export async function monitorAndExecuteGrid(): Promise<void> {
 
   // Price from on-chain pool — sqrtPriceX96 is instantaneous and flash-loan
   // manipulable. For production, use a TWAP or multi-source oracle.
+  if (activeGrids.length === 0) {
+    return;
+  }
+
   const currentPrice = await fetchPoolPrice(dataProvider, poolAddress);
   const pendingTrades: GridTradePayload[] = [];
   const privateKey = process.env.ACURAST_WORKER_KEY;
