@@ -153,12 +153,18 @@ export const KEEPER_ABI = [
   },
   {
     "inputs": [
-      { "internalType": "address", "name": "processor", "type": "address" },
-      { "internalType": "bytes32", "name": "certHash", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "r", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "s", "type": "bytes32" }
+      { "internalType": "address", "name": "processor", "type": "address" }
     ],
-    "name": "attestProcessor",
+    "name": "ownerAttestProcessor",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address[]", "name": "processors", "type": "address[]" }
+    ],
+    "name": "ownerAttestProcessors",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -186,8 +192,9 @@ export const KEEPER_ABI = [
   {
     "anonymous": false,
     "inputs": [
-      { "indexed": true, "internalType": "bytes32", "name": "payloadHash", "type": "bytes32" },
-      { "indexed": false, "internalType": "uint256", "name": "profitCredited", "type": "uint256" }
+      { "indexed": true,  "internalType": "address", "name": "processor",      "type": "address" },
+      { "indexed": true,  "internalType": "uint256", "name": "nonce",           "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "profitCredited",  "type": "uint256" }
     ],
     "name": "HarvestExecuted",
     "type": "event"

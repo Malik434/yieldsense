@@ -4,44 +4,45 @@
  * YieldSense — Base Mainnet Production Deployment
  *
  * Deploys AerodromeAutocompounder and YieldSenseKeeper to Base Mainnet,
- * wires them together, initiates the Acurast processor timelock,
- * transfers ownership to a Safe multisig, and writes a deployment manifest.
+ * wires them together, transfers ownership to a Safe multisig,
+ * and writes a deployment manifest.
  *
  * Pre-conditions (all must be met before running):
  *   1. scripts/verifyBaseAddresses.cjs must exit 0
  *   2. .env must contain DEPLOYER_PRIVATE_KEY (funded with Base ETH)
  *   3. .env must contain PROTOCOL_OWNER_ADDRESS (Gnosis Safe on Base)
- *   4. .env must contain ACURAST_WORKER_ADDRESS
- *   5. This script MUST be run with --network baseMainnet
+ *   4. This script MUST be run with --network baseMainnet
  *
  * Usage:
  *   npx hardhat run scripts/deployMainnet.cjs --network baseMainnet
  *
  * After deployment:
- *   - Wait 2 days (TIMELOCK_DELAY) then call applyUpdate("processor") via multisig
+ *   - Safe accepts ownership and confirms the Autocompounder keeper is correct
+ *   - Safe calls lockKeeper() on AerodromeAutocompounder
+ *   - Deploy Acurast job and call ownerAttestProcessor(processorAddress) via Safe
  *   - Run BaseScan verification with commands printed at the end
  */
 
 "use strict";
 
-const hre  = require("hardhat");
-const fs   = require("fs");
+const hre = require("hardhat");
+const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 
 // ─── Base Mainnet Protocol Constants ─────────────────────────────────────────
 // These are HARDCODED. Do NOT override via env vars to prevent misconfiguration.
-const USDC_ADDRESS    = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Native USDC on Base
-const AERO_ADDRESS    = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"; // AERO on Base
-const ROUTER_ADDRESS  = "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43"; // Aerodrome Router V2
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Native USDC on Base
+const AERO_ADDRESS = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"; // AERO on Base
+const ROUTER_ADDRESS = "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43"; // Aerodrome Router V2
 const FACTORY_ADDRESS = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"; // Aerodrome Factory
-const POOL_ADDRESS    = "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d"; // vAMM-USDC/AERO pool
-const GAUGE_ADDRESS   = "0x4F09bAb2f0E15e2A078A227FE1537665F55b8360"; // vAMM-USDC/AERO gauge
+const POOL_ADDRESS = "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d"; // vAMM-USDC/AERO pool
+const GAUGE_ADDRESS = "0x4F09bAb2f0E15e2A078A227FE1537665F55b8360"; // vAMM-USDC/AERO gauge
 
 async function main() {
   // ── 0. Chain guard — abort immediately if not Base Mainnet ────────────────
   const network = await hre.ethers.provider.getNetwork();
-  const chainId  = Number(network.chainId);
+  const chainId = Number(network.chainId);
 
   if (chainId !== 8453) {
     console.error(`\n🚨 ABORT: This script only runs on Base Mainnet (chainId 8453).`);
@@ -52,17 +53,10 @@ async function main() {
   }
 
   // ── 1. Load operator addresses from env ───────────────────────────────────
-  const ownerAddress    = process.env.PROTOCOL_OWNER_ADDRESS?.trim();
-  const processorAddress = process.env.ACURAST_WORKER_ADDRESS?.trim();
+  const ownerAddress = process.env.PROTOCOL_OWNER_ADDRESS?.trim();
 
   if (!ownerAddress) {
     console.error("\n🚨 ABORT: PROTOCOL_OWNER_ADDRESS is not set. Set this to your Gnosis Safe address.\n");
-    process.exitCode = 1;
-    return;
-  }
-
-  if (!processorAddress) {
-    console.error("\n🚨 ABORT: ACURAST_WORKER_ADDRESS is not set. Set this to your Acurast TEE worker address.\n");
     process.exitCode = 1;
     return;
   }
@@ -77,7 +71,6 @@ async function main() {
   console.log(`  Deployer  : ${deployer.address}`);
   console.log(`  Balance   : ${hre.ethers.formatEther(deployerBalance)} ETH`);
   console.log(`  Owner     : ${ownerAddress} (Safe/Multisig)`);
-  console.log(`  Processor : ${processorAddress} (Acurast TEE worker)`);
   console.log();
 
   if (deployerBalance < hre.ethers.parseEther("0.01")) {
@@ -122,14 +115,7 @@ async function main() {
   await (await autocompounder.setKeeper(keeperAddress, { gasLimit: 100_000 })).wait();
   console.log("✅ Keeper authorized on Autocompounder");
 
-  // ── 5. Initiate 2-day timelock for Acurast processor ─────────────────────
-  console.log("\nInitiating processor timelock...");
-  const processorKey = hre.ethers.encodeBytes32String("processor");
-  await (await keeper.initiateUpdate(processorKey, processorAddress, { gasLimit: 100_000 })).wait();
-  const unlockTime = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
-  console.log(`✅ Timelock initiated. Execute applyUpdate("processor") after: ${unlockTime.toUTCString()}`);
-
-  // ── 6. Mandatory: transfer ownership to multisig ──────────────────────────
+  // ── 5. Mandatory: transfer ownership to multisig ──────────────────────────
   console.log(`\nTransferring ownership to Safe: ${ownerAddress}...`);
   await (await autocompounder.transferOwnership(ownerAddress, { gasLimit: 100_000 })).wait();
   await (await keeper.transferOwnership(ownerAddress, { gasLimit: 100_000 })).wait();
@@ -194,9 +180,10 @@ async function main() {
   console.log("\n── Required Post-Deployment Actions (via Safe Multisig) ─────────");
   console.log(`1. Call acceptOwnership() on AerodromeAutocompounder (${autocompounderAddress})`);
   console.log(`2. Call acceptOwnership() on YieldSenseKeeper (${keeperAddress})`);
-  console.log(`3. After ${unlockTime.toUTCString()}, call applyUpdate("processor") on YieldSenseKeeper`);
-  console.log(`4. Verify owner() on both contracts returns ${ownerAddress}`);
-  console.log(`5. Run the 1 USDC smoke test\n`);
+  console.log(`3. Confirm autocompounder.keeper() == ${keeperAddress}, then call autocompounder.lockKeeper()`);
+  console.log(`4. Deploy Acurast job and call keeper.ownerAttestProcessor(processorEVMAddress)`);
+  console.log(`5. Call keeper.setMaxTotalAssets(10000000) to set 10 USDC pilot cap`);
+  console.log(`6. Run the 1 USDC smoke test\n`);
 }
 
 main().catch((err) => {

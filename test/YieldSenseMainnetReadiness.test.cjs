@@ -6,11 +6,12 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
 
   let keeper, autocompounder, usdc, rewardToken;
   let owner, alice, bob, feeRecipient;
-  let signer;
+  let processorSigner; // simulates the Acurast TEE processor
 
   beforeEach(async function () {
     [owner, alice, bob, feeRecipient] = await ethers.getSigners();
-    signer = ethers.Wallet.createRandom().connect(ethers.provider);
+    // Use a funded signer to simulate the Acurast TEE processor calling executeHarvest directly
+    processorSigner = bob; // any funded signer works for msg.sender check
 
     // Deploy Mock USDC (6 decimals)
     const MockUSDC = await ethers.getContractFactory("MockUSDC");
@@ -37,29 +38,15 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
     );
     await keeper.waitForDeployment();
 
-    // Setup: set keeper in autocompounder
+    // Wire: set keeper in autocompounder
     await autocompounder.setKeeper(await keeper.getAddress());
 
-    // Attest the signer for harvest tests
-    await keeper.setAttestationRoot(ethers.ZeroHash, ethers.ZeroHash); // not used in ownerAttest
-    // Wait, I removed ownerAttestProcessor and added a timelocked "processor" update
-    // Let's use the timelock to attest the signer
-    const key = ethers.encodeBytes32String("processor");
-    await keeper.initiateUpdate(key, signer.address);
-    await ethers.provider.send("evm_increaseTime", [2 * 24 * 3600 + 1]);
-    await ethers.provider.send("evm_mine");
-    await keeper.applyUpdate(key);
+    // Attest the processor signer via ownerAttestProcessor (mirrors Safe post-TEE-deployment)
+    await keeper.ownerAttestProcessor(processorSigner.address);
 
-    // Set a generous deposit cap (defaults to 0 = disabled).
-    // In production the Safe sets this AFTER accepting ownership.
+    // Set a generous deposit cap
     await keeper.setMaxTotalAssets(ethers.parseUnits("100000", 6));
   });
-
-  async function getSignature(payloadHash) {
-    const rawSig = await signer.signMessage(ethers.getBytes(payloadHash));
-    const { r, s, v } = ethers.Signature.from(rawSig);
-    return { r, s, v };
-  }
 
   // 1. Share Accounting Integrity
   it("Scenario 1: Share Accounting Integrity (Alice -> Profit -> Bob -> Alice Withdraw)", async function () {
@@ -192,19 +179,22 @@ describe("YieldSense Mainnet Readiness — Audit & Security Fixes", function () 
 
   // 5. Route Validation Failure Cases
   it("Scenario 5: Route Validation Failure Cases", async function () {
-    const payloadHash = ethers.keccak256(ethers.toUtf8Bytes("harvest-payload"));
-    const { r, s, v } = await getSignature(payloadHash);
-    
     const deadline = (await ethers.provider.getBlock("latest")).timestamp + 300;
 
-    // A: Empty routes
-    await expect(keeper.executeHarvest(1, await autocompounder.getAddress(), r, s, v, 0, 0, deadline, []))
-      .to.be.revertedWith("Empty routes");
+    // A: Non-attested caller should revert before route validation
+    await expect(
+      keeper.connect(alice).executeHarvest(1, await autocompounder.getAddress(), 0, 0, deadline, [])
+    ).to.be.revertedWithCustomError(keeper, "ProcessorNotAttested");
 
-    // B: Expired deadline
+    // B: Attested processor with empty routes
+    await expect(
+      keeper.connect(processorSigner).executeHarvest(1, await autocompounder.getAddress(), 0, 0, deadline, [])
+    ).to.be.revertedWith("Empty routes");
+
+    // C: Expired deadline
     const staleDeadline = (await ethers.provider.getBlock("latest")).timestamp - 1;
     await expect(
-      keeper.executeHarvest(2, await autocompounder.getAddress(), r, s, v, 0, 0, staleDeadline,
+      keeper.connect(processorSigner).executeHarvest(2, await autocompounder.getAddress(), 0, 0, staleDeadline,
         [{from: await usdc.getAddress(), to: await usdc.getAddress(), stable: false, factory: owner.address}])
     ).to.be.revertedWith("Stale quote");
   });

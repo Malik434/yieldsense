@@ -21,7 +21,7 @@ module.exports = {
       chainId: 8453,
       forking: {
         url: process.env.BASE_MAINNET_RPC || "https://mainnet.base.org",
-        blockNumber: 45783135
+        blockNumber: 45856000
       }
     },
     // ── Base Sepolia — integration testing with real infra ────────────────────

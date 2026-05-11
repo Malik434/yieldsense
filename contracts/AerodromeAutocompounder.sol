@@ -133,6 +133,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      */
     address public keeper;
 
+    /// @notice When true, keeper address is permanently locked and cannot be changed.
+    bool public keeperLocked;
+
     /// @notice Slippage tolerance for swaps/liquidity in BPS (e.g. 100 = 1%).
     uint256 public slippageBps = 100; // 1% default — conservative for production
 
@@ -168,6 +171,7 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     event ProfitPulled(address indexed to, uint256 amount);
     event EmergencyWithdrawn(address indexed to, uint256 lpAmount, uint256 usdcAmount);
     event KeeperUpdated(address indexed oldKeeper, address indexed newKeeper);
+    event KeeperLockApplied();
     event SlippageUpdated(uint256 oldBps, uint256 newBps);
 
     // ── Errors ────────────────────────────────────────────────────────────────
@@ -178,6 +182,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
     error InsufficientPendingProfit();
     error SlippageTooHigh();
     error MinLpOutNotMet();
+    error InvalidPool();
+    error InvalidRewardToken();
+    error KeeperIsLocked();
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -202,6 +209,20 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         address factory_,
         address keeper_
     ) Ownable(msg.sender) {
+        // ── Validate all constructor addresses ──────────────────────────────
+        if (
+            pool_ == address(0) || gauge_ == address(0) || asset_ == address(0) ||
+            rewardToken_ == address(0) || router_ == address(0) || factory_ == address(0)
+        ) revert ZeroAddress();
+
+        // ── Validate pool contains the asset token ───────────────────────────
+        address t0 = IAerodromePool(pool_).token0();
+        address t1 = IAerodromePool(pool_).token1();
+        if (t0 != asset_ && t1 != asset_) revert InvalidPool();
+
+        // ── Validate gauge emits the expected reward token ───────────────────
+        if (IAerodromeGauge(gauge_).rewardToken() != rewardToken_) revert InvalidRewardToken();
+
         pool        = IAerodromePool(pool_);
         gauge       = IAerodromeGauge(gauge_);
         asset       = IERC20(asset_);
@@ -418,20 +439,24 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         uint256 otherAmount = isToken0 ? amount1 : amount0;
 
         if (otherAmount > 0) {
+            // Use dynamic minOut to protect against sandwich attacks on unwind
+            IAerodromeRouter.Route[] memory route = _buildSingleRoute(otherToken, address(asset), stable);
+            uint256 minSwapped = _dynamicMinOut(otherAmount, route);
             uint256 swappedUsdc = _swap(
                 otherToken,
                 address(asset),
                 stable,
                 factory,
                 otherAmount,
-                0,
+                minSwapped,
                 block.timestamp + 60
             );
             usdcUnwound += swappedUsdc;
         }
 
+        // USDC always returns to keeper (vault), never to msg.sender
         if (usdcUnwound > 0) {
-            asset.safeTransfer(msg.sender, usdcUnwound);
+            asset.safeTransfer(keeper, usdcUnwound);
         }
     }
 
@@ -444,31 +469,69 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      * @dev    Funds always go to `keeper` (YieldSenseKeeper) to preserve accounting.
      *         Only callable by the owner (protocol multisig).
      */
-    function emergencyWithdraw() external onlyOwner nonReentrant {
+    /**
+     * @notice Emergency: unstakes all LP, converts to USDC, and sends to the keeper vault.
+     * @dev    Funds always go to `keeper`. Caller provides slippage parameters to avoid
+     *         dynamic quote failures under pool stress. Set all to 0 only as last resort.
+     * @param amount0Min Minimum token0 to receive from removeLiquidity.
+     * @param amount1Min Minimum token1 to receive from removeLiquidity.
+     * @param swapMinOut Minimum USDC to receive when swapping the non-asset token.
+     */
+    function emergencyWithdraw(
+        uint256 amount0Min,
+        uint256 amount1Min,
+        uint256 swapMinOut
+    ) external onlyOwner nonReentrant {
         address to = keeper;
         if (to == address(0)) revert ZeroAddress();
 
         uint256 staked = gauge.balanceOf(address(this));
-
         if (staked > 0) {
             gauge.getReward(address(this));
             gauge.withdraw(staked);
         }
 
         uint256 lpBal = IERC20(address(pool)).balanceOf(address(this));
+        uint256 usdcRecovered = 0;
+
         if (lpBal > 0) {
-            IERC20(address(pool)).transfer(to, lpBal);
+            address token0 = pool.token0();
+            address token1 = pool.token1();
+            bool stable    = pool.stable();
+
+            IERC20(address(pool)).approve(address(router), lpBal);
+            (uint256 amount0, uint256 amount1) = router.removeLiquidity(
+                token0, token1, stable, lpBal,
+                amount0Min, amount1Min,
+                address(this), block.timestamp + 60
+            );
+
+            bool isToken0 = token0 == address(asset);
+            usdcRecovered = isToken0 ? amount0 : amount1;
+
+            address otherToken  = isToken0 ? token1 : token0;
+            uint256 otherAmount = isToken0 ? amount1 : amount0;
+
+            if (otherAmount > 0) {
+                uint256 swapped = _swap(
+                    otherToken, address(asset), stable, factory,
+                    otherAmount, swapMinOut, block.timestamp + 60
+                );
+                usdcRecovered += swapped;
+            }
         }
 
-        uint256 usdcBal = asset.balanceOf(address(this));
-        if (usdcBal > 0) {
-            asset.safeTransfer(to, usdcBal);
+        // Final recovery: transfer the actual current balance to the keeper
+        usdcRecovered = asset.balanceOf(address(this));
+
+        if (usdcRecovered > 0) {
+            asset.safeTransfer(to, usdcRecovered);
         }
 
         totalStakedLp = 0;
         pendingProfit = 0;
 
-        emit EmergencyWithdrawn(to, lpBal, usdcBal);
+        emit EmergencyWithdrawn(to, lpBal, usdcRecovered);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -479,10 +542,25 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
      * @notice Sets the keeper to the YieldSenseKeeper contract address.
      * @dev    Must never be an EOA or TEE worker. Zero address rejected.
      */
+    /**
+     * @notice Sets the keeper to the YieldSenseKeeper contract address.
+     * @dev    Reverts if the keeper has been permanently locked via lockKeeper().
+     */
     function setKeeper(address newKeeper) external onlyOwner {
+        if (keeperLocked) revert KeeperIsLocked();
         if (newKeeper == address(0)) revert ZeroAddress();
         emit KeeperUpdated(keeper, newKeeper);
         keeper = newKeeper;
+    }
+
+    /**
+     * @notice Permanently locks the keeper address. Irreversible.
+     * @dev    Call this via the Safe after setKeeper(YieldSenseKeeperAddress) is confirmed.
+     *         Once locked, no one — including the owner — can change the keeper.
+     */
+    function lockKeeper() external onlyOwner {
+        keeperLocked = true;
+        emit KeeperLockApplied();
     }
 
     function setProfitShareBps(uint256 newBps) external onlyOwner {
@@ -522,7 +600,10 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
 
         uint256 actualSwap = (amountToSwap == 0 || amountToSwap >= usdcAmount) ? usdcAmount / 2 : amountToSwap;
         if (actualSwap == 0) return 0;
-        uint256 otherOut = _swap(address(asset), p.otherToken, p.stable, factory, actualSwap, 0, deadline);
+        // Use dynamic minOut to protect the asset→otherToken zap swap
+        IAerodromeRouter.Route[] memory zapRoute = _buildSingleRoute(address(asset), p.otherToken, p.stable);
+        uint256 minOtherOut = _dynamicMinOut(actualSwap, zapRoute);
+        uint256 otherOut = _swap(address(asset), p.otherToken, p.stable, factory, actualSwap, minOtherOut, deadline);
 
         uint256 assetRemaining = usdcAmount - actualSwap;
 
@@ -584,7 +665,9 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         p.otherToken = p.assetIsToken0 ? p.token1 : p.token0;
 
         uint256 actualSwap = (amountToSwap == 0 || amountToSwap >= assetTotal) ? assetTotal / 2 : amountToSwap;
-        uint256 otherOut = _swap(address(asset), p.otherToken, p.stable, factory, actualSwap, 0, deadline);
+        IAerodromeRouter.Route[] memory zapRoute = _buildSingleRoute(address(asset), p.otherToken, p.stable);
+        uint256 minOtherOut = _dynamicMinOut(actualSwap, zapRoute);
+        uint256 otherOut = _swap(address(asset), p.otherToken, p.stable, factory, actualSwap, minOtherOut, deadline);
         uint256 assetRem = assetTotal - actualSwap;
 
         asset.approve(address(router), assetRem);
@@ -650,5 +733,17 @@ contract AerodromeAutocompounder is ReentrancyGuard, Ownable2Step {
         uint256 expectedOut = amounts[amounts.length - 1];
         if (slippageBps == 0) return expectedOut; // zero tolerance = exact output required
         return _minOut(expectedOut);
+    }
+
+    /**
+     * @dev Builds a single-hop Route array for use with getAmountsOut quoting.
+     */
+    function _buildSingleRoute(
+        address from,
+        address to,
+        bool stable_
+    ) private view returns (IAerodromeRouter.Route[] memory routes) {
+        routes = new IAerodromeRouter.Route[](1);
+        routes[0] = IAerodromeRouter.Route({ from: from, to: to, stable: stable_, factory: factory });
     }
 }

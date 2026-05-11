@@ -7,12 +7,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 struct Route {
     address from;
@@ -50,38 +48,14 @@ interface IAerodromeAutocompounder {
  *    other shareholders. A per-user ledger upgrade is tracked for a future release.
  *  - Performance fees are taken as newly minted shares on harvest profit only.
  */
-contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, EIP712 {
+contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     using SafeERC20 for IERC20;
 
     uint256 public constant PERFORMANCE_FEE_BPS = 1000; // 10%
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant TIMELOCK_DELAY = 2 days;
-    uint256 public constant MIN_HARVEST_INTERVAL = 1 hours;
+    uint256 public constant MIN_HARVEST_INTERVAL = 45 minutes;
     uint256 public constant MAX_DEADLINE_WINDOW = 10 minutes;
-
-    bytes32 private constant ROUTE_TYPEHASH = keccak256(
-        "Route(address from,address to,bool stable,address factory)"
-    );
-
-    bytes32 private constant HARVEST_PAYLOAD_TYPEHASH = keccak256(
-        "HarvestPayload(address keeper,uint256 nonce,address targetPool,uint256 minLpOut,uint256 amountToSwap,uint256 deadline,Route[] routes)Route(address from,address to,bool stable,address factory)"
-    );
-
-    function _hashRoutes(Route[] calldata routes) private pure returns (bytes32) {
-        bytes32[] memory routeHashes = new bytes32[](routes.length);
-        for (uint256 i = 0; i < routes.length; i++) {
-            routeHashes[i] = keccak256(
-                abi.encode(
-                    ROUTE_TYPEHASH,
-                    routes[i].from,
-                    routes[i].to,
-                    routes[i].stable,
-                    routes[i].factory
-                )
-            );
-        }
-        return keccak256(abi.encodePacked(routeHashes));
-    }
 
     struct PendingAddress {
         address value;
@@ -93,7 +67,6 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     address public counterparty;
 
     IAerodromeAutocompounder public autocompounder;
-    uint256 public profitShareBps = 2000;
     uint256 public minHarvestProfitUsdc = 1e6;
 
     /// @notice On-chain deposit cap. Defaults to 0 (deposits disabled) until explicitly set.
@@ -104,9 +77,6 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
 
     /// @notice Allowlisted factories that may appear in harvest routes.
     mapping(address => bool) public allowedRouteFactory;
-
-    bytes32 public attestationRootQx;
-    bytes32 public attestationRootQy;
 
     mapping(address => bool) public attestedProcessors;
     /// @notice Maps a user address to their provisioned Acurast processor.
@@ -125,18 +95,18 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
      * @dev pnlDelta is in 6-decimal precision (USDC units).
      */
     event TradeExecuted(address indexed user, int256 pnlDelta, uint256 nonce, bytes32 indexed digest);
-    event HarvestExecuted(bytes32 indexed digest, uint256 profitCredited);
+    event HarvestExecuted(address indexed processor, uint256 indexed nonce, uint256 profitCredited);
     event PoolDeployed(uint256 usdcAmount, uint256 minLpOut);
     event UpdateInitiated(bytes32 indexed key, address indexed newValue, uint256 effectiveTime);
     event UpdateApplied(bytes32 indexed key, address indexed newValue);
     event ProcessorAttested(address indexed processor, bytes32 certHash);
     event ProcessorAssigned(address indexed user, address indexed processor);
-    event AttestationRootUpdated(bytes32 qx, bytes32 qy);
     event AutocompounderSet(address indexed autocompounder);
     event ProfitCredited(uint256 amount);
     event MaxTotalAssetsUpdated(uint256 oldCap, uint256 newCap);
     event RouteTokenAllowlisted(address indexed token, bool allowed);
     event RouteFactoryAllowlisted(address indexed factory, bool allowed);
+    event ProcessorRevoked(address indexed processor);
 
     error Unauthorized();
     error InvalidAddress();
@@ -148,7 +118,6 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     error NoUpdatePending();
     error ProcessorNotAttested();
     error ProcessorNotAssignedToUser();
-    error InvalidAttestationSignature();
     error HarvestTooFrequent();
     error NoProfitReceived();
     error DepositCapExceeded();
@@ -165,8 +134,8 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         address _yieldSource,
         address _counterparty,
         address _autocompounder
-    ) ERC4626(IERC20(_asset)) ERC20("YieldSense Vault", "ysUSDC") Ownable(msg.sender) EIP712("YieldSense", "1") {
-        if (_yieldSource == address(0) || _counterparty == address(0)) revert InvalidAddress();
+    ) ERC4626(IERC20(_asset)) ERC20("YieldSense Vault", "ysUSDC") Ownable(msg.sender) {
+        if (_asset == address(0) || _yieldSource == address(0) || _counterparty == address(0)) revert InvalidAddress();
         feeRecipient = msg.sender;
         yieldSource = _yieldSource;
         counterparty = _counterparty;
@@ -236,38 +205,21 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
 
     /**
      * @notice Sets the Acurast P-256 certificate authority public key.
-     *         Must be called before permissionless attestProcessor() can succeed.
+     * @dev    DISABLED for MVP. Re-enabled in v2 once Acurast confirms cert format.
+     *         Do NOT call setAttestationRoot on mainnet until the cert-to-address
+     *         binding is verified against Acurast's published certificate structure.
      */
-    function setAttestationRoot(bytes32 qx, bytes32 qy) external onlyOwner {
-        attestationRootQx = qx;
-        attestationRootQy = qy;
-        emit AttestationRootUpdated(qx, qy);
+    function setAttestationRoot(bytes32, bytes32) external pure {
+        revert("P256 attestation root disabled for MVP");
     }
 
     /**
-     * @notice Permissionless attestation: verifies a P-256 TEE certificate.
-     * @dev Requires setAttestationRoot() to have been called first with the
-     *      Acurast CA public key. The certHash, r, s must be a valid P-256
-     *      signature from the Acurast CA over the processor's certificate hash.
+     * @notice Permissionless P-256 TEE attestation.
+     * @dev    DISABLED for MVP. Acurast's signing domain (acusig+SCRIPT_HASH+message)
+     *         is incompatible with standard EIP-712 recovery. Use ownerAttestProcessor.
      */
-    function attestProcessor(
-        address processor,
-        bytes32 certHash,
-        bytes32 r,
-        bytes32 s
-    ) external {
-        if (processor == address(0)) revert InvalidAddress();
-        if (attestationRootQx == bytes32(0)) revert InvalidAttestationSignature();
-
-        bool valid = P256.verify(certHash, r, s, attestationRootQx, attestationRootQy);
-        if (!valid) revert InvalidAttestationSignature();
-
-        attestedProcessors[processor] = true;
-        emit ProcessorAttested(processor, certHash);
-    }
-
-    function revokeProcessor(address processor) external onlyOwner {
-        attestedProcessors[processor] = false;
+    function attestProcessor(address, bytes32, bytes32, bytes32) external pure {
+        revert("Permissionless attestation disabled for MVP. Use ownerAttestProcessor.");
     }
 
     // ─── TIMELOCK SETTERS ─────────────────────────────────────────────────────
@@ -333,31 +285,38 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         emit TradeExecuted(user, pnlDelta, nonce, digest);
     }
 
+
     /**
-     * @notice Triggers a harvest+compound cycle and credits real profit into the vault.
-     *         Profit increases totalAssets() without new shares, raising share price
-     *         for all depositors proportionally (mutualized yield distribution).
-     * @param nonce       Unique nonce to prevent replay attacks.
-     * @param targetPool  Target Aerodrome pool address.
-     * @param r           ECDSA signature component.
-     * @param s           ECDSA signature component.
-     * @param v           ECDSA recovery id (27 or 28).
-     * @param minLpOut    Minimum LP tokens to accept from compounding.
-     * @param amountToSwap Precise amount of USDC to swap (from TEE Zap calc).
-     * @param deadline    Maximum block timestamp for execution.
-     * @param routes      Route path for Aerodrome swaps.
+     * @notice Triggers a harvest+compound cycle. Only callable by an attested Acurast processor.
+     *
+     * Auth model: msg.sender must be in attestedProcessors. The Acurast TEE submits
+     * this transaction directly via _STD_.chains.ethereum.fulfill(), so msg.sender
+     * is the processor's on-chain Ethereum address for that deployment.
+     *
+     * The EIP-712 signature flow has been removed. Acurast's signing domain
+     * ("acusig" + SCRIPT_HASH + message) is incompatible with EIP-712 recovery.
+     *
+     * @param nonce        Unique harvest nonce to prevent replay.
+     * @param targetPool   Target Aerodrome pool address.
+     * @param minLpOut     Minimum LP tokens to accept from compounding.
+     * @param amountToSwap Precise amount of USDC to swap (TEE-calculated zap).
+     * @param deadline     Maximum block timestamp for execution.
+     * @param routes       Route path for Aerodrome swaps.
      */
     function executeHarvest(
         uint256 nonce,
         address targetPool,
-        bytes32 r,
-        bytes32 s,
-        uint8 v,
         uint256 minLpOut,
         uint256 amountToSwap,
         uint256 deadline,
         Route[] calldata routes
     ) external nonReentrant whenNotPaused {
+        // Auth: only attested Acurast processors may call this
+        if (!attestedProcessors[msg.sender]) revert ProcessorNotAttested();
+
+        // Guard: autocompounder must be configured
+        if (address(autocompounder) == address(0)) revert InvalidAddress();
+
         if (usedHarvestNonces[nonce]) revert NonceAlreadyUsed();
         usedHarvestNonces[nonce] = true;
 
@@ -369,61 +328,34 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         // Validate harvest routes against the configured strategy
         _validateHarvestRoutes(targetPool, routes);
 
-        bytes32 structHash = keccak256(
-            abi.encode(
-                HARVEST_PAYLOAD_TYPEHASH,
-                msg.sender,
-                nonce,
-                targetPool,
-                minLpOut,
-                amountToSwap,
-                deadline,
-                _hashRoutes(routes)
-            )
-        );
-        bytes32 digest = _hashTypedDataV4(structHash);
-        
-        bytes memory signature = abi.encodePacked(r, s, v);
-        address recovered = ECDSA.recover(digest, signature);
-
-        if (!attestedProcessors[recovered]) revert ProcessorNotAttested();
-
+        // Execute harvest — lastHarvest is set AFTER compound succeeds
+        autocompounder.harvestAndCompound(minLpOut, amountToSwap, deadline, routes);
         lastHarvest = block.timestamp;
+
         uint256 profitCredited = 0;
 
-        if (address(autocompounder) != address(0)) {
-            autocompounder.harvestAndCompound(minLpOut, amountToSwap, deadline, routes);
+        uint256 pending = autocompounder.pendingProfit();
+        if (pending >= minHarvestProfitUsdc) {
+            uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
+            autocompounder.pullProfit(pending);
+            uint256 actualProfit = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
 
-            uint256 pending = autocompounder.pendingProfit();
-            if (pending >= minHarvestProfitUsdc) {
-                uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
-                autocompounder.pullProfit(pending);
-                uint256 actualProfit = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
+            if (actualProfit == 0) revert NoProfitReceived();
+            profitCredited = actualProfit;
 
-                if (actualProfit == 0) revert NoProfitReceived();
-                profitCredited = actualProfit;
-
-                // Performance fee: mint shares to feeRecipient backed by the fee portion
-                // of the profit already in the vault. This slightly dilutes other holders
-                // by the fee amount, which is the intended on-chain fee mechanism.
-                uint256 perfFee = (profitCredited * PERFORMANCE_FEE_BPS) / BPS_DENOMINATOR;
-                if (perfFee > 0) {
-                    uint256 feeShares = previewDeposit(perfFee);
-                    _mint(feeRecipient, feeShares);
-                }
-
-                emit ProfitCredited(profitCredited);
+            // Performance fee: mint shares to feeRecipient backed by the fee portion
+            uint256 perfFee = (profitCredited * PERFORMANCE_FEE_BPS) / BPS_DENOMINATOR;
+            if (perfFee > 0) {
+                uint256 feeShares = previewDeposit(perfFee);
+                _mint(feeRecipient, feeShares);
             }
+
+            emit ProfitCredited(profitCredited);
         }
 
-        emit HarvestExecuted(digest, profitCredited);
+        emit HarvestExecuted(msg.sender, nonce, profitCredited);
     }
 
-    /**
-     * @notice Deploys idle vault assets into the yield-bearing pool.
-     * @dev Restricted to owner only. Attested processors should signal deployment
-     *      need via off-chain telemetry; owner executes on-chain.
-     */
     /**
      * @notice Deploys idle vault assets into the yield-bearing pool.
      * @param amount       USDC to deploy.
@@ -454,13 +386,17 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
     }
 
     function setAutocompounder(address newAutocompounder) external onlyOwner {
-        autocompounder = IAerodromeAutocompounder(newAutocompounder);
+        if (newAutocompounder == address(0)) revert InvalidAddress();
+        IAerodromeAutocompounder ac = IAerodromeAutocompounder(newAutocompounder);
+        // Validate the new autocompounder matches this vault's asset and yield source
+        if (ac.asset() != asset()) revert InvalidAddress();
+        if (ac.rewardToken() != yieldSource) revert InvalidAddress();
+        autocompounder = ac;
+        // Re-seed route allowlists for the new strategy
+        allowedRouteFactory[ac.factory()] = true;
+        allowedRouteToken[asset()] = true;
+        allowedRouteToken[yieldSource] = true;
         emit AutocompounderSet(newAutocompounder);
-    }
-
-    function setProfitShareBps(uint256 bps) external onlyOwner {
-        require(bps <= 10_000, "Invalid BPS");
-        profitShareBps = bps;
     }
 
     function setMinHarvestProfitUsdc(uint256 minUsdc) external onlyOwner {
@@ -551,6 +487,40 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable, E
         uint256 flipped = _nonceBitmap[user][wordPos] ^ mask;
         if (flipped & mask == 0) revert NonceAlreadyUsed();
         _nonceBitmap[user][wordPos] = flipped;
+    }
+
+    function ownerAttestProcessor(address processor) external onlyOwner {
+        if (processor == address(0)) revert InvalidAddress();
+        attestedProcessors[processor] = true;
+        emit ProcessorAttested(processor, bytes32(0));
+    }
+
+    /**
+     * @notice Batch attest multiple Acurast processors in a single Safe transaction.
+     */
+    function ownerAttestProcessors(address[] calldata processors) external onlyOwner {
+        for (uint256 i = 0; i < processors.length; i++) {
+            if (processors[i] == address(0)) revert InvalidAddress();
+            attestedProcessors[processors[i]] = true;
+            emit ProcessorAttested(processors[i], bytes32(0));
+        }
+    }
+
+    function ownerRevokeProcessor(address processor) external onlyOwner {
+        if (processor == address(0)) revert InvalidAddress();
+        attestedProcessors[processor] = false;
+        emit ProcessorRevoked(processor);
+    }
+
+    /**
+     * @notice Batch revoke multiple Acurast processors in a single Safe transaction.
+     */
+    function ownerRevokeProcessors(address[] calldata processors) external onlyOwner {
+        for (uint256 i = 0; i < processors.length; i++) {
+            if (processors[i] == address(0)) revert InvalidAddress();
+            attestedProcessors[processors[i]] = false;
+            emit ProcessorRevoked(processors[i]);
+        }
     }
 
     /**
