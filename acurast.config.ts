@@ -54,12 +54,17 @@ const config: AcurastConfig = {
       minProcessorReputation: 0,
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [
+        "RPC_URL",
         "DATA_RPC_URL",
+        "KEEPER_ADDRESS",
+        "CHAIN_ID",
         "USER_ADDRESS",
         "GRID_CONFIG_JSON",
         "STOP_LOSS_SECRET_JSON",
         "STOP_LOSS_SIGNED_PAYLOAD",
         "FORCE_TEST_HARVEST",
+        "PROCESSOR_SHARED_SECRET",
+        "FRONTEND_URL",
         "TELEMETRY_URL"
       ],
       // For strict signer pinning, whitelist Personal processor account(s).

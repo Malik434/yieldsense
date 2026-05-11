@@ -255,6 +255,14 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
     case 'runtime_error':
       patch.apiFailureStreak = (currentState.apiFailureStreak ?? 0) + 1;
       patch.lastDecisionReason = 'runtime_error';
+      patch.error = (event.message as string | undefined) ?? currentState.error;
+      break;
+
+    case 'processor_error':
+    case 'grid_check_error':
+      patch.apiFailureStreak = (currentState.apiFailureStreak ?? 0) + 1;
+      patch.lastDecisionReason = event.event as string;
+      patch.error = (event.message as string | undefined) ?? currentState.error;
       break;
 
     case 'force_test_bypass':
@@ -267,8 +275,8 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
   if (!blobs) return;
 
   const newState: WorkerState = { ...currentState, ...patch };
-  // Ring buffer: newest event first, capped at 50 entries.
-  const newLogs = [event, ...existingLogs].slice(0, 50);
+  // Ring buffer: newest event first, capped at 100 entries.
+  const newLogs = [event, ...existingLogs].slice(0, 100);
 
   // Parallel write — both blobs updated atomically in a single round-trip.
   await Promise.all([

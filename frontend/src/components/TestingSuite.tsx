@@ -10,9 +10,32 @@ import { useNetwork } from '@/providers/NetworkProvider';
 
 interface HardwareLog {
   timestamp: number;
-  type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC';
+  type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC' | 'ERROR';
   message: string;
   txHash?: string;
+}
+
+function formatStageMessage(log: any): string {
+  switch (log.stage) {
+    case 'start':
+      return `Processor started: keeper ${String(log.keeperAddress ?? '').slice(0, 10)}...`;
+    case 'network_ready':
+      return `Execution RPC ready on chain ${log.chainId}`;
+    case 'strategy_loaded':
+      return `Strategy loaded: ${log.activeGridLevels ?? 0}/${log.configuredGridLevels ?? 0} active grid levels`;
+    case 'no_active_grid_levels':
+      return `Grid skipped: ${log.reason ?? 'no active levels'}`;
+    case 'pool_price_observed':
+      return `Pool price observed: ${Number(log.currentPrice ?? 0).toFixed(6)}`;
+    case 'trade_evaluation_complete':
+      return `Trade evaluation complete: ${log.pendingTrades ?? 0} pending trades`;
+    case 'trade_submit_start':
+      return `Submitting grid trade nonce ${log.nonce}`;
+    case 'complete':
+      return `Processor completed: ${log.status ?? 'ok'} (${log.submittedTrades ?? 0} submitted)`;
+    default:
+      return `Processor stage: ${log.stage ?? 'unknown'}`;
+  }
 }
 
 export function TestingSuite() {
@@ -35,16 +58,19 @@ export function TestingSuite() {
           const data = await res.json();
           if (data.logs && Array.isArray(data.logs)) {
             const mappedLogs = data.logs.map((log: any) => {
-              let type: 'ATTESTATION' | 'EXECUTION' | 'STORAGE_SYNC' = 'EXECUTION';
+              let type: HardwareLog['type'] = 'EXECUTION';
               if (log.event === 'processor_heartbeat') type = 'ATTESTATION';
               if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') type = 'STORAGE_SYNC';
+              if (log.event === 'runtime_error' || log.event === 'processor_error' || log.event === 'grid_check_error') type = 'ERROR';
 
               let message = log.message || log.event;
+              if (log.event === 'processor_stage') message = formatStageMessage(log);
               if (log.event === 'profitability_check') message = `Yield checked: ${log.reason} (APR: ${((log.apr || 0) * 100).toFixed(2)}%)`;
               if (log.event === 'force_test_bypass') message = 'Force test bypass enabled, skipping yield checks';
               if (log.event === 'harvest_submitted') message = `Harvest transaction submitted`;
               if (log.event === 'harvest_confirmed') message = `Harvest transaction confirmed`;
               if (log.event === 'hw_address_report') message = `Acurast Hardware Address: ${log.hwAddress}`;
+              if (type === 'ERROR') message = `${log.event}: ${log.message ?? 'unknown failure'}`;
 
               return {
                 timestamp: log.timestamp ? log.timestamp * 1000 : Date.now(),
@@ -103,17 +129,15 @@ export function TestingSuite() {
             <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">System Integrity Logs</h3>
           </div>
         </div>
-        {isTestnet && (
-          <div className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-[#00FFA3]/10 border border-[#00FFA3]/20 text-[10px] font-mono font-bold text-[#00FFA3] uppercase tracking-widest">
-            <Zap size={12} />
-            Sepolia Testnet Active
-          </div>
-        )}
+        <div className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-[#00FFA3]/10 border border-[#00FFA3]/20 text-[10px] font-mono font-bold text-[#00FFA3] uppercase tracking-widest">
+          <Zap size={12} />
+          {isTestnet ? 'Sepolia Testnet Active' : 'Base Mainnet Active'}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+      <div className={`grid grid-cols-1 ${isTestnet ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-10`}>
         {/* Faucet Controls */}
-        <div className="lg:col-span-1 flex flex-col gap-6">
+        {isTestnet && <div className="lg:col-span-1 flex flex-col gap-6">
           <div className="ys-card p-8 flex flex-col gap-6 bg-[#0B0F0D]/40">
             <div className="flex items-center gap-3">
               <Droplets size={20} className="text-[#00d4ff]" />
@@ -165,10 +189,10 @@ export function TestingSuite() {
               Connected Acurast Enclave is reporting synchronized state. All decision logic is hardware-attested.
             </p>
           </div>
-        </div>
+        </div>}
 
         {/* Console Logs */}
-        <div className="lg:col-span-2 ys-card p-0 bg-black overflow-hidden flex flex-col h-[550px] border-white/[0.05]">
+        <div className={`${isTestnet ? 'lg:col-span-2' : ''} ys-card p-0 bg-black overflow-hidden flex flex-col h-[550px] border-white/[0.05]`}>
           <div className="flex items-center justify-between p-5 border-b border-white/[0.05] bg-white/[0.02]">
             <div className="flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse" />
@@ -197,6 +221,7 @@ export function TestingSuite() {
                   </span>
                   <span className={`shrink-0 font-bold px-2 py-0.5 rounded text-[9px] ${log.type === 'ATTESTATION' ? 'text-[#00FFA3] bg-[#00FFA3]/5' :
                       log.type === 'STORAGE_SYNC' ? 'text-[#C2E812] bg-[#C2E812]/5' :
+                        log.type === 'ERROR' ? 'text-[#FF4466] bg-[#FF4466]/10' :
                         'text-[#00d4ff] bg-[#00d4ff]/5'
                     }`}>
                     [{log.type}]

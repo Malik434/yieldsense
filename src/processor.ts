@@ -48,6 +48,16 @@ type GridTradePayload = {
   signature: string;
 };
 
+type ProcessorStage =
+  | "start"
+  | "network_ready"
+  | "strategy_loaded"
+  | "no_active_grid_levels"
+  | "pool_price_observed"
+  | "trade_evaluation_complete"
+  | "trade_submit_start"
+  | "complete";
+
 const UNISWAP_V3_POOL_ABI = [
   "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, bool unlocked)",
 ];
@@ -87,6 +97,35 @@ function parseJsonEnv<T>(name: string, fallback: T): T {
     console.warn(`[processor] Failed to parse env var ${name} as JSON or base64 JSON — using fallback`);
     return fallback;
   }
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function serialiseError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack?.split("\n").slice(0, 6).join("\n"),
+    };
+  }
+  return { message: String(error) };
+}
+
+async function emitProcessorStage(
+  stage: ProcessorStage,
+  userAddress: string,
+  details: Record<string, unknown> = {}
+): Promise<void> {
+  await emitTelemetry({
+    event: "processor_stage",
+    timestamp: nowSeconds(),
+    stage,
+    userAddress,
+    ...details,
+  });
 }
 
 function decodeStopLossRules(): StopLossRule[] {
@@ -392,7 +431,21 @@ export async function monitorAndExecuteGrid(): Promise<void> {
   const keeperAddress = getEnv("KEEPER_ADDRESS", "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
   const userAddress = getEnv("USER_ADDRESS", "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA");
 
+  try {
+    await emitProcessorStage("start", userAddress, {
+      keeperAddress,
+      poolAddress,
+      hasRpcUrl: Boolean(rpcUrl),
+      hasDataRpcUrl: Boolean(dataRpcUrl),
+      hasAcurastStd: Boolean(getAcurastStd()),
+      dryRun: process.env.DRY_RUN === "true",
+    });
+
   if (!keeperAddress || !userAddress) {
+    await emitProcessorStage("complete", userAddress, {
+      status: "skipped",
+      reason: "missing_keeper_or_user_address",
+    });
     console.warn("[processor] Missing KEEPER_ADDRESS or USER_ADDRESS — skipping grid check");
     return;
   }
@@ -401,6 +454,11 @@ export async function monitorAndExecuteGrid(): Promise<void> {
   const dataProvider = new ethers.JsonRpcProvider(dataRpcUrl);
   const network = await executionProvider.getNetwork();
   const chainId = network.chainId;
+
+  await emitProcessorStage("network_ready", userAddress, {
+    chainId: Number(chainId),
+    executionNetwork: network.name,
+  });
 
   const grids = parseJsonEnv<GridLevel[]>("GRID_CONFIG_JSON", []);
   const stopLossRules = decodeStopLossRules();
@@ -423,13 +481,30 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     return grid.referencePrice >= stopLoss.stopLossPrice;
   });
 
+  await emitProcessorStage("strategy_loaded", userAddress, {
+    chainId: Number(chainId),
+    configuredGridLevels: grids.length,
+    activeGridLevels: activeGrids.length,
+    stopLossRules: stopLossRules.length,
+    hasStoredStrategyParams: Boolean(storedParams),
+  });
+
   // Price from on-chain pool — sqrtPriceX96 is instantaneous and flash-loan
   // manipulable. For production, use a TWAP or multi-source oracle.
   if (activeGrids.length === 0 || !poolAddress) {
+    await emitProcessorStage("no_active_grid_levels", userAddress, {
+      chainId: Number(chainId),
+      reason: !poolAddress ? "missing_pool_address" : "all_levels_filtered_by_stop_loss",
+    });
     return;
   }
 
   const currentPrice = await fetchPoolPrice(dataProvider, poolAddress);
+  await emitProcessorStage("pool_price_observed", userAddress, {
+    chainId: Number(chainId),
+    poolAddress,
+    currentPrice,
+  });
   const pendingTrades: GridTradePayload[] = [];
   const privateKey = process.env.ACURAST_WORKER_KEY;
 
@@ -449,6 +524,12 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     );
   }
 
+  await emitProcessorStage("trade_evaluation_complete", userAddress, {
+    chainId: Number(chainId),
+    activeGridLevels: activeGrids.length,
+    pendingTrades: pendingTrades.length,
+  });
+
   let stateUpdated = false;
   const state = await loadState(process.env.STATE_PATH ?? ".yieldsense-state.json");
   const isDryRun = process.env.DRY_RUN === "true";
@@ -466,10 +547,18 @@ export async function monitorAndExecuteGrid(): Promise<void> {
         nonce: trade.nonce.toString(),
         pnlDelta: trade.pnlDelta.toString(),
         digest: trade.digest,
+        chainId: Number(chainId),
         note: "DRY_RUN=true — grid trade not submitted on-chain.",
       });
       continue;
     }
+
+    await emitProcessorStage("trade_submit_start", userAddress, {
+      chainId: Number(chainId),
+      nonce: trade.nonce.toString(),
+      pnlDelta: trade.pnlDelta.toString(),
+      signingMode: getAcurastStd() ? "acurast_fulfill" : "local_private_key",
+    });
 
     const txHash = await submitTrade(rpcUrl, keeperAddress, trade, privateKey);
 
@@ -500,6 +589,22 @@ export async function monitorAndExecuteGrid(): Promise<void> {
 
   if (stateUpdated) {
     await saveState(process.env.STATE_PATH ?? ".yieldsense-state.json", state);
+  }
+
+  await emitProcessorStage("complete", userAddress, {
+    chainId: Number(chainId),
+    status: "ok",
+    submittedTrades: pendingTrades.length,
+  });
+  } catch (error) {
+    await emitTelemetry({
+      event: "processor_error",
+      timestamp: nowSeconds(),
+      userAddress,
+      stage: "monitorAndExecuteGrid",
+      ...serialiseError(error),
+    });
+    throw error;
   }
 }
 
@@ -532,6 +637,13 @@ async function startLoop(): Promise<void> {
     try {
       await monitorAndExecuteGrid();
     } catch (error) {
+      await emitTelemetry({
+        event: "processor_error",
+        timestamp: nowSeconds(),
+        userAddress,
+        stage: "startLoop",
+        ...serialiseError(error),
+      });
       console.error(
         JSON.stringify({
           event: "processor_error",

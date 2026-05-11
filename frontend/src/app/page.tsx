@@ -274,7 +274,7 @@ export default function CommandCenter() {
             vaultShareFraction={vaultShareFraction}
           />
           <TransactionHistory />
-          {!config.name.includes('Mainnet') && <TestingSuite />}
+          <TestingSuite />
         </div>
 
         <SectionHeading

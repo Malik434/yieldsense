@@ -275,6 +275,16 @@ async function main(): Promise<void> {
   try {
     await monitorAndExecuteGrid();
   } catch (gridError) {
+    await emitTelemetry({
+      event: "grid_check_error",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "monitorAndExecuteGrid",
+      message: gridError instanceof Error ? gridError.message : String(gridError),
+      name: gridError instanceof Error ? gridError.name : undefined,
+      stack: gridError instanceof Error ? gridError.stack?.split("\n").slice(0, 6).join("\n") : undefined,
+      chainId: executionChainId,
+      userAddress: envUser,
+    });
     console.error(JSON.stringify({ event: "grid_check_error", message: String(gridError) }));
   }
 

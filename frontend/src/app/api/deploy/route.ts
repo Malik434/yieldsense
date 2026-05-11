@@ -124,7 +124,16 @@ export async function POST(req: Request) {
       '})(typeof process!=="undefined"?process.env:(globalThis.__ENV__=globalThis.__ENV__||{}));',
     ].join('\n');
 
-    const bundledCode = `${envInjection}\n${PROCESSOR_BUNDLE}`;
+    const bootstrap = [
+      '',
+      ';Promise.resolve(exports.monitorAndExecuteGrid && exports.monitorAndExecuteGrid())',
+      '  .catch(function(error){',
+      '    console.error(JSON.stringify({ event: "processor_bootstrap_error", message: error && error.message ? error.message : String(error) }));',
+      '    if (typeof process !== "undefined") process.exitCode = 1;',
+      '  });',
+    ].join('\n');
+
+    const bundledCode = `${envInjection}\n${PROCESSOR_BUNDLE}\n${bootstrap}`;
 
     // ── IPFS upload ─────────────────────────────────────────────────────────
     const pinataJwt = process.env.PINATA_JWT;
