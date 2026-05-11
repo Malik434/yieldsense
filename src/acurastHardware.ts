@@ -138,14 +138,14 @@ export function signHarvestPayloadWithAcurastHardware(
   return { payloadHash, r, s, v };
 }
 
-const EXECUTE_HARVEST_MODERN = "executeHarvest(uint256,address,bytes32,bytes32,uint8,uint256,uint256,uint256,(address,address,bool,address)[])";
+const EXECUTE_HARVEST_MODERN = "executeHarvest(uint256,address,uint256,uint256,uint256,(address,address,bool,address)[])";
 
 function encodeExecuteHarvestArgs(
-  nonce: string, targetPool: string, r: string, s: string, v: number, minLpOut: string, amountToSwap: string, deadline: number, routes: any[]
+  nonce: string, targetPool: string, minLpOut: string, amountToSwap: string, deadline: number, routes: any[]
 ): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "address", "bytes32", "bytes32", "uint8", "uint256", "uint256", "uint256", "tuple(address from, address to, bool stable, address factory)[]"],
-    [nonce, targetPool, r, s, v, minLpOut, amountToSwap, deadline, routes]
+    ["uint256", "address", "uint256", "uint256", "uint256", "tuple(address from, address to, bool stable, address factory)[]"],
+    [nonce, targetPool, minLpOut, amountToSwap, deadline, routes]
   );
 }
 
@@ -157,12 +157,8 @@ export function fulfillEthereumHarvest(
   params: {
     rpcUrl: string;
     keeperAddress: string;
-    payloadHash: string;
     nonce: string;
     targetPool: string;
-    r: string;
-    s: string;
-    v: number;
     minLpOut: string;
     amountToSwap: string;
     deadline: number;
@@ -173,7 +169,7 @@ export function fulfillEthereumHarvest(
   }
 ): Promise<{ hash: string }> {
   const payload = encodeExecuteHarvestArgs(
-    params.nonce, params.targetPool, params.r, params.s, params.v, params.minLpOut, params.amountToSwap, params.deadline, params.routes
+    params.nonce, params.targetPool, params.minLpOut, params.amountToSwap, params.deadline, params.routes
   );
   return new Promise((resolve, reject) => {
     std.chains.ethereum.fulfill(

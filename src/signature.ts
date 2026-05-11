@@ -23,6 +23,29 @@ export interface HarvestParams {
   routes: Route[];
 }
 
+/**
+ * Telemetry/debug hash for the deployed executeHarvest calldata shape.
+ * The contract authorizes harvests by `msg.sender` attestation, not by this hash.
+ */
+export function buildHarvestPayloadHash(params: HarvestParams): string {
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "address", "uint256", "uint256", "uint256", "tuple(address from, address to, bool stable, address factory)[]"],
+    [
+      params.nonce,
+      ethers.getAddress(params.targetPool),
+      params.minLpOut,
+      params.amountToSwap,
+      params.deadline,
+      params.routes.map((route) => ({
+        from: ethers.getAddress(route.from),
+        to: ethers.getAddress(route.to),
+        stable: route.stable,
+        factory: ethers.getAddress(route.factory),
+      })),
+    ]
+  ));
+}
+
 export function getDomain(chainId: number, keeperAddress: string) {
   return {
     name: "YieldSense",

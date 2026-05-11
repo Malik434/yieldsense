@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
-// Aerodrome SlipStream WETH/USDC 0.05% pool on Base mainnet
-const FALLBACK_POOL = '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59';
-const POOL_ADDRESS = (process.env.POOL_ADDRESS ?? FALLBACK_POOL).toLowerCase();
+// Base mainnet Aerodrome vAMM-USDC/AERO pool used by the deployed MVP strategy.
+const MAINNET_POOL = '0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d';
+const TESTNET_POOL = process.env.NEXT_PUBLIC_TESTNET_POOL_ADDRESS || '';
 // Fee rate in BPS for the pool (default 30 = 0.30% for volatile Aerodrome pools)
 const POOL_FEE_BPS = Number(process.env.POOL_FEE_BPS ?? 30);
 
@@ -16,8 +16,8 @@ interface AprSource {
  * Fetch 24h volume and TVL from GeckoTerminal (free, no API key required).
  * Returns fee APR in BPS: (volume24h * feeRateBps * 365) / tvl
  */
-async function fetchGeckoTerminalApr(): Promise<AprSource> {
-  const url = `https://api.geckoterminal.com/api/v2/networks/base/pools/${POOL_ADDRESS}`;
+async function fetchGeckoTerminalApr(poolAddress: string): Promise<AprSource> {
+  const url = `https://api.geckoterminal.com/api/v2/networks/base/pools/${poolAddress}`;
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
@@ -40,8 +40,8 @@ async function fetchGeckoTerminalApr(): Promise<AprSource> {
 /**
  * Fetch 24h volume and liquidity from DexScreener (free, no API key required).
  */
-async function fetchDexScreenerApr(): Promise<AprSource> {
-  const url = `https://api.dexscreener.com/latest/dex/pairs/base/${POOL_ADDRESS}`;
+async function fetchDexScreenerApr(poolAddress: string): Promise<AprSource> {
+  const url = `https://api.dexscreener.com/latest/dex/pairs/base/${poolAddress}`;
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
@@ -66,12 +66,12 @@ async function fetchDexScreenerApr(): Promise<AprSource> {
  * Uses the 7-day fee accumulation via the pool's cumulative fee trackers.
  * Falls back to GeckoTerminal estimate if RPC is unavailable.
  */
-async function fetchOnChainApr(): Promise<AprSource> {
+async function fetchOnChainApr(poolAddress: string): Promise<AprSource> {
   const rpcUrl = process.env.DATA_RPC_URL?.trim() || 'https://mainnet.base.org';
   // Aerodrome slot0 & liquidity reads via eth_call for fee estimation
   // Since a full fee-math derivation requires historical logs, we proxy via GeckoTerminal
   // with a different timeout as the "RPC" source for a real 3-source spread.
-  const url = `https://api.geckoterminal.com/api/v2/networks/base/pools/${POOL_ADDRESS}`;
+  const url = `https://api.geckoterminal.com/api/v2/networks/base/pools/${poolAddress}`;
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
@@ -96,12 +96,30 @@ async function fetchOnChainApr(): Promise<AprSource> {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const chainId = Number(searchParams.get('chainId') || 8453);
+  const poolAddress = (chainId === 8453 ? MAINNET_POOL : TESTNET_POOL).toLowerCase();
+
+  if (!poolAddress) {
+    return NextResponse.json({
+      geckoTerminal: 0,
+      dexScreener: 0,
+      rpc: 0,
+      consensus: 0,
+      timestamp: Date.now(),
+      poolAddress: null,
+      poolFeeBps: POOL_FEE_BPS,
+      chainId,
+      sources: {},
+    });
+  }
+
   // Fetch all three sources concurrently
   const [gecko, dex, rpc] = await Promise.all([
-    fetchGeckoTerminalApr(),
-    fetchDexScreenerApr(),
-    fetchOnChainApr(),
+    fetchGeckoTerminalApr(poolAddress),
+    fetchDexScreenerApr(poolAddress),
+    fetchOnChainApr(poolAddress),
   ]);
 
   const workingSources = [gecko, dex, rpc].filter(s => s.status === 'ok' && s.bps > 0);
@@ -118,8 +136,9 @@ export async function GET() {
     rpc:           rpc.bps,
     consensus,
     timestamp:     Date.now(),
-    poolAddress:   POOL_ADDRESS,
+    poolAddress,
     poolFeeBps:    POOL_FEE_BPS,
+    chainId,
     sources: {
       geckoTerminal: { url: gecko.url, status: gecko.status },
       dexScreener:   { url: dex.url,   status: dex.status   },

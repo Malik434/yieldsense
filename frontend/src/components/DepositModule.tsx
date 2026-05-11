@@ -69,9 +69,17 @@ export function DepositModule() {
   const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
   const totalAssetsNum = totalAssets ? Number(formatUnits(totalAssets as bigint, 6)) : 0;
   const maxAssetsNum = maxTotalAssets ? Number(formatUnits(maxTotalAssets as bigint, 6)) : 0;
+  const remainingCapacity =
+    maxTotalAssets && totalAssets
+      ? (maxTotalAssets as bigint) > (totalAssets as bigint)
+        ? (maxTotalAssets as bigint) - (totalAssets as bigint)
+        : ZERO
+      : ZERO;
   
   const capReached = maxAssetsNum > 0 && totalAssetsNum >= maxAssetsNum;
   const depositsDisabled = maxAssetsNum === 0;
+  const amountExceedsCapacity =
+    !depositsDisabled && depositAmountParsed > ZERO && depositAmountParsed > remainingCapacity;
 
   const isLoading = txState === 'approving' || txState === 'depositing';
 
@@ -228,11 +236,13 @@ export function DepositModule() {
       <div className="mt-auto">
         <button
           onClick={handleDeposit}
-          disabled={isLoading || depositAmountParsed === ZERO || capReached || depositsDisabled}
+          disabled={isLoading || depositAmountParsed === ZERO || capReached || depositsDisabled || amountExceedsCapacity}
           className="ys-btn-primary w-full h-16 text-sm"
         >
           {depositsDisabled ? (
             'Deposits Paused'
+          ) : amountExceedsCapacity ? (
+            'Amount Exceeds Pilot Cap'
           ) : capReached ? (
             'Vault Cap Reached'
           ) : txState === 'approving' ? (

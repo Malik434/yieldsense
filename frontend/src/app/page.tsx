@@ -132,10 +132,17 @@ export default function CommandCenter() {
   });
 
   // Total vault shares outstanding
-  const { data: globalTvlRaw } = useReadContract({
+  const { data: totalSharesRaw } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'totalSupply',
+    query: { enabled: !!KEEPER_ADDRESS },
+  });
+
+  const { data: totalAssetsRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'totalAssets',
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
@@ -149,7 +156,8 @@ export default function CommandCenter() {
   // balance = what the connected user can withdraw right now (USDC, 6 decimals)
   const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
   // globalTvl = total vault shares (≈ total USDC deposited for 1:1 mock vault)
-  const globalTvl = globalTvlRaw ? parseFloat(formatUnits(globalTvlRaw as bigint, 6)) : 0;
+  const totalShares = totalSharesRaw ? parseFloat(formatUnits(totalSharesRaw as bigint, 6)) : 0;
+  const globalTvl = totalAssetsRaw ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6)) : 0;
   // userShares = the connected user's share count
   const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
 
@@ -157,8 +165,8 @@ export default function CommandCenter() {
   // Falls back to 1 when on-chain data is still loading but the user clearly has a balance
   // (prevents the dashboard showing $0 profit on first render).
   const vaultShareFraction: number =
-    globalTvl > 0 && userShares > 0
-      ? Math.min(userShares / globalTvl, 1)
+    totalShares > 0 && userShares > 0
+      ? Math.min(userShares / totalShares, 1)
       : balance > 0 ? 1 : 0;
 
   // Scale vault-level profit/yield to this user's proportional share.
@@ -255,6 +263,7 @@ export default function CommandCenter() {
             totalRealized={userProfit}
             unrealizedYield={userUnrealized}
             userAddress={OPERATOR_ADDRESS}
+            chainId={chainId}
             vaultShareFraction={vaultShareFraction}
           />
           <TransactionHistory />

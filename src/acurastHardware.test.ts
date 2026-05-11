@@ -1,12 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ethers } from "ethers";
-import { buildPayloadHash } from "./signature.js";
 import { inferEthereumV, parseSecp256k1SignOutput } from "./acurastHardware.js";
+
+function randomDigest(): string {
+  return ethers.keccak256(ethers.randomBytes(32));
+}
 
 test("inferEthereumV finds v for raw secp256k1 digest signature", () => {
   const wallet = ethers.Wallet.createRandom();
-  const digest = buildPayloadHash(wallet.address, wallet.address, 100, 50, 1700000000);
+  const digest = randomDigest();
   const sig = wallet.signingKey.sign(digest);
   const v = inferEthereumV(digest, sig.r, sig.s, wallet.address);
   assert.equal(v, sig.yParity + 27);
@@ -18,7 +21,7 @@ test("inferEthereumV finds v for raw secp256k1 digest signature", () => {
 
 test("parseSecp256k1SignOutput accepts 65-byte compact (yParity + 27)", () => {
   const wallet = ethers.Wallet.createRandom();
-  const digest = buildPayloadHash(wallet.address, wallet.address, 200, 10, 1700000001);
+  const digest = randomDigest();
   const sig = wallet.signingKey.sign(digest);
   const vByte = sig.yParity + 27;
   const compact = ethers.concat([sig.r, sig.s, Uint8Array.of(vByte)]);
@@ -30,7 +33,7 @@ test("parseSecp256k1SignOutput accepts 65-byte compact (yParity + 27)", () => {
 
 test("parseSecp256k1SignOutput accepts 64-byte compact and recovers v", () => {
   const wallet = ethers.Wallet.createRandom();
-  const digest = buildPayloadHash(wallet.address, wallet.address, 300, 20, 1700000002);
+  const digest = randomDigest();
   const sig = wallet.signingKey.sign(digest);
   const compact64 = ethers.concat([sig.r, sig.s]);
   const parsed = parseSecp256k1SignOutput(digest, ethers.hexlify(compact64), wallet.address);

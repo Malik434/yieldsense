@@ -5,13 +5,14 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const userAddress = searchParams.get('userAddress') || '';
+    const chainId = searchParams.get('chainId') || '';
     
     // ── Development Proxy Logic ──────────────────────────────────────────────
     // If running locally, attempt to fetch real data from production first.
     // This allows you to debug production logs on your local machine.
     if (process.env.NODE_ENV === 'development') {
       try {
-        const remoteUrl = `https://yieldsense.huzaifamalik.tech/api/state?userAddress=${userAddress}`;
+        const remoteUrl = `https://yieldsense.huzaifamalik.tech/api/state?userAddress=${userAddress}&chainId=${chainId}`;
         const remoteRes = await fetch(remoteUrl, { next: { revalidate: 10 } });
         if (remoteRes.ok) {
           const remoteData = await remoteRes.json();

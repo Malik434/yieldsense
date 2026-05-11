@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { getStore } from '@netlify/blobs';
 
-const MAINNET_KEEPER = process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || '';
+const MAINNET_KEEPER = process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || '0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF';
 const TESTNET_KEEPER = process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '';
 
 function getConfig(chainId: number) {
@@ -42,6 +42,8 @@ const TYPES = {
     { name: 'gridUpper', type: 'string' },
     { name: 'gridLower', type: 'string' },
     { name: 'rebalanceInterval', type: 'string' },
+    { name: 'maxSlippage', type: 'string' },
+    { name: 'autoReinvest', type: 'bool' },
     { name: 'timestamp', type: 'uint256' },
   ],
 };
@@ -51,6 +53,8 @@ interface StoredStrategy {
   gridUpper: number;
   gridLower: number;
   rebalanceInterval: number;
+  maxSlippage: number;
+  autoReinvest: boolean;
   signer: string;
   signature: string;
   timestamp: number;
@@ -66,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { stopLossPrice, gridUpper, gridLower, rebalanceInterval, signer, signature, timestamp, chainId } = body;
+  const { stopLossPrice, gridUpper, gridLower, rebalanceInterval, maxSlippage, autoReinvest, signer, signature, timestamp, chainId } = body;
 
   if (!signer || !signature || !timestamp) {
     return NextResponse.json({ error: 'Missing required fields: signer, signature, timestamp' }, { status: 400 });
@@ -88,6 +92,8 @@ export async function POST(req: NextRequest) {
     gridUpper: String(gridUpper),
     gridLower: String(gridLower),
     rebalanceInterval: String(rebalanceInterval),
+    maxSlippage: String(maxSlippage),
+    autoReinvest: Boolean(autoReinvest),
     timestamp,
   };
 
@@ -108,10 +114,11 @@ export async function POST(req: NextRequest) {
 
   // Signature valid — persist to Netlify Blobs or local store
   const blobs = await getStrategyStore();
+  const storageKey = `${signer.toLowerCase()}:${config.chainId}`;
   if (blobs) {
-    await blobs.setJSON(signer.toLowerCase(), body);
+    await blobs.setJSON(storageKey, { ...body, chainId: config.chainId });
   } else {
-    localStrategyStore.set(signer.toLowerCase(), body);
+    localStrategyStore.set(storageKey, { ...body, chainId: config.chainId });
   }
 
   return NextResponse.json({ ok: true, signer, timestamp }, { status: 200 });
@@ -120,15 +127,18 @@ export async function POST(req: NextRequest) {
 // ─── GET /api/strategy?address=0x... ─────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get('address');
+  const chainId = Number(req.nextUrl.searchParams.get('chainId') || 84532);
 
   if (!address) {
     return NextResponse.json({ error: 'Missing ?address param' }, { status: 400 });
   }
 
   const blobs = await getStrategyStore();
+  const config = getConfig(chainId);
+  const storageKey = `${address.toLowerCase()}:${config.chainId}`;
   const params = blobs
-    ? await blobs.get(address.toLowerCase(), { type: 'json' })
-    : localStrategyStore.get(address.toLowerCase());
+    ? await blobs.get(storageKey, { type: 'json' })
+    : localStrategyStore.get(storageKey);
 
   if (!params) {
     return NextResponse.json({ error: 'No strategy params found for this address' }, { status: 404 });

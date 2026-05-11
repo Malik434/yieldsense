@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useWriteContract, useSignTypedData, useChainId } from 'wagmi';
 import { parseEther, isAddress } from 'viem';
 import { Server, Cpu, Zap, CheckCircle2, Loader2, AlertTriangle, Link } from 'lucide-react';
-import { KEEPER_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
+import { KEEPER_ABI } from '@/lib/contracts';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 /**
  * Provisioning flow (no fake steps):
@@ -37,6 +38,8 @@ interface ProvisionedData {
 export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (workerAddress: string) => void }) {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { config } = useNetwork();
+  const keeperAddress = config.keeper;
 
   const [step, setStep] = useState<ProvisionState>('idle');
   const [processorInput, setProcessorInput] = useState('');
@@ -63,7 +66,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
   // Restore persisted provisioning state for this wallet
   useEffect(() => {
     if (!address) return;
-    const stored = localStorage.getItem(`ys_worker_${address}`);
+    const stored = localStorage.getItem(`ys_worker_${address}_${chainId}`);
     if (!stored) return;
     try {
       const parsed: ProvisionedData = JSON.parse(stored);
@@ -77,7 +80,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
     } catch {
       /* ignore corrupt cache */
     }
-  }, [address, onProvisioned]);
+  }, [address, chainId, onProvisioned]);
 
   // After ETH funding confirms, move to assign step
   useEffect(() => {
@@ -135,6 +138,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
           strategyParams: {},
           signature: deploySig,
           timestamp,
+          chainId,
         }),
       });
 
@@ -167,7 +171,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
     setStep('assigning');
     try {
       await writeContractAsync({
-        address: KEEPER_ADDRESS,
+        address: keeperAddress,
         abi: KEEPER_ABI,
         functionName: 'assignProcessor',
         args: [processorAddress as `0x${string}`],
@@ -180,7 +184,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
           ipfsCid: ipfsCid ?? '',
           deploymentId: deploymentId ?? '',
         };
-        localStorage.setItem(`ys_worker_${address}`, JSON.stringify(data));
+        localStorage.setItem(`ys_worker_${address}_${chainId}`, JSON.stringify(data));
       }
       onProvisioned?.(processorAddress);
     } catch (err: any) {
@@ -198,7 +202,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
   };
 
   const reset = () => {
-    if (address) localStorage.removeItem(`ys_worker_${address}`);
+    if (address) localStorage.removeItem(`ys_worker_${address}_${chainId}`);
     setStep('idle');
     setProcessorAddress(null);
     setProcessorInput('');

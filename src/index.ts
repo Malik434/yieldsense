@@ -1,17 +1,6 @@
 import {
   ethers,
-  JsonRpcProvider,
-  Contract,
-  formatEther,
-  getAddress,
-  verifyTypedData,
-  solidityPackedKeccak256,
-  hashMessage,
-  getBytes,
-  recoverAddress,
-  hexlify,
-  AbiCoder,
-  Wallet
+  getAddress
 } from "ethers";
 // Removed axios import in favor of native fetch for TEE compatibility
 // dotenv is intentionally not imported: on Acurast TEE, env vars are injected
@@ -21,11 +10,10 @@ import { evaluateDecision } from "./decisionEngine.js";
 import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js";
 import type { FallbackMode, YieldEstimateRequest } from "./yieldEngine/types.js";
 import { loadState, saveState } from "./runtimeState.js";
-import { signHarvestPayloadEIP712, HarvestParams, Route } from "./signature.js";
+import { buildHarvestPayloadHash, type HarvestParams } from "./signature.js";
 import {
   fulfillEthereumHarvest,
   getAcurastStd,
-  signHarvestPayloadWithAcurastHardware,
 } from "./acurastHardware.js";
 import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
@@ -33,10 +21,10 @@ import { monitorAndExecuteGrid } from "./processor.js";
 const CONFIG = {
   /**
    * RPC for keeper reads, gas, and harvest transactions.
-   * Defaults to Base Sepolia because the default KEEPER_ADDRESS is deployed there.
-   * For mainnet execution set: RPC_URL=https://mainnet.base.org and deploy a mainnet keeper.
+   * Mainnet is the production default. For testnet execution set RPC_URL,
+   * KEEPER_ADDRESS, POOL_ADDRESS, and GAUGE_ADDRESS together.
    */
-  rpcUrl: process.env.RPC_URL ?? "https://sepolia.base.org",
+  rpcUrl: process.env.RPC_URL ?? "https://mainnet.base.org",
   /**
    * Optional: RPC for yield math only (logs, pool, gauge). When set, APR uses live mainnet data
    * while `RPC_URL` still controls execution — read-only hybrid (no mainnet gas for harvest).
@@ -49,13 +37,13 @@ const CONFIG = {
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
     // Testnet fallback: keeper uses attestedProcessors set — any attested TEE can harvest.
-    return addr ? getAddress(addr) : getAddress("0x488147C822b364a940630075f9EACD080Cc16234");
+    return addr ? getAddress(addr) : getAddress("0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
   })(),
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
   poolAddress: (() => {
     const addr = process.env.POOL_ADDRESS?.trim();
     // Aerodrome SlipStream WETH/USDC on Base mainnet (used with dataRpcUrl=mainnet).
-    return addr ? getAddress(addr) : getAddress("0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59");
+    return addr ? getAddress(addr) : getAddress("0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d");
   })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
@@ -136,7 +124,7 @@ function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateR
 
 const KEEPER_ABI = [
   "function lastHarvest() view returns (uint256)",
-  "function executeHarvest(uint256 nonce, address targetPool, bytes32 r, bytes32 s, uint8 v, uint256 minLpOut, uint256 amountToSwap, uint256 deadline, tuple(address from, address to, bool stable, address factory)[] calldata routes) external",
+  "function executeHarvest(uint256 nonce, address targetPool, uint256 minLpOut, uint256 amountToSwap, uint256 deadline, tuple(address from, address to, bool stable, address factory)[] calldata routes) external",
 ];
 
 const LEGACY_KEEPER_ABI = [
@@ -239,8 +227,8 @@ async function main(): Promise<void> {
     state.lastRunAt != null ? Math.max(60, nowSec - state.lastRunAt) : 300;
 
   const ethPricePromise = getEthPrice();
-  const lastHarvestPromise = keeperRead.lastHarvest();
   const feeDataPromise = executionProvider.getFeeData();
+  const lastHarvestPromise = CONFIG.forceTestHarvest ? Promise.resolve(0n) : keeperRead.lastHarvest();
 
   let yieldResult;
   if (CONFIG.forceTestHarvest) {
@@ -387,13 +375,15 @@ async function main(): Promise<void> {
       executionChainId,
       yieldUsable: aprConsensus.usable,
       totalApr: aprConsensus.totalApr,
-      note: "Profitability and yield-usable gates skipped; submitting executeHarvest.",
+      note: CONFIG.dryRun
+        ? "Profitability and yield-usable gates skipped for dry-run payload validation."
+        : "Profitability and yield-usable gates skipped; submitting executeHarvest.",
     });
   }
 
   const acurastStd = getAcurastStd();
   const privateKey = process.env.ACURAST_WORKER_KEY;
-  if (!acurastStd && !privateKey) {
+  if (!acurastStd && !privateKey && !CONFIG.dryRun) {
     state.lastDecisionReason = "missing_worker_key";
     await saveState(CONFIG.statePath, state);
     await emitTelemetry({
@@ -495,6 +485,7 @@ async function main(): Promise<void> {
     deadline,
     routes
   };
+  const harvestPayloadHash = buildHarvestPayloadHash(harvestParams);
 
   const maxFeePerGas = feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0);
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0);
@@ -513,45 +504,11 @@ async function main(): Promise<void> {
       note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
     });
 
-    const signed = await signHarvestPayloadEIP712(privateKey!, executionChainId, CONFIG.keeperAddress, harvestParams);
-    
-    // Instead of using signHarvestPayloadWithAcurastHardware which doesn't support EIP-712 typing,
-    // we use the local signer for simplicity, or we would build the EIP-712 digest manually
-    // to pass to std.signers.secp256k1.sign. Let's build the digest manually.
-    const domain = { name: "YieldSense", version: "1", chainId: executionChainId, verifyingContract: CONFIG.keeperAddress };
-    const value = { keeper: hwAddress, ...harvestParams };
-    const EIP712_TYPES = {
-      HarvestPayload: [
-        { name: "keeper", type: "address" },
-        { name: "nonce", type: "uint256" },
-        { name: "targetPool", type: "address" },
-        { name: "minLpOut", type: "uint256" },
-        { name: "amountToSwap", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-        { name: "routes", type: "Route[]" },
-      ],
-      Route: [
-        { name: "from", type: "address" },
-        { name: "to", type: "address" },
-        { name: "stable", type: "bool" },
-        { name: "factory", type: "address" },
-      ],
-    };
-    const digestHex = ethers.TypedDataEncoder.hash(domain, EIP712_TYPES, value);
-    // Hardware sign the raw 32-byte hash
-    const sigHex = acurastStd.signers.secp256k1.sign(digestHex.replace(/^0x/, ""));
-    const { r, s, v } = ethers.Signature.from("0x" + sigHex);
-    // Actually inferEthereumV in acurastHardware might be needed, but for MVP we assume compact.
-
     const submitted = await fulfillEthereumHarvest(acurastStd, {
       rpcUrl: CONFIG.rpcUrl,
       keeperAddress: CONFIG.keeperAddress,
-      payloadHash: digestHex,
       nonce,
       targetPool: CONFIG.poolAddress,
-      r: r,
-      s: s,
-      v: v,
       minLpOut: harvestParams.minLpOut,
       amountToSwap: harvestParams.amountToSwap,
       deadline,
@@ -566,14 +523,14 @@ async function main(): Promise<void> {
       event: "harvest_submitted",
       timestamp: nowSec,
       txHash,
-      payloadHash: digestHex,
-      signingMode: "acurast_hardware_secp256k1",
+      payloadHash: harvestPayloadHash,
+      signingMode: "acurast_fulfill_attested_sender",
+      processorAddress: hwAddress,
       ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
     });
     await executionProvider.waitForTransaction(txHash);
   } else {
-    const signed = await signHarvestPayloadEIP712(privateKey!, executionChainId, CONFIG.keeperAddress, harvestParams);
-    const wallet = new ethers.Wallet(privateKey!, executionProvider);
+    const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
 
     // DRY_RUN: sign + validate the payload without touching the chain.
     // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
@@ -583,13 +540,10 @@ async function main(): Promise<void> {
       await emitTelemetry({
         event: "harvest_dry_run",
         timestamp: nowSec,
-        payloadHash: signed.payloadHash,
-        r: signed.r,
-        s: signed.s,
-        v: signed.v,
-        signerAddress: wallet.address,
+        payloadHash: harvestPayloadHash,
+        signerAddress: wallet?.address ?? null,
         keeperAddress: CONFIG.keeperAddress,
-        note: "DRY_RUN=true — tx not submitted. Pipeline validated end-to-end.",
+        note: "DRY_RUN=true — tx not submitted. Deployed executeHarvest payload validated end-to-end.",
         ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
       });
       state.lastDecisionReason = "dry_run";
@@ -598,6 +552,10 @@ async function main(): Promise<void> {
     }
 
     // ETH balance pre-flight — fail fast with a clear message before the RPC rejects the tx
+    if (!wallet) {
+      throw new Error("ACURAST_WORKER_KEY is required for local non-dry-run execution.");
+    }
+
     const workerBalance = await executionProvider.getBalance(wallet.address);
     const estimatedGasCost = (feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0)) * BigInt(400_000);
     if (workerBalance < estimatedGasCost) {
@@ -614,9 +572,6 @@ async function main(): Promise<void> {
       tx = await keeperWrite.executeHarvest(
         harvestParams.nonce,
         harvestParams.targetPool,
-        signed.r,
-        signed.s,
-        signed.v,
         harvestParams.minLpOut,
         harvestParams.amountToSwap,
         harvestParams.deadline,
@@ -631,7 +586,7 @@ async function main(): Promise<void> {
       event: "harvest_submitted",
       timestamp: nowSec,
       txHash,
-      payloadHash: signed.payloadHash,
+      payloadHash: harvestPayloadHash,
       signingMode: "local_private_key",
       ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
     });

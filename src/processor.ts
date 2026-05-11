@@ -32,9 +32,12 @@ type UserStrategyParams = {
   gridUpper: number;
   gridLower: number;
   rebalanceInterval: number;
+  maxSlippage: number;
+  autoReinvest: boolean;
   signer: string;
   signature: string;
   timestamp: number;
+  chainId?: number;
 };
 
 type GridTradePayload = {
@@ -135,7 +138,7 @@ function getAndIncrementNonce(userAddress: string): bigint {
 
 async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: string): Promise<void> {
   const std = getAcurastStd();
-  const chainId = parseInt(process.env.CHAIN_ID ?? "84532");
+  const chainId = parseInt(process.env.CHAIN_ID ?? "8453");
   const keeperAddress = process.env.KEEPER_ADDRESS ?? "";
 
   if (!keeperAddress) {
@@ -144,7 +147,7 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
   }
 
   try {
-    const resp = await fetch(`${frontendUrl}/api/strategy?address=${userAddress}`);
+    const resp = await fetch(`${frontendUrl}/api/strategy?address=${userAddress}&chainId=${chainId}`);
     if (!resp.ok) return;
 
     const params = (await resp.json()) as UserStrategyParams;
@@ -162,6 +165,8 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
         { name: "gridUpper", type: "string" },
         { name: "gridLower", type: "string" },
         { name: "rebalanceInterval", type: "string" },
+        { name: "maxSlippage", type: "string" },
+        { name: "autoReinvest", type: "bool" },
         { name: "timestamp", type: "uint256" },
       ],
     };
@@ -170,6 +175,8 @@ async function fetchAndStoreStrategyParams(userAddress: string, frontendUrl: str
       gridUpper: String(params.gridUpper),
       gridLower: String(params.gridLower),
       rebalanceInterval: String(params.rebalanceInterval),
+      maxSlippage: String(params.maxSlippage),
+      autoReinvest: Boolean(params.autoReinvest),
       timestamp: params.timestamp,
     };
 
@@ -373,16 +380,16 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     return (baked ?? env ?? fallback).trim();
   };
 
-  const rpcUrl = getEnv("RPC_URL", "https://sepolia.base.org");
+  const rpcUrl = getEnv("RPC_URL", "https://mainnet.base.org");
   const dataRpcUrl = getEnv("DATA_RPC_URL", rpcUrl);
   const poolAddress = getEnv(
     "GRID_POOL_ADDRESS",
     getEnv(
       "UNISWAP_POOL_ADDRESS",
-      getEnv("POOL_ADDRESS", "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59")
+      getEnv("POOL_ADDRESS", "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d")
     )
   );
-  const keeperAddress = getEnv("KEEPER_ADDRESS", "0x488147C822b364a940630075f9EACD080Cc16234");
+  const keeperAddress = getEnv("KEEPER_ADDRESS", "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
   const userAddress = getEnv("USER_ADDRESS", "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA");
 
   if (!keeperAddress || !userAddress) {
@@ -418,7 +425,7 @@ export async function monitorAndExecuteGrid(): Promise<void> {
 
   // Price from on-chain pool — sqrtPriceX96 is instantaneous and flash-loan
   // manipulable. For production, use a TWAP or multi-source oracle.
-  if (activeGrids.length === 0) {
+  if (activeGrids.length === 0 || !poolAddress) {
     return;
   }
 
@@ -507,7 +514,7 @@ async function startLoop(): Promise<void> {
   }
 
   if (!process.env.CHAIN_ID) {
-    console.warn("[processor] CHAIN_ID not set — defaulting to 84532 (Base Sepolia)");
+    console.warn("[processor] CHAIN_ID not set — defaulting to 8453 (Base Mainnet)");
   }
 
   if (!process.env.PROCESSOR_SHARED_SECRET) {

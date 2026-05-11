@@ -5,7 +5,8 @@ import { useAccount, useWriteContract, useChainId } from 'wagmi';
 import { parseUnits } from 'viem';
 import { baseSepolia } from 'wagmi/chains';
 import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2, Zap, Cpu, TerminalSquare } from 'lucide-react';
-import { MOCK_USDC_ABI, ASSET_ADDRESS, OPERATOR_ADDRESS } from '@/lib/contracts';
+import { MOCK_USDC_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
+import { useNetwork } from '@/providers/NetworkProvider';
 
 interface HardwareLog {
   timestamp: number;
@@ -17,6 +18,7 @@ interface HardwareLog {
 export function TestingSuite() {
   const { isConnected, address } = useAccount();
   const chainId = useChainId();
+  const { config } = useNetwork();
   const isTestnet = chainId === baseSepolia.id;
   const [logs, setLogs] = useState<HardwareLog[]>([]);
   const [minting, setMinting] = useState(false);
@@ -28,7 +30,7 @@ export function TestingSuite() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}`);
+        const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.logs && Array.isArray(data.logs)) {
@@ -60,7 +62,7 @@ export function TestingSuite() {
     fetchLogs();
     const interval = setInterval(fetchLogs, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [chainId]);
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -74,7 +76,7 @@ export function TestingSuite() {
     setMintSuccess(false);
     try {
       await writeContractAsync({
-        address: ASSET_ADDRESS,
+        address: config.asset,
         abi: MOCK_USDC_ABI,
         functionName: 'mint',
         args: [parseUnits('1000', 6)],
@@ -203,7 +205,7 @@ export function TestingSuite() {
                     {log.message}
                     {log.txHash && (
                       <a
-                        href={`https://base-sepolia.blockscout.com/tx/${log.txHash}`}
+                        href={`${config.explorer}/tx/${log.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="ml-3 text-[#C2E812] hover:underline"

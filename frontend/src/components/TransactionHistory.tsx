@@ -43,7 +43,6 @@ export function TransactionHistory() {
         const ts = (log.timestamp ?? 0) * 1000;
         const txHash = log.txHash ?? '';
         const logChainId = Number(log.chainId || log.CHAIN_ID || 0);
-        console.log(`[TransactionHistory] Processing log: event=${log.event} logChainId=${logChainId} activeChainId=${activeChainId}`);
 
         if (!txHash) return null;
 
@@ -161,7 +160,7 @@ export function TransactionHistory() {
                   <div className="flex flex-col gap-1.5 md:col-span-2">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-heading font-bold text-[#F5F7FA]">
-                        {tx.type === 'TRADE' ? `Settled +${tx.pnlDelta?.toFixed(4)} USDC` : 'Optimization & Compounding'}
+                        {tx.type === 'TRADE' ? `Audit signal ${tx.pnlDelta?.toFixed(4)}` : 'Optimization & Compounding'}
                       </span>
                       <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border uppercase tracking-widest ${tx.type === 'TRADE' ? 'bg-[#C2E812]/10 text-[#C2E812] border-[#C2E812]/20' : 'bg-[#00FFA3]/10 text-[#00FFA3] border-[#00FFA3]/20'}`}>
                         {cfg.label}

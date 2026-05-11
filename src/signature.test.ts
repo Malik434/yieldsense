@@ -1,30 +1,41 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ethers } from "ethers";
-import { buildPayloadHash, signHarvestPayload, verifyPayloadSigner } from "./signature.js";
+import { buildHarvestPayloadHash, type HarvestParams } from "./signature.js";
 
-test("signature payload verifies against expected worker", () => {
-  const wallet = ethers.Wallet.createRandom();
-  const payloadHash = buildPayloadHash(wallet.address, wallet.address, 1200, 550, 1711111111);
-  const signed = signHarvestPayload(wallet.privateKey, payloadHash);
-  const valid = verifyPayloadSigner(wallet.address, payloadHash, signed.r, signed.s, signed.v);
-  assert.equal(valid, true);
+const ROUTE = {
+  from: "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+  to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  stable: false,
+  factory: "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+};
+
+function params(overrides: Partial<HarvestParams> = {}): HarvestParams {
+  return {
+    nonce: "1778516843",
+    targetPool: "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d",
+    minLpOut: "1",
+    amountToSwap: "5000000",
+    deadline: 1778517143,
+    routes: [ROUTE],
+    ...overrides,
+  };
+}
+
+test("harvest payload hash is deterministic for deployed executeHarvest calldata", () => {
+  const payload = params();
+  assert.equal(buildHarvestPayloadHash(payload), buildHarvestPayloadHash({ ...payload }));
 });
 
-test("signature payload fails for unauthorized worker", () => {
-  const wallet = ethers.Wallet.createRandom();
-  const unauthorized = ethers.Wallet.createRandom();
-  const payloadHash = buildPayloadHash(wallet.address, wallet.address, 1200, 550, 1711111111);
-  const signed = signHarvestPayload(wallet.privateKey, payloadHash);
-  const valid = verifyPayloadSigner(unauthorized.address, payloadHash, signed.r, signed.s, signed.v);
-  assert.equal(valid, false);
+test("harvest payload hash changes when replay nonce changes", () => {
+  assert.notEqual(
+    buildHarvestPayloadHash(params({ nonce: "1" })),
+    buildHarvestPayloadHash(params({ nonce: "2" }))
+  );
 });
 
-test("payload hash replay marker can be tracked by key", () => {
-  const wallet = ethers.Wallet.createRandom();
-  const payloadHash = buildPayloadHash(wallet.address, wallet.address, 1000, 200, 1700000000);
-  const usedPayload = new Set<string>();
-  assert.equal(usedPayload.has(payloadHash), false);
-  usedPayload.add(payloadHash);
-  assert.equal(usedPayload.has(payloadHash), true);
+test("harvest payload hash changes when route changes", () => {
+  assert.notEqual(
+    buildHarvestPayloadHash(params()),
+    buildHarvestPayloadHash(params({ routes: [{ ...ROUTE, stable: true }] }))
+  );
 });

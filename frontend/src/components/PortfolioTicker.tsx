@@ -111,8 +111,7 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
               </div>
               <div className="space-y-3">
                 {[
-                  { name: 'Aerodrome', share: 55, color: 'bg-[#C2E812]' },
-                  { name: 'Moonwell', share: 45, color: 'bg-[#00FFA3]' },
+                  { name: 'Aerodrome USDC/AERO', share: 100, color: 'bg-[#C2E812]' },
                 ].map(p => (
                   <div key={p.name} className="space-y-1.5">
                     <div className="flex justify-between text-[10px] font-mono font-bold">
@@ -151,7 +150,7 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
           </div>
           <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">
             <Layers size={12} />
-            Across Active Strategies
+            Aerodrome MVP Strategy
           </div>
         </div>
       </div>

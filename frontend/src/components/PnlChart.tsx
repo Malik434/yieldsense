@@ -36,6 +36,7 @@ interface PnlChartProps {
   unrealizedYield?: number;
   /** Address to scope telemetry log fetch. Falls back to OPERATOR_ADDRESS. */
   userAddress?: string;
+  chainId: number;
   /**
    * The connected user's fractional share of the vault (userShares / totalShares).
    * Harvest rewards in the telemetry logs represent vault-wide income, so each
@@ -86,6 +87,7 @@ export function PnlChart({
   totalRealized = 0,
   unrealizedYield = 0,
   userAddress,
+  chainId,
   vaultShareFraction = 1,
 }: PnlChartProps) {
   const [data, setData] = useState<PnlDataPoint[]>([]);
@@ -108,7 +110,7 @@ export function PnlChart({
     setLoading(true);
     const targetAddress = userAddress ?? OPERATOR_ADDRESS;
     try {
-      const res = await fetch(`/api/state?userAddress=${targetAddress}`);
+      const res = await fetch(`/api/state?userAddress=${targetAddress}&chainId=${chainId}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
 
@@ -222,7 +224,7 @@ export function PnlChart({
     } finally {
       setLoading(false);
     }
-  }, [userAddress, initialDeposit, period, vaultShareFraction]);
+  }, [userAddress, initialDeposit, period, vaultShareFraction, chainId]);
 
   useEffect(() => {
     setMounted(true);
