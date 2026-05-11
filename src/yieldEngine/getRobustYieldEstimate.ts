@@ -48,6 +48,16 @@ async function fetchTokenUsdBase(contractAddress: string): Promise<number> {
   return 0;
 }
 
+function tokenPriceFromPoolSpot(
+  tokenAddress: string,
+  spot: { token0: string; token1: string; price0Usd: number; price1Usd: number }
+): number {
+  const addr = tokenAddress.toLowerCase();
+  if (addr === spot.token0.toLowerCase() && spot.price0Usd > 0) return spot.price0Usd;
+  if (addr === spot.token1.toLowerCase() && spot.price1Usd > 0) return spot.price1Usd;
+  return 0;
+}
+
 function estimateBlocksForWindow(chainId: number, windowSec: number): number {
   const secPerBlock = chainId === 8453 || chainId === 84532 ? 2 : 12;
   return Math.ceil(windowSec / secPerBlock);
@@ -129,7 +139,8 @@ export async function getRobustYieldEstimate(
         provider
       );
       const rt: string = req.rewardTokenAddress ?? ((await gaugeToken.rewardToken()) as string);
-      let rewardP = await fetchTokenUsdBase(rt);
+      let rewardP = tokenPriceFromPoolSpot(rt, spot);
+      if (rewardP <= 0) rewardP = await fetchTokenUsdBase(rt);
       if (rewardP <= 0) rewardP = 0.01;
       snapshot = await readGaugeSnapshot(
         provider,

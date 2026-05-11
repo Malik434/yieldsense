@@ -103,6 +103,14 @@ export async function POST(req: Request) {
     const rpcUrl = isMainnet
       ? (process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org')
       : (process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org');
+    
+    const processorSecret = process.env.PROCESSOR_SHARED_SECRET?.trim();
+    if (!processorSecret) {
+      return NextResponse.json(
+        { error: 'Server not configured — PROCESSOR_SHARED_SECRET must be set before processor deployment' },
+        { status: 500 }
+      );
+    }
 
     const envInjection = [
       '// YieldSense — per-user env var injection (generated at deploy time)',
@@ -110,7 +118,7 @@ export async function POST(req: Request) {
       `  e.USER_ADDRESS=${JSON.stringify(ownerAddress)};`,
       `  e.KEEPER_ADDRESS=${JSON.stringify(keeperAddress)};`,
       `  e.CHAIN_ID=${JSON.stringify(chainId.toString())};`,
-      `  e.PROCESSOR_SHARED_SECRET=${JSON.stringify(process.env.PROCESSOR_SHARED_SECRET ?? 'e10383a7f06075735018c89582bd53f966981ab0a386d35763776f0c490fdc58')};`,
+      `  e.PROCESSOR_SHARED_SECRET=${JSON.stringify(processorSecret)};`,
       `  e.TELEMETRY_URL=${JSON.stringify(process.env.TELEMETRY_URL ?? 'https://yieldsense.huzaifamalik.tech/api/telemetry')};`,
       `  e.RPC_URL=${JSON.stringify(rpcUrl)};`,
       `  e.DATA_RPC_URL=${JSON.stringify(isMainnet ? 'https://mainnet.base.org' : (process.env.DATA_RPC_URL ?? 'https://mainnet.base.org'))};`,

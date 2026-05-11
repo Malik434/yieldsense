@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createPublicClient, formatUnits, http, parseAbiItem, type Address } from 'viem';
 import { getContractConfig } from '@/lib/contracts';
+import { getLogsPaginated, withCache } from '@/lib/rpcUtils';
 
 const DEPOSIT_EVENT = parseAbiItem(
   'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)'
@@ -43,21 +44,16 @@ export async function GET(request: Request) {
     });
 
     const fromBlock = config.deploymentBlock ?? BigInt(0);
+    const cacheKey = `portfolio-history:${userAddress.toLowerCase()}:${chainId}`;
 
-    const [depositLogs, withdrawLogs] = await Promise.all([
-      client.getLogs({
-        address: config.keeper,
-        event: DEPOSIT_EVENT,
-        fromBlock,
-        toBlock: 'latest',
-      }),
-      client.getLogs({
-        address: config.keeper,
-        event: WITHDRAW_EVENT,
-        fromBlock,
-        toBlock: 'latest',
-      }),
-    ]);
+    const [depositLogs, withdrawLogs] = await withCache(
+      cacheKey,
+      () => Promise.all([
+        getLogsPaginated(client as any, { address: config.keeper, event: DEPOSIT_EVENT, fromBlock }),
+        getLogsPaginated(client as any, { address: config.keeper, event: WITHDRAW_EVENT, fromBlock }),
+      ]),
+      3 * 60 * 1_000
+    );
 
     const blockNumbers = Array.from(
       new Set([...depositLogs, ...withdrawLogs].map((log) => log.blockNumber))
@@ -65,30 +61,32 @@ export async function GET(request: Request) {
     const blockTimestamps = new Map<bigint, number>();
 
     await Promise.all(
-      blockNumbers.map(async (blockNumber) => {
-        const block = await client.getBlock({ blockNumber });
-        blockTimestamps.set(blockNumber, Number(block.timestamp));
-      })
+      blockNumbers
+        .filter((bn): bn is bigint => bn != null)
+        .map(async (blockNumber) => {
+          const block = await client.getBlock({ blockNumber });
+          blockTimestamps.set(blockNumber, Number(block.timestamp));
+        })
     );
 
     const events: PortfolioEvent[] = [
-      ...depositLogs.map((log) => ({
+      ...(depositLogs as any[]).map((log) => ({
         type: 'deposit' as const,
-        owner: log.args.owner as Address,
-        timestamp: blockTimestamps.get(log.blockNumber) ?? 0,
-        blockNumber: log.blockNumber.toString(),
-        txHash: log.transactionHash,
-        assetsUsd: Number(formatUnits(log.args.assets ?? BigInt(0), 6)),
-        shares: (log.args.shares ?? BigInt(0)).toString(),
+        owner: log.args?.owner as Address,
+        timestamp: blockTimestamps.get(log.blockNumber as bigint) ?? 0,
+        blockNumber: (log.blockNumber ?? BigInt(0)).toString(),
+        txHash: log.transactionHash ?? '',
+        assetsUsd: Number(formatUnits(log.args?.assets ?? BigInt(0), 6)),
+        shares: (log.args?.shares ?? BigInt(0)).toString(),
       })),
-      ...withdrawLogs.map((log) => ({
+      ...(withdrawLogs as any[]).map((log) => ({
         type: 'withdraw' as const,
-        owner: log.args.owner as Address,
-        timestamp: blockTimestamps.get(log.blockNumber) ?? 0,
-        blockNumber: log.blockNumber.toString(),
-        txHash: log.transactionHash,
-        assetsUsd: Number(formatUnits(log.args.assets ?? BigInt(0), 6)),
-        shares: (log.args.shares ?? BigInt(0)).toString(),
+        owner: log.args?.owner as Address,
+        timestamp: blockTimestamps.get(log.blockNumber as bigint) ?? 0,
+        blockNumber: (log.blockNumber ?? BigInt(0)).toString(),
+        txHash: log.transactionHash ?? '',
+        assetsUsd: Number(formatUnits(log.args?.assets ?? BigInt(0), 6)),
+        shares: (log.args?.shares ?? BigInt(0)).toString(),
       })),
     ]
       .filter((event) => event.timestamp > 0)

@@ -19,6 +19,7 @@ proposal_text.md
 .netlify
 .acurast/bundles/YieldSense.zip
 .acurast/keys.json
+src/generatedEnv.ts
 
 yieldsense_mainnet_mvp_contract_audit.md
 test_output_debug_utf8.txt

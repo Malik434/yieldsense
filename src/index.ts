@@ -1,3 +1,4 @@
+import "./env.js";
 import {
   ethers,
   getAddress
@@ -97,7 +98,36 @@ const CONFIG = {
    * keeper attestation checks. Set DRY_RUN=true in .env to enable.
    */
   dryRun: process.env.DRY_RUN === "true",
+  runCooldownGuard: process.env.RUN_COOLDOWN_GUARD !== "false",
+  minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 60_000),
 };
+
+function shouldSkipRecentRun(
+  state: Awaited<ReturnType<typeof loadState>>,
+  nowSec: number
+): { skip: boolean; waitMs: number; elapsedMs: number; intervalMs: number } {
+  const lastRunAt = state.lastRunAt;
+  if (!CONFIG.runCooldownGuard || !lastRunAt) {
+    return { skip: false, waitMs: 0, elapsedMs: Number.MAX_SAFE_INTEGER, intervalMs: 0 };
+  }
+
+  const configuredInterval = Number.isFinite(CONFIG.minRunIntervalMs)
+    ? CONFIG.minRunIntervalMs
+    : 60_000;
+  const suggestedInterval = Number.isFinite(state.suggestedNextCheckMs ?? NaN)
+    ? Number(state.suggestedNextCheckMs)
+    : 0;
+  const intervalMs = Math.max(15_000, configuredInterval, suggestedInterval);
+  const elapsedMs = Math.max(0, (nowSec - lastRunAt) * 1000);
+  const waitMs = Math.max(0, intervalMs - elapsedMs);
+
+  return {
+    skip: waitMs > 0,
+    waitMs,
+    elapsedMs,
+    intervalMs,
+  };
+}
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
   return {
@@ -234,8 +264,42 @@ async function ensureKeeperOnExecutionChain(
 
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
+  const state = await loadState(CONFIG.statePath);
 
-  // 1. Log Config for TEE Diagnostics
+  // ── Crash-safe cooldown guard ─────────────────────────────────────────────
+  // Stamp the run immediately. If we crash 1 second from now, the next 
+  // restart will see this timestamp and skip.
+  const std = getAcurastStd();
+  const guardStorageKey = `worker-state:${(process.env.USER_ADDRESS ?? "default").toLowerCase()}:.yieldsense-state.json`;
+  
+  // 1. Check Cooldown
+  const recentRun = shouldSkipRecentRun(state, startNow);
+  if (recentRun.skip) {
+    await emitTelemetry({
+      event: "run_skipped_recent",
+      timestamp: startNow,
+      elapsedMs: recentRun.elapsedMs,
+      waitMs: recentRun.waitMs,
+      intervalMs: recentRun.intervalMs,
+      reason: "cooldown_guard",
+    });
+    return;
+  }
+
+  // 2. Stamp and Save Immediately
+  state.lastRunAt = startNow;
+  state.lastDecisionReason = "run_started";
+  await saveState(CONFIG.statePath, state);
+  
+  if (std?.storage) {
+    try {
+      const existing = std.storage.get(guardStorageKey);
+      const parsed = existing ? JSON.parse(existing) : {};
+      std.storage.set(guardStorageKey, JSON.stringify({ ...parsed, lastRunAt: startNow }));
+    } catch (e) {}
+  }
+
+  // 3. Log Config for TEE Diagnostics
   const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   console.log(`[CONFIG] User: ${envUser || "MISSING"}`);
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
@@ -265,7 +329,7 @@ async function main(): Promise<void> {
   // 2. Send Heartbeat
   await emitTelemetry({
     event: "processor_heartbeat",
-    message: `Guardian starting for ${envUser?.slice(0, 10)}...`,
+    message: `Guardian starting for ${envUser ? envUser.slice(0, 10) : "unknown"}...`,
     timestamp: startNow,
     chainId: executionChainId,
     userAddress: envUser // Explicitly pass to ensure first log isn't anonymous
@@ -290,7 +354,6 @@ async function main(): Promise<void> {
 
   // 2. Continue with Harvest Profitability Check
   const keeperRead = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, executionProvider);
-  const state = await loadState(CONFIG.statePath);
   const nowSec = Math.floor(Date.now() / 1000);
 
   const hybridMainnetRead = CONFIG.dataRpcUrl.length > 0;

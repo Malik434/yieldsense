@@ -1,3 +1,4 @@
+import "./env.js";
 import {
   ethers,
   JsonRpcProvider,
@@ -423,13 +424,10 @@ export async function monitorAndExecuteGrid(): Promise<void> {
   const dataRpcUrl = getEnv("DATA_RPC_URL", rpcUrl);
   const poolAddress = getEnv(
     "GRID_POOL_ADDRESS",
-    getEnv(
-      "UNISWAP_POOL_ADDRESS",
-      getEnv("POOL_ADDRESS", "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d")
-    )
+    getEnv("POOL_ADDRESS", "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d")
   );
   const keeperAddress = getEnv("KEEPER_ADDRESS", "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
-  const userAddress = getEnv("USER_ADDRESS", "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA");
+  const userAddress = getEnv("USER_ADDRESS", "");
 
   try {
     await emitProcessorStage("start", userAddress, {

@@ -1,5 +1,6 @@
 import { createPublicClient, formatUnits, http, parseAbiItem, type Address, type Log } from 'viem';
 import { getContractConfig } from '@/lib/contracts';
+import { getLogsPaginated, withCache } from '@/lib/rpcUtils';
 
 const DEPOSIT_EVENT = parseAbiItem(
   'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)'
@@ -78,6 +79,12 @@ function logKey(log: Pick<Log, 'transactionHash' | 'logIndex'>): string {
 
 export async function loadOnchainAudit(userAddress: string, chainId: number): Promise<OnchainAudit | null> {
   if (!isAddress(userAddress)) return null;
+  const cacheKey = `onchain-audit:${userAddress.toLowerCase()}:${chainId}`;
+  return withCache(cacheKey, () => _fetchOnchainAudit(userAddress, chainId), 3 * 60 * 1_000);
+}
+
+async function _fetchOnchainAudit(userAddress: string, chainId: number): Promise<OnchainAudit | null> {
+  if (!isAddress(userAddress)) return null;
 
   const config = getContractConfig(chainId);
   if (!isAddress(config.keeper) || !isAddress(config.autocompounder) || !config.rpc) return null;
@@ -85,21 +92,24 @@ export async function loadOnchainAudit(userAddress: string, chainId: number): Pr
   const client = createPublicClient({ transport: http(config.rpc) });
   const fromBlock = config.deploymentBlock ?? BigInt(0);
 
+  // Cast to any[] — getLogsPaginated returns generic Log[], but we know the
+  // shape from the event ABI. Using any here avoids ~30 TS errors on .args.
   const [depositLogs, withdrawLogs, transferLogs, profitLogs, harvestLogs, compoundLogs, pulledLogs] =
-    await Promise.all([
-      client.getLogs({ address: config.keeper, event: DEPOSIT_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.keeper, event: WITHDRAW_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.keeper, event: TRANSFER_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.keeper, event: PROFIT_CREDITED_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.keeper, event: HARVEST_EXECUTED_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.autocompounder, event: HARVEST_AND_COMPOUNDED_EVENT, fromBlock, toBlock: 'latest' }),
-      client.getLogs({ address: config.autocompounder, event: PROFIT_PULLED_EVENT, fromBlock, toBlock: 'latest' }),
-    ]);
+    (await Promise.all([
+      getLogsPaginated(client as any, { address: config.keeper, event: DEPOSIT_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.keeper, event: WITHDRAW_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.keeper, event: TRANSFER_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.keeper, event: PROFIT_CREDITED_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.keeper, event: HARVEST_EXECUTED_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.autocompounder, event: HARVEST_AND_COMPOUNDED_EVENT, fromBlock }),
+      getLogsPaginated(client as any, { address: config.autocompounder, event: PROFIT_PULLED_EVENT, fromBlock }),
+    ])) as [any[], any[], any[], any[], any[], any[], any[]];
 
   const blockNumbers = Array.from(
     new Set(
       [...depositLogs, ...withdrawLogs, ...transferLogs, ...profitLogs, ...harvestLogs, ...compoundLogs, ...pulledLogs]
-        .map((log) => log.blockNumber)
+        .map((log) => log.blockNumber as bigint | null)
+        .filter((bn): bn is bigint => bn != null)
     )
   );
   const timestampEntries = await Promise.all(
@@ -107,55 +117,59 @@ export async function loadOnchainAudit(userAddress: string, chainId: number): Pr
   );
   const timestamps = new Map<bigint, number>(timestampEntries);
 
-  const depositTxs = new Set(depositLogs.map((log) => log.transactionHash));
+  const depositTxs = new Set(depositLogs.map((log) => log.transactionHash as string));
   const userLower = userAddress.toLowerCase();
 
   const timeline: AuditTimelineEvent[] = [
     ...depositLogs.map((log) => ({
       kind: 'deposit' as const,
       timestamp: timestamps.get(log.blockNumber) ?? 0,
-      blockNumber: log.blockNumber.toString(),
-      logIndex: log.logIndex,
-      txHash: log.transactionHash,
-      owner: log.args.owner as Address,
-      assetsUsd: toUsd(log.args.assets ?? BigInt(0)),
-      shares: (log.args.shares ?? BigInt(0)).toString(),
+      blockNumber: String(log.blockNumber ?? 0),
+      logIndex: log.logIndex ?? 0,
+      txHash: (log.transactionHash ?? '') as string,
+      owner: log.args?.owner as Address,
+      assetsUsd: toUsd(log.args?.assets ?? BigInt(0)),
+      shares: (log.args?.shares ?? BigInt(0)).toString(),
     })),
     ...withdrawLogs.map((log) => ({
       kind: 'withdraw' as const,
       timestamp: timestamps.get(log.blockNumber) ?? 0,
-      blockNumber: log.blockNumber.toString(),
-      logIndex: log.logIndex,
-      txHash: log.transactionHash,
-      owner: log.args.owner as Address,
-      assetsUsd: toUsd(log.args.assets ?? BigInt(0)),
-      shares: (log.args.shares ?? BigInt(0)).toString(),
+      blockNumber: String(log.blockNumber ?? 0),
+      logIndex: log.logIndex ?? 0,
+      txHash: (log.transactionHash ?? '') as string,
+      owner: log.args?.owner as Address,
+      assetsUsd: toUsd(log.args?.assets ?? BigInt(0)),
+      shares: (log.args?.shares ?? BigInt(0)).toString(),
     })),
     ...transferLogs
       .filter((log) => {
-        const from = String(log.args.from ?? '').toLowerCase();
+        const from = String(log.args?.from ?? '').toLowerCase();
         return from === ZERO_ADDRESS && !depositTxs.has(log.transactionHash);
       })
       .map((log) => ({
         kind: 'fee_mint' as const,
         timestamp: timestamps.get(log.blockNumber) ?? 0,
-        blockNumber: log.blockNumber.toString(),
-        logIndex: log.logIndex,
-        txHash: log.transactionHash,
-        owner: log.args.to as Address,
-        shares: (log.args.value ?? BigInt(0)).toString(),
+        blockNumber: String(log.blockNumber ?? 0),
+        logIndex: log.logIndex ?? 0,
+        txHash: (log.transactionHash ?? '') as string,
+        owner: log.args?.to as Address,
+        shares: (log.args?.value ?? BigInt(0)).toString(),
       })),
     ...profitLogs.map((log) => ({
       kind: 'profit_credited' as const,
       timestamp: timestamps.get(log.blockNumber) ?? 0,
-      blockNumber: log.blockNumber.toString(),
-      logIndex: log.logIndex,
-      txHash: log.transactionHash,
-      amountUsd: toUsd(log.args.amount ?? BigInt(0)),
+      blockNumber: String(log.blockNumber ?? 0),
+      logIndex: log.logIndex ?? 0,
+      txHash: (log.transactionHash ?? '') as string,
+      amountUsd: toUsd(log.args?.amount ?? BigInt(0)),
     })),
   ]
     .filter((event) => event.timestamp > 0)
-    .sort((a, b) => (a.timestamp - b.timestamp) || (Number(a.blockNumber) - Number(b.blockNumber)) || (a.logIndex - b.logIndex));
+    .sort((a, b) =>
+      (a.timestamp - b.timestamp) ||
+      (Number(a.blockNumber) - Number(b.blockNumber)) ||
+      (a.logIndex - b.logIndex)
+    );
 
   let userShares = 0;
   let totalShares = 0;
@@ -187,29 +201,28 @@ export async function loadOnchainAudit(userAddress: string, chainId: number): Pr
       userProfitCreditedUsd += userAmount;
       return { ...event, userAmountUsd: userAmount };
     }
-
     return event;
   });
 
-  const compoundByTx = new Map(compoundLogs.map((log) => [log.transactionHash, log]));
-  const pulledByTx = new Map(pulledLogs.map((log) => [log.transactionHash, log]));
-  const creditedByTx = new Map(profitLogs.map((log) => [log.transactionHash, log]));
+  const compoundByTx = new Map(compoundLogs.map((log) => [log.transactionHash as string, log]));
+  const pulledByTx = new Map(pulledLogs.map((log) => [log.transactionHash as string, log]));
+  const creditedByTx = new Map(profitLogs.map((log) => [log.transactionHash as string, log]));
 
-  const harvests = harvestLogs.map((log) => {
+  const harvests: HarvestProofEvent[] = harvestLogs.map((log) => {
     const compound = compoundByTx.get(log.transactionHash);
     const pulled = pulledByTx.get(log.transactionHash);
     const credited = creditedByTx.get(log.transactionHash);
-    const profitCredited = log.args.profitCredited ?? credited?.args.amount ?? BigInt(0);
+    const profitCredited = log.args?.profitCredited ?? credited?.args?.amount ?? BigInt(0);
 
     return {
       timestamp: timestamps.get(log.blockNumber) ?? 0,
-      blockNumber: log.blockNumber.toString(),
-      txHash: log.transactionHash,
+      blockNumber: String(log.blockNumber ?? 0),
+      txHash: (log.transactionHash ?? '') as string,
       profitCreditedUsd: toUsd(profitCredited),
-      rewardClaimedAero: compound?.args.rewardClaimed?.toString(),
-      profitUsdc: compound?.args.profitUsdc != null ? toUsd(compound.args.profitUsdc) : undefined,
-      lpAdded: compound?.args.lpAdded?.toString(),
-      profitPulledUsd: pulled?.args.amount != null ? toUsd(pulled.args.amount) : undefined,
+      rewardClaimedAero: compound?.args?.rewardClaimed?.toString(),
+      profitUsdc: compound?.args?.profitUsdc != null ? toUsd(compound.args.profitUsdc) : undefined,
+      lpAdded: compound?.args?.lpAdded?.toString(),
+      profitPulledUsd: pulled?.args?.amount != null ? toUsd(pulled.args.amount) : undefined,
     };
   });
 
@@ -227,3 +240,5 @@ export async function loadOnchainAudit(userAddress: string, chainId: number): Pr
     timeline: enrichedTimeline,
   };
 }
+
+

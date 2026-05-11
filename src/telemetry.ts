@@ -15,10 +15,7 @@ const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetr
  */
 export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   // ── Environment Baking & Bulletproof Fallbacks ────────────────────────────
-  const BAKED_SECRET = "e10383a7f06075735018c89582bd53f966981ab0a386d35763776f0c490fdc58";
-  const FALLBACK_USER = "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
-
-  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS || FALLBACK_USER;
+  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   if (!event.userAddress) {
     event.userAddress = envUser;
   }
@@ -29,12 +26,17 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   }
 
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
-  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET || BAKED_SECRET;
+  const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET;
 
   const payload = JSON.stringify(event);
 
   // STDOUT log for Acurast Console diagnostics
   console.log(`[TELEMETRY_STDOUT] ${payload}`);
+
+  if (!secret) {
+    console.error("[TELEMETRY_ERROR] PROCESSOR_SHARED_SECRET is missing; event was only written to stdout.");
+    return;
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

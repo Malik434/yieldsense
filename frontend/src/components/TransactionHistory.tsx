@@ -88,7 +88,7 @@ export function TransactionHistory() {
 
   useEffect(() => {
     fetchTxs();
-    const id = setInterval(fetchTxs, 15000);
+    const id = setInterval(fetchTxs, 60_000) // Poll every 60s;
     return () => clearInterval(id);
   }, [activeChainId]);
 

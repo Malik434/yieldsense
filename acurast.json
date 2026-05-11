@@ -16,28 +16,14 @@
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
         "maxMemory": 256000000,
-        "maxNetworkRequests": 30,
+        "maxNetworkRequests": 120,
         "maxStorage": 1000000
       },
-      "numberOfReplicas": 4,
+      "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 5500000000,
-      "includeEnvironmentVariables": [
-        "RPC_URL",
-        "KEEPER_ADDRESS",
-        "CHAIN_ID",
-        "DATA_RPC_URL",
-        "POOL_ADDRESS",
-        "GAUGE_ADDRESS",
-        "UNISWAP_POOL_ADDRESS",
-        "FORCE_TEST_HARVEST",
-        "PROCESSOR_SHARED_SECRET",
-        "USER_ADDRESS",
-        "GRID_CONFIG_JSON",
-        "TELEMETRY_URL",
-        "FRONTEND_URL"
-      ],
+      "includeEnvironmentVariables": [],
       "processorWhitelist": []
     },
     "YieldSenseTest": {
@@ -63,11 +49,7 @@
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 10000000000,
-      "includeEnvironmentVariables": [
-        "TELEMETRY_URL",
-        "PROCESSOR_SHARED_SECRET",
-        "USER_ADDRESS"
-      ],
+      "includeEnvironmentVariables": [],
       "processorWhitelist": []
     }
   }
