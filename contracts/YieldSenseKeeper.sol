@@ -222,6 +222,34 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         revert("Permissionless attestation disabled for MVP. Use ownerAttestProcessor.");
     }
 
+    /** @dev See {IERC4626-totalAssets}. */
+    function totalAssets() public view virtual override returns (uint256) {
+        uint256 keeperBal = IERC20(asset()).balanceOf(address(this));
+        uint256 strategyBal = address(autocompounder) != address(0) 
+            ? autocompounder.getDeployedValueInUSDC() 
+            : 0;
+        return keeperBal + strategyBal;
+    }
+
+    /** @dev See {IERC4626-maxDeposit}. */
+    function maxDeposit(address) public view virtual override returns (uint256) {
+        if (paused()) return 0;
+        uint256 total = totalAssets();
+        if (total >= maxTotalAssets) return 0;
+        return maxTotalAssets - total;
+    }
+
+    /** @dev See {IERC4626-maxMint}. */
+    function maxMint(address) public view virtual override returns (uint256) {
+        if (paused()) return 0;
+        uint256 total = totalAssets();
+        if (total >= maxTotalAssets) return 0;
+        // Approximation: since 1 share = 1 asset at start, we use maxAssets-total.
+        // For accurate mint limits, we'd use previewMint, but this is safe for pilot.
+        uint256 remainingAssets = maxTotalAssets - total;
+        return convertToShares(remainingAssets);
+    }
+
     // ─── TIMELOCK SETTERS ─────────────────────────────────────────────────────
 
     function initiateUpdate(bytes32 key, address newValue) external onlyOwner {

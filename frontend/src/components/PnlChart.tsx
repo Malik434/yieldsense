@@ -38,6 +38,21 @@ interface PortfolioHistoryEvent {
   txHash?: string;
 }
 
+interface OnchainAuditTimelineEvent {
+  kind: 'deposit' | 'withdraw' | 'fee_mint' | 'profit_credited';
+  owner?: string;
+  timestamp: number;
+  assetsUsd?: number;
+  shares?: string;
+  amountUsd?: number;
+  userAmountUsd?: number;
+  txHash?: string;
+}
+
+interface OnchainAuditResponse {
+  timeline?: OnchainAuditTimelineEvent[];
+}
+
 interface PnlChartProps {
   currentBalance: number;
   initialDeposit: number;
@@ -91,6 +106,22 @@ async function fetchPortfolioHistory(
   } catch (error) {
     console.warn('[PnlChart] Falling back without on-chain deposit history:', error);
     return [];
+  }
+}
+
+async function fetchOnchainAudit(
+  portfolioAddress: string | undefined,
+  chainId: number
+): Promise<OnchainAuditResponse | null> {
+  if (!portfolioAddress) return null;
+
+  try {
+    const res = await fetch(`/api/onchain-audit?userAddress=${portfolioAddress}&chainId=${chainId}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (error) {
+    console.warn('[PnlChart] Falling back without on-chain audit history:', error);
+    return null;
   }
 }
 
@@ -166,7 +197,10 @@ export function PnlChart({
       const res = await fetch(`/api/state?userAddress=${targetAddress}&chainId=${chainId}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
-      const portfolioEvents = await fetchPortfolioHistory(portfolioAddress, chainId);
+      const [portfolioEvents, onchainAudit] = await Promise.all([
+        fetchPortfolioHistory(portfolioAddress, chainId),
+        fetchOnchainAudit(portfolioAddress, chainId),
+      ]);
 
       // logs are stored newest-first; reverse to get chronological order
       const logs: any[] = (state.logs ?? [])
@@ -185,14 +219,19 @@ export function PnlChart({
       const now = Date.now();
       const windowMs = PERIOD_WINDOWS[period] ?? Infinity;
       const periodStart = period === 'ALL' ? 0 : now - windowMs;
+      const auditTimeline = Array.isArray(onchainAudit?.timeline) ? onchainAudit.timeline : [];
       const firstPortfolioEvent = portfolioEvents.find(
         (event) => event.owner?.toLowerCase() === portfolioAddress?.toLowerCase()
       );
+      const firstAuditEvent = auditTimeline.find(
+        (event) => event.kind === 'deposit' && event.owner?.toLowerCase() === portfolioAddress?.toLowerCase()
+      );
       const firstPortfolioTs = firstPortfolioEvent ? firstPortfolioEvent.timestamp * 1000 : null;
+      const firstAuditTs = firstAuditEvent ? firstAuditEvent.timestamp * 1000 : null;
       let principalBalance = 0;
       let userShares = 0;
       let totalShares = 0;
-      const hasPortfolioHistory = portfolioEvents.length > 0;
+      const hasPortfolioHistory = auditTimeline.length > 0 || portfolioEvents.length > 0;
       if (!hasPortfolioHistory && initialDeposit > 0) {
         // If the RPC history endpoint is unavailable but the vault says the user
         // already has a balance, carry that position into the selected window.
@@ -201,18 +240,20 @@ export function PnlChart({
         totalShares = initialDeposit;
       }
       const historyEvents = [
-        ...portfolioEvents.map((event) => ({
-          kind: event.type,
-          timestamp: event.timestamp * 1000,
-          amountUsd: event.assetsUsd,
+        ...(auditTimeline.length > 0 ? auditTimeline : portfolioEvents).map((event: any) => ({
+          kind: event.kind ?? event.type,
+          timestamp: event.timestamp * (event.timestamp > 10_000_000_000 ? 1 : 1000),
+          amountUsd: event.assetsUsd ?? event.amountUsd ?? 0,
+          userAmountUsd: event.userAmountUsd,
           owner: event.owner,
-          shares: Number(event.shares) / 1e6,
+          shares: Number(event.shares ?? 0) / 1e6,
           txHash: event.txHash,
         })),
         ...logs.map((log) => ({
           kind: log.event,
           timestamp: Number(log.timestamp || 0) * 1000,
           amountUsd: Number(log.rewardUsd ?? 0),
+          userAmountUsd: undefined,
           owner: '',
           shares: 0,
           txHash: log.txHash,
@@ -238,8 +279,11 @@ export function PnlChart({
             principalBalance = Math.max(0, principalBalance - event.amountUsd);
           }
         }
-        if (event.kind === 'harvest_confirmed' && userShares > 0 && totalShares > 0) {
-          cumulativePnl += event.amountUsd * Math.min(userShares / totalShares, 1);
+        if (event.kind === 'fee_mint') {
+          totalShares += event.shares;
+        }
+        if (event.kind === 'profit_credited') {
+          cumulativePnl += event.userAmountUsd ?? 0;
         }
       }
 
@@ -250,8 +294,8 @@ export function PnlChart({
         balance: principalBalance + cumulativePnl,
         deposit: principalBalance,
         timestamp:
-          period === 'ALL' && firstPortfolioTs
-            ? Math.max(0, firstPortfolioTs - 60_000)
+          period === 'ALL' && (firstAuditTs ?? firstPortfolioTs)
+            ? Math.max(0, (firstAuditTs ?? firstPortfolioTs ?? 0) - 60_000)
             : periodStart,
       });
 
@@ -279,8 +323,11 @@ export function PnlChart({
             userShares = Math.max(0, userShares - event.shares);
             principalBalance = Math.max(0, principalBalance - event.amountUsd);
           }
-        } else if (event.kind === 'harvest_confirmed' && userShares > 0 && totalShares > 0) {
-          const userReward = event.amountUsd * Math.min(userShares / totalShares, 1);
+        } else if (event.kind === 'fee_mint') {
+          totalShares += event.shares;
+          continue;
+        } else if (event.kind === 'profit_credited') {
+          const userReward = event.userAmountUsd ?? 0;
           cumulativePnl += userReward;
           harvestTotal += userReward;
         } else if (event.kind === 'grid_trade_executed') {

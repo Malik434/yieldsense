@@ -11,7 +11,8 @@
     "start": "webpack-dev-server --mode development",
     "test:pools": "tsx src/poolSmoke.ts",
     "dev": "node --env-file=.env dist/index.bundle.cjs",
-    "dev:processor": "node --env-file=.env dist/processor.bundle.cjs"
+    "dev:processor": "node --env-file=.env dist/processor.bundle.cjs",
+    "verify:lp": "node scripts/verifyLpPosition.cjs"
   },
   "engines": {
     "node": ">=20.9.0"

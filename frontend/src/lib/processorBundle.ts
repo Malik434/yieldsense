@@ -5,7 +5,7 @@
 //   npm run build:embed               (runs webpack + this script)
 //
 // Source: dist/processor.bundle.cjs (330.1 KB uncompressed)
-// Generated: 2026-05-11T17:21:04.819Z
+// Generated: 2026-05-11T19:22:05.934Z
 //
 // Why this file exists:
 //   /api/deploy/route.ts needs to upload a fully-compiled Acurast processor

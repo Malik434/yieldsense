@@ -68,18 +68,25 @@ export function DepositModule() {
 
   const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
   const totalAssetsNum = totalAssets ? Number(formatUnits(totalAssets as bigint, 6)) : 0;
-  const maxAssetsNum = maxTotalAssets ? Number(formatUnits(maxTotalAssets as bigint, 6)) : 0;
+  const totalAssetsVal = totalAssets !== undefined ? (totalAssets as bigint) : ZERO;
+  const maxTotalAssetsVal = maxTotalAssets !== undefined ? (maxTotalAssets as bigint) : ZERO;
+  const maxAssetsNum = Number(formatUnits(maxTotalAssetsVal, 6));
+
   const remainingCapacity =
-    maxTotalAssets && totalAssets
-      ? (maxTotalAssets as bigint) > (totalAssets as bigint)
-        ? (maxTotalAssets as bigint) - (totalAssets as bigint)
+    maxTotalAssets !== undefined && totalAssets !== undefined
+      ? maxTotalAssetsVal > totalAssetsVal
+        ? maxTotalAssetsVal - totalAssetsVal
         : ZERO
       : ZERO;
   
   const capReached = maxAssetsNum > 0 && totalAssetsNum >= maxAssetsNum;
-  const depositsDisabled = maxAssetsNum === 0;
+  const depositsDisabled = maxTotalAssets !== undefined && maxTotalAssetsVal === ZERO;
   const amountExceedsCapacity =
-    !depositsDisabled && depositAmountParsed > ZERO && depositAmountParsed > remainingCapacity;
+    !depositsDisabled && 
+    maxTotalAssets !== undefined &&
+    totalAssets !== undefined &&
+    depositAmountParsed > ZERO && 
+    depositAmountParsed > remainingCapacity;
 
   const isLoading = txState === 'approving' || txState === 'depositing';
 

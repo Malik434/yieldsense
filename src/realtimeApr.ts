@@ -18,6 +18,7 @@ export interface AprConsensus {
 }
 
 const USER_AGENT = "YieldSense/3.0 (Acurast TEE)";
+const DEFAULT_POOL_FEE_RATE = Number(process.env.POOL_FEE_RATE ?? 0.003);
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -105,7 +106,10 @@ async function fetchGecko(poolAddress: string): Promise<AprObservation> {
 
     const vol24h = Number(attr?.volume_usd?.h24 ?? 0);
     const tvl = Number(attr?.reserve_in_usd ?? 0);
-    const feePct = Number(attr?.pool_fee_percentage ?? 0.05) / 100;
+    const feePct =
+      attr?.pool_fee_percentage != null
+        ? Number(attr.pool_fee_percentage) / 100
+        : DEFAULT_POOL_FEE_RATE;
     if (vol24h > 0 && tvl > 0) {
       return {
         source: "geckoTerminal",
@@ -145,7 +149,7 @@ async function fetchDexScreener(poolAddress: string): Promise<AprObservation> {
     if (volume24h > 0 && liquidityUsd > 0) {
       return {
         source: "dexScreener",
-        apr: (volume24h * 0.0005 * 365) / liquidityUsd,
+        apr: (volume24h * DEFAULT_POOL_FEE_RATE * 365) / liquidityUsd,
         timestamp,
         confidence: 0.6,
       };

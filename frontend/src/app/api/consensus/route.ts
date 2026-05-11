@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
+import { Contract, JsonRpcProvider, formatUnits } from 'ethers';
 
 // Base mainnet Aerodrome vAMM-USDC/AERO pool used by the deployed MVP strategy.
 const MAINNET_POOL = '0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d';
+const MAINNET_GAUGE = '0x4F09bAb2f0E15e2A078A227FE1537665F55b8360';
+const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const TESTNET_POOL = process.env.NEXT_PUBLIC_TESTNET_POOL_ADDRESS || '';
 // Fee rate in BPS for the pool (default 30 = 0.30% for volatile Aerodrome pools)
 const POOL_FEE_BPS = Number(process.env.POOL_FEE_BPS ?? 30);
@@ -10,6 +13,44 @@ interface AprSource {
   bps: number;
   status: 'ok' | 'error';
   url: string;
+}
+
+const POOL_ABI = [
+  'function token0() view returns (address)',
+  'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)',
+  'function totalSupply() view returns (uint256)',
+];
+
+const GAUGE_ABI = [
+  'function rewardRate() view returns (uint256)',
+  'function periodFinish() view returns (uint256)',
+  'function totalSupply() view returns (uint256)',
+];
+
+const SECONDS_PER_YEAR = 31_536_000;
+const RPC_READ_DELAY_MS = 250;
+const GAUGE_CACHE_MS = 60_000;
+
+let gaugeAprCache: { bps: number; timestamp: number } | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readWithRetry<T>(label: string, fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      if (i > 0) await sleep(RPC_READ_DELAY_MS * i * 3);
+      const value = await fn();
+      await sleep(RPC_READ_DELAY_MS);
+      return value;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`${label}: ${message}`);
 }
 
 /**
@@ -96,10 +137,74 @@ async function fetchOnChainApr(poolAddress: string): Promise<AprSource> {
   }
 }
 
+async function fetchGaugeRewardApr(poolAddress: string, gaugeAddress: string): Promise<AprSource> {
+  const rpcUrl = process.env.DATA_RPC_URL?.trim() || process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org';
+  if (gaugeAprCache && Date.now() - gaugeAprCache.timestamp < GAUGE_CACHE_MS) {
+    return { bps: gaugeAprCache.bps, status: 'ok', url: `${rpcUrl}#cached` };
+  }
+
+  try {
+    const provider = new JsonRpcProvider(rpcUrl, 8453, { batchMaxCount: 1 });
+    const gauge = new Contract(gaugeAddress, GAUGE_ABI, provider);
+    const pool = new Contract(poolAddress, POOL_ABI, provider);
+
+    const rewardRate = await readWithRetry('gauge.rewardRate', () =>
+      gauge.rewardRate()
+    );
+    const periodFinish = await readWithRetry('gauge.periodFinish', () =>
+      gauge.periodFinish()
+    );
+    const gaugeLpSupply = await readWithRetry('gauge.totalSupply', () =>
+      gauge.totalSupply()
+    );
+    const poolLpSupply = await readWithRetry('pool.totalSupply', () =>
+      pool.totalSupply()
+    );
+    const token0 = await readWithRetry('pool.token0', () =>
+      pool.token0()
+    );
+    const reserves = await readWithRetry('pool.getReserves', () =>
+      pool.getReserves()
+    );
+
+    const now = Math.floor(Date.now() / 1000);
+    if (Number(periodFinish) <= now || rewardRate === BigInt(0) || gaugeLpSupply === BigInt(0) || poolLpSupply === BigInt(0)) {
+      return { bps: 0, status: 'error', url: rpcUrl };
+    }
+
+    const reserve0 = reserves.reserve0 ?? reserves[0];
+    const reserve1 = reserves.reserve1 ?? reserves[1];
+    const usdcIsToken0 = token0.toLowerCase() === MAINNET_USDC.toLowerCase();
+    const usdcReserveRaw = usdcIsToken0 ? reserve0 : reserve1;
+    const aeroReserveRaw = usdcIsToken0 ? reserve1 : reserve0;
+    const poolTvlUsd = Number(formatUnits(usdcReserveRaw * BigInt(2), 6));
+    const lpStakedFraction = Number(formatUnits(gaugeLpSupply, 18)) / Number(formatUnits(poolLpSupply, 18));
+    const gaugeStakedUsd = poolTvlUsd * lpStakedFraction;
+    const aeroPriceUsd = Number(formatUnits(usdcReserveRaw, 6)) / Number(formatUnits(aeroReserveRaw, 18));
+    const rewardAeroPerSec = Number(formatUnits(rewardRate, 18));
+    const rewardUsdPerYear = rewardAeroPerSec * aeroPriceUsd * SECONDS_PER_YEAR;
+
+    if (!Number.isFinite(gaugeStakedUsd) || gaugeStakedUsd <= 0 || !Number.isFinite(rewardUsdPerYear)) {
+      throw new Error('Invalid gauge APR inputs');
+    }
+
+    const bps = Math.round((rewardUsdPerYear / gaugeStakedUsd) * 10_000);
+    gaugeAprCache = { bps, timestamp: Date.now() };
+    return { bps, status: 'ok', url: rpcUrl };
+  } catch (err: any) {
+    console.warn('[consensus] Gauge reward APR error:', err?.message);
+    if (gaugeAprCache) {
+      return { bps: gaugeAprCache.bps, status: 'ok', url: `${rpcUrl}#stale-cache` };
+    }
+    return { bps: 0, status: 'error', url: rpcUrl };
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const chainId = Number(searchParams.get('chainId') || 8453);
   const poolAddress = (chainId === 8453 ? MAINNET_POOL : TESTNET_POOL).toLowerCase();
+  const gaugeAddress = chainId === 8453 ? MAINNET_GAUGE : '';
 
   if (!poolAddress) {
     return NextResponse.json({
@@ -116,11 +221,16 @@ export async function GET(request: Request) {
   }
 
   // Fetch all three sources concurrently
-  const [gecko, dex, rpc] = await Promise.all([
+  const [geckoFee, dexFee, rpcFee, gaugeReward] = await Promise.all([
     fetchGeckoTerminalApr(poolAddress),
     fetchDexScreenerApr(poolAddress),
     fetchOnChainApr(poolAddress),
+    gaugeAddress ? fetchGaugeRewardApr(poolAddress, gaugeAddress) : Promise.resolve({ bps: 0, status: 'error' as const, url: '' }),
   ]);
+
+  const gecko = { ...geckoFee, bps: gaugeReward.status === 'ok' ? gaugeReward.bps : geckoFee.bps };
+  const dex = { ...dexFee, bps: gaugeReward.status === 'ok' ? gaugeReward.bps : dexFee.bps };
+  const rpc = { ...rpcFee, bps: gaugeReward.status === 'ok' ? gaugeReward.bps : rpcFee.bps };
 
   const workingSources = [gecko, dex, rpc].filter(s => s.status === 'ok' && s.bps > 0);
 
@@ -137,12 +247,20 @@ export async function GET(request: Request) {
     consensus,
     timestamp:     Date.now(),
     poolAddress,
+    gaugeAddress: gaugeAddress || null,
     poolFeeBps:    POOL_FEE_BPS,
+    feeApr: {
+      geckoTerminal: geckoFee.bps,
+      dexScreener: dexFee.bps,
+      rpc: rpcFee.bps,
+    },
+    rewardApr: gaugeReward.bps,
     chainId,
     sources: {
       geckoTerminal: { url: gecko.url, status: gecko.status },
       dexScreener:   { url: dex.url,   status: dex.status   },
       rpc:           { url: rpc.url,    status: rpc.status   },
+      gauge:         { url: gaugeReward.url, status: gaugeReward.status },
     },
   });
 }

@@ -47,7 +47,7 @@ const CONFIG = {
   })(),
   strategyTvl: Number(process.env.STRATEGY_TVL_USD ?? 10000),
   efficiencyMultiplier: Number(process.env.EFFICIENCY_MULTIPLIER ?? 1.5),
-  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.0005),
+  poolFee: Number(process.env.POOL_FEE_RATE ?? 0.003),
   estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "400000"),
   minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
   maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
@@ -126,6 +126,68 @@ const KEEPER_ABI = [
   "function lastHarvest() view returns (uint256)",
   "function executeHarvest(uint256 nonce, address targetPool, uint256 minLpOut, uint256 amountToSwap, uint256 deadline, tuple(address from, address to, bool stable, address factory)[] calldata routes) external",
 ];
+
+const HARVEST_AUDIT_IFACES = [
+  new ethers.Interface([
+    "event HarvestExecuted(address indexed processor, uint256 indexed nonce, uint256 profitCredited)",
+    "event ProfitCredited(uint256 amount)",
+  ]),
+  new ethers.Interface([
+    "event HarvestAndCompounded(uint256 rewardClaimed, uint256 rewardSwappedToAsset, uint256 lpAdded, uint256 profitUsdc, uint256 timestamp)",
+    "event ProfitPulled(address indexed to, uint256 amount)",
+  ]),
+];
+
+interface HarvestReceiptProof {
+  profitCreditedUsd: number;
+  profitCreditedRaw: string;
+  rewardClaimedRaw?: string;
+  profitUsdcRaw?: string;
+  lpAddedRaw?: string;
+  profitPulledRaw?: string;
+  blockNumber: number;
+}
+
+function parseHarvestReceiptProof(receipt: ethers.TransactionReceipt): HarvestReceiptProof {
+  let profitCredited = 0n;
+  let rewardClaimed: bigint | undefined;
+  let profitUsdc: bigint | undefined;
+  let lpAdded: bigint | undefined;
+  let profitPulled: bigint | undefined;
+
+  for (const log of receipt.logs) {
+    for (const iface of HARVEST_AUDIT_IFACES) {
+      try {
+        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        if (!parsed) continue;
+
+        if (parsed.name === "HarvestExecuted") {
+          profitCredited = BigInt(parsed.args.profitCredited);
+        } else if (parsed.name === "ProfitCredited") {
+          profitCredited = BigInt(parsed.args.amount);
+        } else if (parsed.name === "HarvestAndCompounded") {
+          rewardClaimed = BigInt(parsed.args.rewardClaimed);
+          profitUsdc = BigInt(parsed.args.profitUsdc);
+          lpAdded = BigInt(parsed.args.lpAdded);
+        } else if (parsed.name === "ProfitPulled") {
+          profitPulled = BigInt(parsed.args.amount);
+        }
+      } catch {
+        // Ignore unrelated logs from tokens, router, pool, and gauge.
+      }
+    }
+  }
+
+  return {
+    profitCreditedUsd: Number(ethers.formatUnits(profitCredited, 6)),
+    profitCreditedRaw: profitCredited.toString(),
+    rewardClaimedRaw: rewardClaimed?.toString(),
+    profitUsdcRaw: profitUsdc?.toString(),
+    lpAddedRaw: lpAdded?.toString(),
+    profitPulledRaw: profitPulled?.toString(),
+    blockNumber: receipt.blockNumber,
+  };
+}
 
 const LEGACY_KEEPER_ABI = [
   // Older deployed keeper without autocompounder — no minAssetOut
@@ -491,6 +553,7 @@ async function main(): Promise<void> {
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0);
 
   let txHash: string;
+  let receipt: ethers.TransactionReceipt | null;
 
   if (acurastStd) {
     const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
@@ -528,7 +591,7 @@ async function main(): Promise<void> {
       processorAddress: hwAddress,
       ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
     });
-    await executionProvider.waitForTransaction(txHash);
+    receipt = await executionProvider.waitForTransaction(txHash);
   } else {
     const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
 
@@ -590,8 +653,14 @@ async function main(): Promise<void> {
       signingMode: "local_private_key",
       ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
     });
-    await tx.wait();
+    receipt = await tx.wait();
   }
+
+  if (!receipt) {
+    throw new Error(`Harvest transaction ${txHash} was submitted but no receipt was returned.`);
+  }
+
+  const receiptProof = parseHarvestReceiptProof(receipt);
 
   state.lastExecutionAt = nowSec;
   state.lastDecisionReason = "executed";
@@ -600,7 +669,14 @@ async function main(): Promise<void> {
   await emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
-    rewardUsd: rewardCents / 100,
+    profitCreditedUsd: receiptProof.profitCreditedUsd,
+    profitCreditedRaw: receiptProof.profitCreditedRaw,
+    estimatedRewardUsd: rewardCents / 100,
+    rewardClaimedRaw: receiptProof.rewardClaimedRaw,
+    profitUsdcRaw: receiptProof.profitUsdcRaw,
+    lpAddedRaw: receiptProof.lpAddedRaw,
+    profitPulledRaw: receiptProof.profitPulledRaw,
+    blockNumber: receiptProof.blockNumber,
     txHash,
     chainId: executionChainId,
   });

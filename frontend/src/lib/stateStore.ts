@@ -225,8 +225,13 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       patch.apiFailureStreak = 0;
       // Harvest realized the accrued yield — reset unrealized and accumulate realized.
       patch.unrealizedYieldUsd = 0;
-      patch.totalRealizedProfitUsd =
-        (currentState.totalRealizedProfitUsd ?? 0) + ((event.rewardUsd as number) ?? 0);
+      // Only accumulate realized profit when the processor provides an amount
+      // decoded from keeper events. Legacy rewardUsd was an off-chain estimate
+      // and must not be treated as accounting truth.
+      if (event.profitCreditedUsd != null) {
+        patch.totalRealizedProfitUsd =
+          (currentState.totalRealizedProfitUsd ?? 0) + ((event.profitCreditedUsd as number) ?? 0);
+      }
       break;
     }
 
