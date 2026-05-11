@@ -363,7 +363,22 @@ async function main(): Promise<void> {
 
   const ethPricePromise = getEthPrice();
   const feeDataPromise = executionProvider.getFeeData();
-  const lastHarvestPromise = CONFIG.forceTestHarvest ? Promise.resolve(0n) : keeperRead.lastHarvest();
+  let lastHarvestPromise: Promise<bigint>;
+  if (CONFIG.forceTestHarvest) {
+    lastHarvestPromise = Promise.resolve(0n);
+  } else {
+    lastHarvestPromise = (async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          return await keeperRead.lastHarvest();
+        } catch (err: any) {
+          if (i === 2) throw err;
+          await new Promise((res) => setTimeout(res, 1000 * (i + 1)));
+        }
+      }
+      return 0n;
+    })();
+  }
 
   let yieldResult;
   if (CONFIG.forceTestHarvest) {

@@ -351,9 +351,26 @@ function signTradeDigest(digest: string, privateKey?: string): string {
 }
 
 async function fetchPoolPrice(provider: ethers.JsonRpcProvider, poolAddress: string): Promise<number> {
-  const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
-  const slot0 = await pool.slot0();
-  return calculatePriceFromSqrtX96(slot0.sqrtPriceX96 as bigint);
+  try {
+    const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
+    const slot0 = await pool.slot0();
+    return calculatePriceFromSqrtX96(slot0.sqrtPriceX96 as bigint);
+  } catch (err: any) {
+    if (err.code === "CALL_EXCEPTION") {
+      try {
+        const v2Abi = [
+          "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+        ];
+        const v2Pool = new ethers.Contract(poolAddress, v2Abi, provider);
+        const [r0, r1] = await v2Pool.getReserves();
+        if (r0 === 0n || r1 === 0n) return 0;
+        const precision = 10n ** 18n;
+        const scaled = (r0 * precision) / r1;
+        return (Number(scaled) / Number(precision)) * POOL_DECIMAL_FACTOR;
+      } catch (innerErr) {}
+    }
+    throw err;
+  }
 }
 
 function createTradePayload(
