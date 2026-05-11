@@ -20,7 +20,7 @@ export const CHAIN_CONFIG = {
   }
 };
 
-export const DEFAULT_CHAIN_ID = baseSepolia.id;
+export const DEFAULT_CHAIN_ID = base.id;
 
 export function getContractConfig(chainId: number | undefined) {
   return CHAIN_CONFIG[chainId as keyof typeof CHAIN_CONFIG] || CHAIN_CONFIG[DEFAULT_CHAIN_ID];

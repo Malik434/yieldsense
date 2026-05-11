@@ -73,8 +73,9 @@ async function main() {
   console.log(`  Owner     : ${ownerAddress} (Safe/Multisig)`);
   console.log();
 
-  if (deployerBalance < hre.ethers.parseEther("0.01")) {
-    console.error("🚨 ABORT: Deployer has less than 0.01 ETH on Base. Fund the deployer wallet first.\n");
+  if (deployerBalance < hre.ethers.parseEther("0.002")) {
+    console.error("🚨 ABORT: Deployer has less than 0.002 ETH on Base. Fund the deployer wallet first.");
+    console.error("   Note: 0.002 ETH is very tight for contract deployments. 0.01 ETH is recommended.\n");
     process.exitCode = 1;
     return;
   }
@@ -115,7 +116,21 @@ async function main() {
   await (await autocompounder.setKeeper(keeperAddress, { gasLimit: 100_000 })).wait();
   console.log("✅ Keeper authorized on Autocompounder");
 
-  // ── 5. Mandatory: transfer ownership to multisig ──────────────────────────
+  // ── 5. Set initial deposit cap to 20 USDC ─────────────────────────────────
+  // Initial MVP cap: enable deposits, but keep exposure limited for smoke testing.
+  console.log("\nSetting initial deposit cap to 20 USDC...");
+  const initialCap = hre.ethers.parseUnits("20", 6);
+
+  await (await keeper.setMaxTotalAssets(initialCap, { gasLimit: 100_000 })).wait();
+
+  const cap = await keeper.maxTotalAssets();
+  if (cap !== initialCap) {
+    throw new Error(`Cap mismatch after setMaxTotalAssets: ${cap.toString()}`);
+  }
+
+  console.log("✅ Deposit cap set to 20 USDC");
+
+  // ── 6. Mandatory: transfer ownership to multisig ──────────────────────────
   console.log(`\nTransferring ownership to Safe: ${ownerAddress}...`);
   await (await autocompounder.transferOwnership(ownerAddress, { gasLimit: 100_000 })).wait();
   await (await keeper.transferOwnership(ownerAddress, { gasLimit: 100_000 })).wait();
@@ -142,6 +157,7 @@ async function main() {
     ownerAccepted: false, // Safe must call acceptOwnership() — update to true after verification
     yieldSenseKeeper: keeperAddress,
     aerodromeAutocompounder: autocompounderAddress,
+    initialMaxTotalAssets: initialCap.toString(),
     usdc: USDC_ADDRESS,
     aero: AERO_ADDRESS,
     router: ROUTER_ADDRESS,
@@ -182,7 +198,7 @@ async function main() {
   console.log(`2. Call acceptOwnership() on YieldSenseKeeper (${keeperAddress})`);
   console.log(`3. Confirm autocompounder.keeper() == ${keeperAddress}, then call autocompounder.lockKeeper()`);
   console.log(`4. Deploy Acurast job and call keeper.ownerAttestProcessor(processorEVMAddress)`);
-  console.log(`5. Call keeper.setMaxTotalAssets(10000000) to set 10 USDC pilot cap`);
+  console.log(`5. Confirm keeper.maxTotalAssets() == 20000000. Do not increase cap until smoke test passes.`);
   console.log(`6. Run the 1 USDC smoke test\n`);
 }
 
