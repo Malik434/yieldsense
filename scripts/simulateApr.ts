@@ -34,6 +34,9 @@ async function main() {
     minApiConfidence: 0.6,
     useForwardProjection: true,
     apyCompoundPeriodsPerYear: 365,
+    defiLlamaProject: "aerodrome-v1",
+    defiLlamaToken0: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC
+    defiLlamaToken1: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", // AERO
   };
 
   console.log(`[Simulator] Fetching Yield Estimate for Pool: ${req.poolAddress}`);
@@ -42,30 +45,35 @@ async function main() {
   try {
     const start = Date.now();
     const result = await getRobustYieldEstimate(ctx, req);
+    const estimate = result.estimate || (result as any); // fallback if it was changed
     const ms = Date.now() - start;
 
     console.log(`\n[Simulator] Success! Took ${ms}ms\n`);
     console.log(`--- APR BREAKDOWN ---`);
-    console.log(`Fee APR:     ${(result.feeApr * 100).toFixed(2)}%`);
-    console.log(`Reward APR:  ${(result.rewardApr * 100).toFixed(2)}%`);
-    console.log(`Total APR:   ${(result.totalApr * 100).toFixed(2)}%`);
-    console.log(`Total APY:   ${(result.estimatedApy * 100).toFixed(2)}%`);
+    console.log(`Fee APR:     ${(estimate.feeApr * 100).toFixed(2)}%`);
+    console.log(`Reward APR:  ${(estimate.rewardApr * 100).toFixed(2)}%`);
+    console.log(`Total APR:   ${(estimate.totalApr * 100).toFixed(2)}%`);
+    console.log(`Total APY:   ${(estimate.estimatedApy * 100).toFixed(2)}%`);
     console.log(`\n--- CONFIDENCE & SOURCES ---`);
-    console.log(`Confidence:  ${(result.confidence * 100).toFixed(2)}%`);
-    console.log(`Usable:      ${result.usable}`);
-    console.log(`Sources:     ${result.dataSourcesUsed.join(', ')}`);
+    console.log(`Confidence:  ${(estimate.confidence * 100).toFixed(2)}%`);
+    console.log(`Usable:      ${estimate.usable}`);
+    console.log(`Sources:     ${estimate.dataSourcesUsed?.join(', ')}`);
     console.log(`\n--- DIAGNOSTICS ---`);
-    console.log(`TVL (USD):   $${result.diagnostics.tvlUsdTwab.toFixed(2)}`);
-    console.log(`24h Fees:    $${result.diagnostics.feeUsdWindow.toFixed(2)}`);
-    console.log(`AERO/sec:    $${result.diagnostics.rewardUsdPerSec.toFixed(4)}/sec`);
-    console.log(`Coverage:    ${(result.diagnostics.coverageRatio * 100).toFixed(1)}%`);
+    console.log(`TVL (USD):   $${estimate.diagnostics?.tvlUsdTwab?.toFixed(2)}`);
+    console.log(`24h Fees:    $${estimate.diagnostics?.feeUsdWindow?.toFixed(2)}`);
+    console.log(`AERO/sec:    $${estimate.diagnostics?.rewardUsdPerSec?.toFixed(4)}/sec`);
+    console.log(`Coverage:    ${((estimate.diagnostics?.coverageRatio ?? 0) * 100).toFixed(1)}%`);
 
-    if (result.forwardAprEstimate) {
+    if (estimate.forwardAprEstimate) {
       console.log(`\n--- FORWARD PROJECTION (7 Days) ---`);
-      console.log(`Total APR:   ${(result.forwardAprEstimate.totalApr * 100).toFixed(2)}%`);
+      console.log(`Total APR:   ${((estimate.forwardAprEstimate.totalApr ?? 0) * 100).toFixed(2)}%`);
     }
 
+    console.log(`\n--- ON-CHAIN BLEND DIAGNOSTICS ---`);
+    console.log(`Fallback Mode Active: ${estimate.confidence < req.minExecutionConfidence}`);
+
   } catch (error) {
+
     console.error("[Simulator] Error during estimation:", error);
   }
 }

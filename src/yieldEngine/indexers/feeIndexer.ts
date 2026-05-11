@@ -11,8 +11,13 @@ const V3_SWAP_IFACE = new Interface([
   "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
 ]);
 
+const AERO_V1_SWAP_IFACE = new Interface([
+  "event Swap(address indexed sender, address indexed to, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out)",
+]);
+
 const V2_SWAP_TOPIC = V2_SWAP_IFACE.getEvent("Swap")!.topicHash;
 const V3_SWAP_TOPIC = V3_SWAP_IFACE.getEvent("Swap")!.topicHash;
+const AERO_V1_SWAP_TOPIC = AERO_V1_SWAP_IFACE.getEvent("Swap")!.topicHash;
 
 function feeUsdFromV3Swap(
   amount0: bigint,
@@ -104,11 +109,23 @@ export async function indexSwapFeesUsd(
     prices,
     "v3"
   );
+  const aero = await collectSwapFees(
+    provider,
+    poolAddress,
+    fromBlock,
+    toBlock,
+    chunkSize,
+    AERO_V1_SWAP_TOPIC,
+    AERO_V1_SWAP_IFACE,
+    poolFeeBps,
+    prices,
+    "v2"
+  );
 
-  const feeUsd = v2.feeUsd + v3.feeUsd;
-  const swapCount = v2.swapCount + v3.swapCount;
-  const totalChunks = v2.totalChunks + v3.totalChunks;
-  const failedChunks = v2.failedChunks + v3.failedChunks;
+  const feeUsd = v2.feeUsd + v3.feeUsd + aero.feeUsd;
+  const swapCount = v2.swapCount + v3.swapCount + aero.swapCount;
+  const totalChunks = v2.totalChunks + v3.totalChunks + aero.totalChunks;
+  const failedChunks = v2.failedChunks + v3.failedChunks + aero.failedChunks;
 
   const t0 = await getBlockTimestamp(provider, fromBlock);
   const t1 = await getBlockTimestamp(provider, toBlock);
