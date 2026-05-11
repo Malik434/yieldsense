@@ -263,6 +263,7 @@ export default function CommandCenter() {
             totalRealized={userProfit}
             unrealizedYield={userUnrealized}
             userAddress={OPERATOR_ADDRESS}
+            portfolioAddress={address}
             chainId={chainId}
             vaultShareFraction={vaultShareFraction}
           />

@@ -27,6 +27,7 @@ export const CHAIN_CONFIG = {
     router: MAINNET_ROUTER as `0x${string}`,
     factory: MAINNET_FACTORY as `0x${string}`,
     rpc: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org',
+    deploymentBlock: BigInt('45858549'),
     isProduction: true,
   },
   [baseSepolia.id]: {
@@ -42,6 +43,7 @@ export const CHAIN_CONFIG = {
     router: (process.env.NEXT_PUBLIC_TESTNET_ROUTER_ADDRESS || '') as `0x${string}`,
     factory: (process.env.NEXT_PUBLIC_TESTNET_FACTORY_ADDRESS || '') as `0x${string}`,
     rpc: process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org',
+    deploymentBlock: BigInt(process.env.NEXT_PUBLIC_TESTNET_DEPLOYMENT_BLOCK || '0'),
     isProduction: false,
   }
 };

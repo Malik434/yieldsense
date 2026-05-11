@@ -3,9 +3,10 @@
  * Falls back to in-memory defaults for local development (no Netlify context).
  *
  * Tenant isolation:
- *   All blob keys are scoped to `state_<userAddress>` and `logs_<userAddress>`.
- *   There are no global/anonymous fallback keys. Every read/write requires a
- *   userAddress. This prevents cross-user state leakage and log poisoning.
+ *   All blob keys are scoped to `state_<userAddress>_<chainId>` and
+ *   `logs_<userAddress>_<chainId>` when chainId is known. There are no
+ *   global/anonymous fallback keys. Every read/write requires a userAddress.
+ *   This prevents cross-user state leakage and log poisoning.
  */
 
 interface WorkerState {
@@ -59,27 +60,64 @@ async function getBlobs() {
   }
 }
 
+function normaliseChainId(chainId?: string | number | null): string | null {
+  const value = String(chainId ?? '').trim();
+  return value.length > 0 ? value : null;
+}
+
+function scopedBlobKey(prefix: 'state' | 'logs', userAddress: string, chainId?: string | number | null): string {
+  const normalisedUser = userAddress.toLowerCase();
+  const normalisedChain = normaliseChainId(chainId);
+  return normalisedChain
+    ? `${prefix}_${normalisedUser}_${normalisedChain}`
+    : `${prefix}_${normalisedUser}`;
+}
+
+function eventChainId(event: Record<string, unknown>): string | null {
+  return normaliseChainId((event.chainId as string | number | undefined) ?? (event.CHAIN_ID as string | number | undefined));
+}
+
+function filterLogsForChain(logs: unknown[], chainId?: string | number | null): unknown[] {
+  const normalisedChain = normaliseChainId(chainId);
+  if (!normalisedChain) return logs;
+
+  return logs.filter((log: any) => {
+    const logChainId = normaliseChainId(log?.chainId ?? log?.CHAIN_ID);
+    return !logChainId || logChainId === normalisedChain;
+  });
+}
+
 // ── Public read API ───────────────────────────────────────────────────────────
 
-export async function getState(userAddress?: string): Promise<WorkerState> {
+export async function getState(userAddress?: string, chainId?: string | number | null): Promise<WorkerState> {
   if (!userAddress) return DEFAULT_STATE;
   const blobs = await getBlobs();
   if (!blobs) return DEFAULT_STATE;
   try {
-    const raw = await blobs.get(`state_${userAddress.toLowerCase()}`, { type: 'json' });
-    return (raw as WorkerState | null) ?? DEFAULT_STATE;
+    const scopedRaw = await blobs.get(scopedBlobKey('state', userAddress, chainId), { type: 'json' });
+    if (scopedRaw) return scopedRaw as WorkerState;
+
+    const legacyRaw = chainId
+      ? await blobs.get(scopedBlobKey('state', userAddress), { type: 'json' })
+      : null;
+    return (legacyRaw as WorkerState | null) ?? DEFAULT_STATE;
   } catch {
     return DEFAULT_STATE;
   }
 }
 
-export async function getLogs(userAddress?: string): Promise<unknown[]> {
+export async function getLogs(userAddress?: string, chainId?: string | number | null): Promise<unknown[]> {
   if (!userAddress) return [];
   const blobs = await getBlobs();
   if (!blobs) return [];
   try {
-    const raw = await blobs.get(`logs_${userAddress.toLowerCase()}`, { type: 'json' });
-    return (raw as unknown[] | null) ?? [];
+    const scopedRaw = await blobs.get(scopedBlobKey('logs', userAddress, chainId), { type: 'json' });
+    if (scopedRaw) return scopedRaw as unknown[];
+
+    const legacyRaw = chainId
+      ? await blobs.get(scopedBlobKey('logs', userAddress), { type: 'json' })
+      : null;
+    return filterLogsForChain((legacyRaw as unknown[] | null) ?? [], chainId);
   } catch {
     return [];
   }
@@ -111,16 +149,17 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
   }
 
   const normalised = userAddress.toLowerCase();
-  const stateKey = `state_${normalised}`;
-  const logsKey = `logs_${normalised}`;
+  const chainId = eventChainId(event);
+  const stateKey = scopedBlobKey('state', normalised, chainId);
+  const logsKey = scopedBlobKey('logs', normalised, chainId);
 
   const blobs = await getBlobs();
 
   // Single parallel read — prevents the double-read race condition where a
   // concurrent write between two getLogs() calls could drop an event.
   const [currentState, existingLogs] = await Promise.all([
-    getState(normalised),
-    getLogs(normalised),
+    getState(normalised, chainId),
+    getLogs(normalised, chainId),
   ]);
 
   const patch: Partial<WorkerState> = {

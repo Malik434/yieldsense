@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const [state, logs] = await Promise.all([getState(userAddress), getLogs(userAddress)]);
+    const [state, logs] = await Promise.all([getState(userAddress, chainId), getLogs(userAddress, chainId)]);
     return NextResponse.json({ ...state, logs });
   } catch (error: any) {
     console.error('Error reading state:', error);

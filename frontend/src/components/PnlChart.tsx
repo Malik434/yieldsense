@@ -29,6 +29,15 @@ interface PnlDataPoint {
   timestamp: number;
 }
 
+interface PortfolioHistoryEvent {
+  type: 'deposit' | 'withdraw';
+  owner: string;
+  timestamp: number;
+  assetsUsd: number;
+  shares: string;
+  txHash?: string;
+}
+
 interface PnlChartProps {
   currentBalance: number;
   initialDeposit: number;
@@ -36,6 +45,8 @@ interface PnlChartProps {
   unrealizedYield?: number;
   /** Address to scope telemetry log fetch. Falls back to OPERATOR_ADDRESS. */
   userAddress?: string;
+  /** Connected wallet whose on-chain deposits/withdrawals define the portfolio timeline. */
+  portfolioAddress?: string;
   chainId: number;
   /**
    * The connected user's fractional share of the vault (userShares / totalShares).
@@ -56,15 +67,57 @@ const PERIOD_WINDOWS: Record<string, number> = {
   '1M': 86_400_000 * 30,
 };
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+function formatChartTime(timestamp: number, period: string): string {
+  const date = new Date(timestamp);
+  const options: Intl.DateTimeFormatOptions =
+    period === '1D'
+      ? { hour: '2-digit', minute: '2-digit', hour12: false }
+      : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false };
+
+  return date.toLocaleDateString([], options);
+}
+
+async function fetchPortfolioHistory(
+  portfolioAddress: string | undefined,
+  chainId: number
+): Promise<PortfolioHistoryEvent[]> {
+  if (!portfolioAddress) return [];
+
+  try {
+    const res = await fetch(`/api/portfolio-history?userAddress=${portfolioAddress}&chainId=${chainId}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.events) ? data.events : [];
+  } catch (error) {
+    console.warn('[PnlChart] Falling back without on-chain deposit history:', error);
+    return [];
+  }
+}
+
+const CustomTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.length) return null;
-  const { balance, deposit } = payload[0].payload;
+  const point = payload[0].payload;
+  const { balance, deposit, timestamp, time } = point;
   const pnl = balance - deposit;
   const pnlPct = deposit > 0 ? ((pnl / deposit) * 100).toFixed(2) : '0.00';
+  const displayLabel =
+    time === 'Start' || time === 'Now'
+      ? `${time} - ${new Date(timestamp).toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`
+      : new Date(timestamp).toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
 
   return (
     <div className="ys-card bg-[#0B0F0D]/95 border-white/10 p-5 shadow-2xl backdrop-blur-xl">
-      <p className="text-[10px] font-mono font-bold text-[#484F58] mb-3 uppercase tracking-[0.2em]">{label}</p>
+      <p className="text-[10px] font-mono font-bold text-[#484F58] mb-3 uppercase tracking-[0.2em]">{displayLabel}</p>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-10">
           <span className="text-[10px] font-mono text-[#8B949E] uppercase tracking-wider">Net Value</span>
@@ -87,8 +140,8 @@ export function PnlChart({
   totalRealized = 0,
   unrealizedYield = 0,
   userAddress,
+  portfolioAddress,
   chainId,
-  vaultShareFraction = 1,
 }: PnlChartProps) {
   const [data, setData] = useState<PnlDataPoint[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -113,9 +166,16 @@ export function PnlChart({
       const res = await fetch(`/api/state?userAddress=${targetAddress}&chainId=${chainId}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
+      const portfolioEvents = await fetchPortfolioHistory(portfolioAddress, chainId);
 
       // logs are stored newest-first; reverse to get chronological order
-      const logs: any[] = (state.logs ?? []).slice().reverse();
+      const logs: any[] = (state.logs ?? [])
+        .slice()
+        .reverse()
+        .filter((log: any) => {
+          const logChainId = Number(log.chainId ?? log.CHAIN_ID ?? 0);
+          return logChainId === 0 || logChainId === chainId;
+        });
 
       let cumulativePnl = 0;
       let harvestTotal = 0;
@@ -124,38 +184,106 @@ export function PnlChart({
 
       const now = Date.now();
       const windowMs = PERIOD_WINDOWS[period] ?? Infinity;
+      const periodStart = period === 'ALL' ? 0 : now - windowMs;
+      const firstPortfolioEvent = portfolioEvents.find(
+        (event) => event.owner?.toLowerCase() === portfolioAddress?.toLowerCase()
+      );
+      const firstPortfolioTs = firstPortfolioEvent ? firstPortfolioEvent.timestamp * 1000 : null;
+      let principalBalance = 0;
+      let userShares = 0;
+      let totalShares = 0;
+      const hasPortfolioHistory = portfolioEvents.length > 0;
+      if (!hasPortfolioHistory && initialDeposit > 0) {
+        // If the RPC history endpoint is unavailable but the vault says the user
+        // already has a balance, carry that position into the selected window.
+        principalBalance = initialDeposit;
+        userShares = initialDeposit;
+        totalShares = initialDeposit;
+      }
+      const historyEvents = [
+        ...portfolioEvents.map((event) => ({
+          kind: event.type,
+          timestamp: event.timestamp * 1000,
+          amountUsd: event.assetsUsd,
+          owner: event.owner,
+          shares: Number(event.shares) / 1e6,
+          txHash: event.txHash,
+        })),
+        ...logs.map((log) => ({
+          kind: log.event,
+          timestamp: Number(log.timestamp || 0) * 1000,
+          amountUsd: Number(log.rewardUsd ?? 0),
+          owner: '',
+          shares: 0,
+          txHash: log.txHash,
+        })),
+      ]
+        .filter((event) => event.timestamp > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
 
-      // Anchor the chart at the start of the selected period.
-      // Using a fixed 7-day offset caused the anchor to be filtered out
-      // for shorter periods (1D), leading to the fallback showing all data.
+      for (const event of historyEvents) {
+        const isUserEvent = event.owner?.toLowerCase() === portfolioAddress?.toLowerCase();
+        if (event.timestamp >= periodStart) break;
+        if (event.kind === 'deposit') {
+          totalShares += event.shares;
+          if (isUserEvent) {
+            userShares += event.shares;
+            principalBalance += event.amountUsd;
+          }
+        }
+        if (event.kind === 'withdraw') {
+          totalShares = Math.max(0, totalShares - event.shares);
+          if (isUserEvent) {
+            userShares = Math.max(0, userShares - event.shares);
+            principalBalance = Math.max(0, principalBalance - event.amountUsd);
+          }
+        }
+        if (event.kind === 'harvest_confirmed' && userShares > 0 && totalShares > 0) {
+          cumulativePnl += event.amountUsd * Math.min(userShares / totalShares, 1);
+        }
+      }
+
+      // Anchor at the carried-forward portfolio value for the selected window.
+      // If the first deposit is inside the window, this starts at zero.
       points.push({
         time: 'Start',
-        balance: initialDeposit,
-        deposit: initialDeposit,
-        timestamp: period === 'ALL' ? 0 : now - windowMs,
+        balance: principalBalance + cumulativePnl,
+        deposit: principalBalance,
+        timestamp:
+          period === 'ALL' && firstPortfolioTs
+            ? Math.max(0, firstPortfolioTs - 60_000)
+            : periodStart,
       });
 
       const seenHashes = new Set<string>();
 
-      for (const log of logs) {
-        // Skip events with missing or invalid timestamps (epoch 0 = garbage data)
-        if (!log.timestamp || log.timestamp <= 0) continue;
-
+      for (const event of historyEvents) {
+        if (event.timestamp < periodStart || event.timestamp > now) continue;
+        const isUserEvent = event.owner?.toLowerCase() === portfolioAddress?.toLowerCase();
         // Deduplicate by txHash to prevent PnL double-counting from retries
-        if (log.txHash) {
-          if (seenHashes.has(log.txHash)) continue;
-          seenHashes.add(log.txHash);
+        if (event.txHash) {
+          const dedupeKey = `${event.kind}:${event.txHash}`;
+          if (seenHashes.has(dedupeKey)) continue;
+          seenHashes.add(dedupeKey);
         }
 
-        const ts = log.timestamp * 1000;
-
-        if (log.event === 'harvest_confirmed') {
-          // Scale the vault-wide harvest to this user's ownership fraction.
-          // A harvest of $2.50 for a user with 30% of the vault = $0.75 for them.
-          const reward = Number(log.rewardUsd ?? 0) * vaultShareFraction;
-          cumulativePnl += reward;
-          harvestTotal += reward;
-        } else if (log.event === 'grid_trade_executed') {
+        if (event.kind === 'deposit') {
+          totalShares += event.shares;
+          if (isUserEvent) {
+            userShares += event.shares;
+            principalBalance += event.amountUsd;
+          }
+        } else if (event.kind === 'withdraw') {
+          totalShares = Math.max(0, totalShares - event.shares);
+          if (isUserEvent) {
+            userShares = Math.max(0, userShares - event.shares);
+            principalBalance = Math.max(0, principalBalance - event.amountUsd);
+          }
+        } else if (event.kind === 'harvest_confirmed' && userShares > 0 && totalShares > 0) {
+          const userReward = event.amountUsd * Math.min(userShares / totalShares, 1);
+          cumulativePnl += userReward;
+          harvestTotal += userReward;
+        } else if (event.kind === 'grid_trade_executed') {
           // pnlDelta is an allocation-indicator in micro-units, NOT a real USD
           // profit figure (see processor.ts: allocationBps / 10000 × 1e6).
           // It is tracked for the grid trade count display only and intentionally
@@ -168,9 +296,9 @@ export function PnlChart({
 
         points.push({
           time: '',
-          balance: initialDeposit + cumulativePnl,
-          deposit: initialDeposit,
-          timestamp: ts,
+          balance: principalBalance + cumulativePnl,
+          deposit: principalBalance,
+          timestamp: event.timestamp,
         });
       }
 
@@ -195,21 +323,31 @@ export function PnlChart({
           ? points
           : points.filter(p => now - p.timestamp <= windowMs);
 
-      // Safety net: if fewer than 2 points survived, show all
-      if (filtered.length < 2) filtered = points;
+      // Safety net: keep the selected window intact instead of falling back to
+      // all historical points, which would make the range buttons misleading.
+      if (filtered.length < 2 && period !== 'ALL') {
+        filtered = [
+          {
+            time: 'Start',
+            balance: 0,
+            deposit: 0,
+            timestamp: now - windowMs,
+          },
+          {
+            time: 'Now',
+            balance: currentBalanceRef.current + unrealizedYieldRef.current,
+            deposit: initialDeposit,
+            timestamp: now,
+          },
+        ];
+      }
 
       const finalData = filtered.map(p => ({
         ...p,
         time:
           p.time === 'Now' || p.time === 'Start'
             ? p.time
-            : new Date(p.timestamp).toLocaleDateString([], {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              }),
+            : formatChartTime(p.timestamp, period),
       }));
 
       setData(finalData);
@@ -218,13 +356,13 @@ export function PnlChart({
       // Fallback: two-point flat line using real timestamps
       const fallbackNow = Date.now();
       setData([
-        { time: 'Start', balance: initialDeposit, deposit: initialDeposit, timestamp: fallbackNow - 86_400_000 },
+        { time: 'Start', balance: portfolioAddress ? 0 : initialDeposit, deposit: portfolioAddress ? 0 : initialDeposit, timestamp: fallbackNow - 86_400_000 },
         { time: 'Now', balance: currentBalanceRef.current + unrealizedYieldRef.current, deposit: initialDeposit, timestamp: fallbackNow },
       ]);
     } finally {
       setLoading(false);
     }
-  }, [userAddress, initialDeposit, period, vaultShareFraction, chainId]);
+  }, [userAddress, portfolioAddress, initialDeposit, period, chainId]);
 
   useEffect(() => {
     setMounted(true);
@@ -339,7 +477,11 @@ export function PnlChart({
               </defs>
               <CartesianGrid strokeDasharray="8 8" stroke="rgba(255, 255, 255, 0.02)" vertical={false} />
               <XAxis
-                dataKey="time"
+                dataKey="timestamp"
+                type="number"
+                scale="time"
+                domain={['dataMin', 'dataMax']}
+                tickFormatter={(value) => formatChartTime(Number(value), period)}
                 tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
                 axisLine={false}
                 tickLine={false}
