@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, ExternalLink, Zap, ArrowUpDown, Search, RefreshCw, Clock, LogOut } from 'lucide-react';
 import { OPERATOR_ADDRESS } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
@@ -12,6 +12,17 @@ interface TxEvent {
   amount?: number;
   pnlDelta?: number;
   chainId?: number;
+}
+
+interface TelemetryEvent {
+  event?: string;
+  timestamp?: number;
+  txHash?: string;
+  chainId?: number | string;
+  CHAIN_ID?: number | string;
+  profitCreditedUsd?: number | string;
+  estimatedRewardUsd?: number | string;
+  pnlDelta?: number | string;
 }
 
 function shortHash(hash: string): string {
@@ -31,12 +42,12 @@ export function TransactionHistory() {
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchTxs = async () => {
+  const fetchTxs = useCallback(async () => {
     try {
       const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${activeChainId}`);
       if (!res.ok) return;
-      const data = await res.json();
-      const logs: any[] = data.logs ?? [];
+      const data: { logs?: TelemetryEvent[] } = await res.json();
+      const logs = data.logs ?? [];
       
       const seenHashes = new Set<string>();
       const mapped = logs.map((log): TxEvent | null => {
@@ -84,22 +95,25 @@ export function TransactionHistory() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchTxs();
-    const id = setInterval(fetchTxs, 60_000) // Poll every 60s;
-    return () => clearInterval(id);
   }, [activeChainId]);
 
+  useEffect(() => {
+    const initialFetch = setTimeout(fetchTxs, 0);
+    const id = setInterval(fetchTxs, 60_000) // Poll every 60s;
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(id);
+    };
+  }, [fetchTxs]);
+
   return (
-    <div className="flex flex-col gap-6 mt-12 animate-fade-in">
-      <div className="flex items-center justify-between border-b border-white/[0.05] pb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+    <div className="flex flex-col gap-6 mt-10 sm:mt-12 animate-fade-in">
+      <div className="flex flex-col gap-4 border-b border-white/[0.05] pb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="shrink-0 p-2.5 rounded-xl bg-white/5 border border-white/10">
             <Clock size={18} className="text-[#C2E812]" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Guardian Ledger</p>
             <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Execution History</h3>
           </div>
@@ -110,8 +124,8 @@ export function TransactionHistory() {
         </div>
       </div>
 
-      <div className="ys-card bg-[#0B0F0D]/50 border border-white/[0.05] rounded-[32px] overflow-hidden flex flex-col">
-        <div className="grid grid-cols-4 md:grid-cols-6 gap-4 px-8 py-5 bg-white/[0.02] border-b border-white/[0.05] shrink-0">
+      <div className="ys-card bg-[#0B0F0D]/50 border border-white/[0.05] rounded-[24px] sm:rounded-[32px] overflow-hidden flex flex-col">
+        <div className="hidden md:grid grid-cols-6 gap-4 px-8 py-5 bg-white/[0.02] border-b border-white/[0.05] shrink-0">
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em]">Timestamp</span>
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] md:col-span-1">Processor</span>
           <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] md:col-span-2">Execution Details</span>
@@ -141,11 +155,16 @@ export function TransactionHistory() {
               return (
                 <div 
                   key={`${tx.txHash}-${i}`} 
-                  className="grid grid-cols-4 md:grid-cols-6 gap-4 px-8 py-6 items-center hover:bg-white/[0.01] transition-all group"
+                  className="flex flex-col gap-5 px-5 py-6 hover:bg-white/[0.01] transition-all group sm:px-6 md:grid md:grid-cols-6 md:items-center md:gap-4 md:px-8"
                 >
-                  <div className="flex flex-col">
-                    <span className="text-sm font-heading font-bold text-[#F5F7FA]">{timeStr}</span>
-                    <span className="text-[10px] font-mono text-[#484F58]">{dateStr}</span>
+                  <div className="flex items-start justify-between gap-4 md:block">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-heading font-bold text-[#F5F7FA]">{timeStr}</span>
+                      <span className="text-[10px] font-mono text-[#484F58]">{dateStr}</span>
+                    </div>
+                    <span className={`md:hidden text-[9px] font-mono font-bold px-2 py-1 rounded border uppercase tracking-widest ${tx.type === 'TRADE' ? 'bg-[#C2E812]/10 text-[#C2E812] border-[#C2E812]/20' : 'bg-[#00FFA3]/10 text-[#00FFA3] border-[#00FFA3]/20'}`}>
+                      {cfg.label}
+                    </span>
                   </div>
                   
                   <div className="flex items-center gap-3 md:col-span-1">
@@ -158,21 +177,21 @@ export function TransactionHistory() {
                         </div>
                       )}
                     </div>
-                    <span className="text-xs font-heading font-bold text-[#8B949E] hidden md:block">
+                    <span className="text-xs font-heading font-bold text-[#8B949E]">
                       {tx.type === 'HARVEST' ? 'TEE-Guardian' : 'Grid-Executor'}
                     </span>
                   </div>
 
                   <div className="flex flex-col gap-1.5 md:col-span-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-heading font-bold text-[#F5F7FA]">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <span className="text-sm font-heading font-bold text-[#F5F7FA] break-words">
                         {tx.type === 'TRADE'
                           ? `Audit signal ${tx.pnlDelta?.toFixed(4)}`
                           : tx.amount != null
                             ? `Credited $${tx.amount.toFixed(4)}`
                             : 'Optimization & Compounding'}
                       </span>
-                      <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border uppercase tracking-widest ${tx.type === 'TRADE' ? 'bg-[#C2E812]/10 text-[#C2E812] border-[#C2E812]/20' : 'bg-[#00FFA3]/10 text-[#00FFA3] border-[#00FFA3]/20'}`}>
+                      <span className={`hidden sm:inline-flex w-fit text-[9px] font-mono font-bold px-2 py-0.5 rounded border uppercase tracking-widest ${tx.type === 'TRADE' ? 'bg-[#C2E812]/10 text-[#C2E812] border-[#C2E812]/20' : 'bg-[#00FFA3]/10 text-[#00FFA3] border-[#00FFA3]/20'}`}>
                         {cfg.label}
                       </span>
                     </div>
@@ -183,13 +202,14 @@ export function TransactionHistory() {
                     <span className="text-xs font-mono font-bold text-[#484F58]">{shortHash(OPERATOR_ADDRESS)}</span>
                   </div>
 
-                    <div className="flex justify-end">
+                    <div className="flex justify-end md:justify-end">
                       <a 
                         href={`${config.explorer}/tx/${tx.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-2.5 rounded-xl bg-white/0 hover:bg-white/5 border border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
+                        className="inline-flex items-center gap-2 p-2.5 rounded-xl bg-white/5 md:bg-white/0 hover:bg-white/5 border border-white/10 md:border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
                       >
+                        <span className="text-[10px] font-mono font-bold uppercase tracking-widest md:hidden">Receipt</span>
                         <ExternalLink size={16} className="group-hover/link:scale-110 transition-transform" />
                       </a>
                     </div>

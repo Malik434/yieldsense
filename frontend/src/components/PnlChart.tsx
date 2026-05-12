@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AreaChart,
   Area,
@@ -82,6 +82,17 @@ const PERIOD_WINDOWS: Record<string, number> = {
   '1M': 86_400_000 * 30,
 };
 
+function useHydrated() {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const timeout = setTimeout(onStoreChange, 0);
+      return () => clearTimeout(timeout);
+    },
+    () => true,
+    () => false
+  );
+}
+
 function formatChartTime(timestamp: number, period: string): string {
   const date = new Date(timestamp);
   const options: Intl.DateTimeFormatOptions =
@@ -98,14 +109,21 @@ async function fetchPortfolioHistory(
 ): Promise<PortfolioHistoryEvent[]> {
   if (!portfolioAddress) return [];
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+
   try {
-    const res = await fetch(`/api/portfolio-history?userAddress=${portfolioAddress}&chainId=${chainId}`);
+    const res = await fetch(`/api/portfolio-history?userAddress=${portfolioAddress}&chainId=${chainId}`, {
+      signal: controller.signal,
+    });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data.events) ? data.events : [];
   } catch (error) {
     console.warn('[PnlChart] Falling back without on-chain deposit history:', error);
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -174,8 +192,8 @@ export function PnlChart({
   portfolioAddress,
   chainId,
 }: PnlChartProps) {
+  const hydrated = useHydrated();
   const [data, setData] = useState<PnlDataPoint[]>([]);
-  const [mounted, setMounted] = useState(false);
   const [period, setPeriod] = useState('1D');
   const [loading, setLoading] = useState(true);
   const [attribution, setAttribution] = useState({ harvest: 0, gridTrades: 0 });
@@ -197,10 +215,12 @@ export function PnlChart({
       const res = await fetch(`/api/state?userAddress=${targetAddress}&chainId=${chainId}`);
       if (!res.ok) throw new Error('Failed to fetch state');
       const state = await res.json();
-      const [portfolioEvents, onchainAudit] = await Promise.all([
-        fetchPortfolioHistory(portfolioAddress, chainId),
-        fetchOnchainAudit(portfolioAddress, chainId),
-      ]);
+      const onchainAudit = await fetchOnchainAudit(portfolioAddress, chainId);
+      const auditTimeline = Array.isArray(onchainAudit?.timeline) ? onchainAudit.timeline : [];
+      const portfolioEvents =
+        auditTimeline.length > 0
+          ? []
+          : await fetchPortfolioHistory(portfolioAddress, chainId);
 
       // logs are stored newest-first; reverse to get chronological order
       const logs: any[] = (state.logs ?? [])
@@ -219,7 +239,6 @@ export function PnlChart({
       const now = Date.now();
       const windowMs = PERIOD_WINDOWS[period] ?? Infinity;
       const periodStart = period === 'ALL' ? 0 : now - windowMs;
-      const auditTimeline = Array.isArray(onchainAudit?.timeline) ? onchainAudit.timeline : [];
       const firstPortfolioEvent = portfolioEvents.find(
         (event) => event.owner?.toLowerCase() === portfolioAddress?.toLowerCase()
       );
@@ -411,24 +430,21 @@ export function PnlChart({
     }
   }, [userAddress, portfolioAddress, initialDeposit, period, chainId]);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   // Fetch on mount and whenever the address, initial deposit, or period changes.
   // currentBalance and unrealizedYield are intentionally excluded — they change
   // every block and would trigger 30+ API calls per minute. The "Now" point
   // reads them via refs instead.
   useEffect(() => {
-    fetchHistory();
+    const initialFetch = setTimeout(fetchHistory, 0);
     const id = setInterval(fetchHistory, CHART_REFRESH_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(id);
+    };
   }, [fetchHistory]);
 
-  if (!mounted) return null;
-
   return (
-    <div className="ys-card p-10 flex flex-col gap-10 h-full bg-[#0B0F0D] group/chart relative overflow-hidden">
+    <div className="ys-card p-10 flex min-w-0 flex-col gap-10 h-full bg-[#0B0F0D] group/chart relative overflow-hidden">
       <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
@@ -508,58 +524,62 @@ export function PnlChart({
         </div>
 
         {/* Chart area */}
-        <div className="relative min-h-[300px]">
+        <div className="relative h-[300px] min-w-0">
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0B0F0D]/50 backdrop-blur-sm z-20 rounded-3xl">
               <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
             </div>
           )}
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 20, right: 0, left: -10, bottom: 0 }}>
-              <defs>
-                <linearGradient id="limeGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#C2E812" stopOpacity={0.2} />
-                  <stop offset="100%" stopColor="#C2E812" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="8 8" stroke="rgba(255, 255, 255, 0.02)" vertical={false} />
-              <XAxis
-                dataKey="timestamp"
-                type="number"
-                scale="time"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={(value) => formatChartTime(Number(value), period)}
-                tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
-                axisLine={false}
-                tickLine={false}
-                dy={15}
-                minTickGap={30}
-              />
-              <YAxis
-                tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
-                axisLine={false}
-                tickLine={false}
-                domain={['auto', 'auto']}
-                tickFormatter={(v) => `$${v.toFixed(0)}`}
-                dx={-10}
-              />
-              <Tooltip
-                content={<CustomTooltip />}
-                cursor={{ stroke: 'rgba(194, 232, 18, 0.2)', strokeWidth: 2 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="balance"
-                stroke="#C2E812"
-                strokeWidth={4}
-                fill="url(#limeGrad)"
-                dot={false}
-                activeDot={{ r: 8, fill: '#C2E812', stroke: '#030605', strokeWidth: 4 }}
-                animationDuration={1500}
-                animationEasing="ease-in-out"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {hydrated ? (
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+              <AreaChart data={data} margin={{ top: 20, right: 0, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="limeGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#C2E812" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#C2E812" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="8 8" stroke="rgba(255, 255, 255, 0.02)" vertical={false} />
+                <XAxis
+                  dataKey="timestamp"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={(value) => formatChartTime(Number(value), period)}
+                  tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
+                  axisLine={false}
+                  tickLine={false}
+                  dy={15}
+                  minTickGap={30}
+                />
+                <YAxis
+                  tick={{ fill: '#484F58', fontFamily: 'JetBrains Mono', fontSize: 9, fontWeight: 700 }}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={['auto', 'auto']}
+                  tickFormatter={(v) => `$${v.toFixed(0)}`}
+                  dx={-10}
+                />
+                <Tooltip
+                  content={<CustomTooltip />}
+                  cursor={{ stroke: 'rgba(194, 232, 18, 0.2)', strokeWidth: 2 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="balance"
+                  stroke="#C2E812"
+                  strokeWidth={4}
+                  fill="url(#limeGrad)"
+                  dot={false}
+                  activeDot={{ r: 8, fill: '#C2E812', stroke: '#030605', strokeWidth: 4 }}
+                  animationDuration={1500}
+                  animationEasing="ease-in-out"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full w-full rounded-3xl bg-white/[0.015]" />
+          )}
         </div>
       </div>
 

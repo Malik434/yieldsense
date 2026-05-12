@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
+import Image from 'next/image';
 import { useAccount, useDisconnect } from 'wagmi';
-import { ShieldCheck, Cpu, Shield, LogOut, Wallet } from 'lucide-react';
+import { Cpu, Shield, LogOut, Wallet } from 'lucide-react';
 import { ProofOfExecutionModal } from './ProofOfExecutionModal';
 import { WalletSelectionModal } from './WalletSelectionModal';
 import { NetworkToggle } from './NetworkToggle';
@@ -13,15 +14,28 @@ interface HeaderProps {
   isWarning?: boolean;
 }
 
+function useHydrated() {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const timeout = setTimeout(onStoreChange, 0);
+      return () => clearTimeout(timeout);
+    },
+    () => true,
+    () => false
+  );
+}
+
 export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { config } = useNetwork();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const hydrated = useHydrated();
+  const showConnectedWallet = hydrated && isConnected;
 
   const handleWalletAction = () => {
-    if (isConnected) {
+    if (showConnectedWallet) {
       disconnect();
     } else {
       setIsWalletModalOpen(true);
@@ -35,8 +49,15 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
           {/* Logo & Network */}
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-2xl bg-[#C2E812] flex items-center justify-center shadow-lg shadow-[#C2E812]/20">
-                <ShieldCheck size={22} className="text-[#030605]" />
+              <div className="relative w-11 h-11 overflow-hidden rounded-2xl border border-[#C2E812]/20 bg-[#C2E812]/5 shadow-lg shadow-[#C2E812]/10">
+                <Image
+                  src="/YieldSenseLogo.png"
+                  alt="YieldSense"
+                  fill
+                  sizes="44px"
+                  className="object-cover"
+                  priority
+                />
               </div>
               <div className="flex flex-col">
                 <span className="font-heading font-bold text-2xl text-[#F5F7FA] tracking-tight">YieldSense</span>
@@ -90,21 +111,21 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
               className="flex items-center gap-3 pl-2 group transition-all"
             >
               <div className="flex flex-col items-end hidden sm:flex">
-                <span className={`text-xs font-heading font-bold transition-colors ${isConnected ? 'text-[#F5F7FA] group-hover:text-[#FF4466]' : 'text-[#C2E812]'}`}>
-                  {isConnected ? `${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Connect Wallet'}
+                <span className={`text-xs font-heading font-bold transition-colors ${showConnectedWallet ? 'text-[#F5F7FA] group-hover:text-[#FF4466]' : 'text-[#C2E812]'}`}>
+                  {showConnectedWallet ? `${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Connect Wallet'}
                 </span>
                 <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest flex items-center gap-1">
-                  {isConnected ? (
+                  {showConnectedWallet ? (
                     <><LogOut size={8} className="group-hover:text-[#FF4466]" /> Disconnect</>
                   ) : (
                     <><Wallet size={8} className="text-[#C2E812]" /> Setup Identity</>
                   )}
                 </span>
               </div>
-              <div className={`w-10 h-10 rounded-2xl p-[1px] transition-all duration-500 ${isConnected ? 'bg-gradient-to-br from-[#C2E812] to-[#00FFA3] group-hover:scale-105' : 'bg-white/10 group-hover:bg-[#C2E812]/20'}`}>
+              <div className={`w-10 h-10 rounded-2xl p-[1px] transition-all duration-500 ${showConnectedWallet ? 'bg-gradient-to-br from-[#C2E812] to-[#00FFA3] group-hover:scale-105' : 'bg-white/10 group-hover:bg-[#C2E812]/20'}`}>
                 <div className="w-full h-full rounded-2xl bg-[#030605] flex items-center justify-center overflow-hidden">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${isConnected ? 'bg-white/10 border border-white/10 text-[#F5F7FA]' : 'bg-[#C2E812]/10 text-[#C2E812]'}`}>
-                    {address ? address.slice(2, 3).toUpperCase() : <Wallet size={14} className={!isConnected ? 'animate-pulse' : ''} />}
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${showConnectedWallet ? 'bg-white/10 border border-white/10 text-[#F5F7FA]' : 'bg-[#C2E812]/10 text-[#C2E812]'}`}>
+                    {showConnectedWallet && address ? address.slice(2, 3).toUpperCase() : <Wallet size={14} className={!showConnectedWallet ? 'animate-pulse' : ''} />}
                   </div>
                 </div>
               </div>

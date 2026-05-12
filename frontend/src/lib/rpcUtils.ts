@@ -33,6 +33,7 @@ export async function getLogsPaginated(
   args: {
     address: `0x${string}`;
     event: AbiEvent;
+    args?: Record<string, unknown>;
     fromBlock: bigint;
     toBlock?: bigint | 'latest';
   }
@@ -55,9 +56,10 @@ export async function getLogsPaginated(
           const res = await client.getLogs({
             address: args.address,
             event: args.event,
+            args: args.args,
             fromBlock: from,
             toBlock: to,
-          });
+          } as never);
           resolve(res as any[]);
         } catch (err) {
           reject(err);

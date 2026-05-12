@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useAccount, useReadContract, useBlockNumber } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
 import { useNetwork } from '@/providers/NetworkProvider';
 
@@ -10,20 +10,15 @@ import { KEEPER_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
 import { Header } from '@/components/Header';
 import { DepositModule } from '@/components/DepositModule';
 import { ConfidentialStrategyBox } from '@/components/ConfidentialStrategyBox';
-import { AprGauge } from '@/components/AprGauge';
 import { PnlChart } from '@/components/PnlChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { WithdrawModule } from '@/components/WithdrawModule';
 import { PortfolioTicker } from '@/components/PortfolioTicker';
 import { TestingSuite } from '@/components/TestingSuite';
 import {
-  ShieldCheck,
   Activity,
   Cpu,
-  ArrowRight,
-  LayoutDashboard,
-  LogOut,
-  History
+  ArrowRight
 } from 'lucide-react';
 
 interface WorkerState {
@@ -58,14 +53,14 @@ interface OnchainAudit {
 
 function SectionHeading({ id, label, sublabel }: { id: string; label: string; sublabel: string }) {
   return (
-    <div id={id} className="mb-12 pt-24 group">
+    <div id={id} className="mb-8 pt-16 group sm:mb-12 sm:pt-24">
       <div className="flex items-center gap-4 mb-4">
-        <h2 className="text-3xl font-heading font-bold tracking-tighter text-[#F5F7FA]">
+        <h2 className="text-2xl sm:text-3xl font-heading font-bold tracking-tighter text-[#F5F7FA]">
           {label}
         </h2>
         <div className="h-px flex-1 bg-white/[0.05]" />
       </div>
-      <p className="text-xs font-mono font-bold text-[#484F58] uppercase tracking-[0.4em]">
+      <p className="text-[10px] sm:text-xs font-mono font-bold text-[#484F58] uppercase tracking-[0.25em] sm:tracking-[0.4em]">
         {sublabel}
       </p>
     </div>
@@ -80,9 +75,8 @@ export default function CommandCenter() {
   const [vaultState, setVaultState] = useState<WorkerState | null>(null);
   const [consensus, setConsensus] = useState<ConsensusData | null>(null);
   const [onchainAudit, setOnchainAudit] = useState<OnchainAudit | null>(null);
-  const [mounted, setMounted] = useState(false);
 
-  const fetchVaultState = async () => {
+  const fetchVaultState = useCallback(async () => {
     try {
       const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
       if (res.ok) {
@@ -90,9 +84,9 @@ export default function CommandCenter() {
         setVaultState(data);
       }
     } catch { }
-  };
+  }, [chainId]);
 
-  const fetchConsensus = async () => {
+  const fetchConsensus = useCallback(async () => {
     try {
       const res = await fetch(`/api/consensus?chainId=${chainId}`);
       if (res.ok) {
@@ -100,9 +94,9 @@ export default function CommandCenter() {
         setConsensus(data);
       }
     } catch { }
-  };
+  }, [chainId]);
 
-  const fetchOnchainAudit = async () => {
+  const fetchOnchainAudit = useCallback(async () => {
     if (!address) {
       setOnchainAudit(null);
       return;
@@ -115,25 +109,26 @@ export default function CommandCenter() {
         setOnchainAudit(data);
       }
     } catch { }
-  };
+  }, [address, chainId]);
 
   useEffect(() => {
-    setMounted(true);
-    fetchVaultState();
-    fetchConsensus();
-    fetchOnchainAudit();
+    const initialVaultTimeout = setTimeout(fetchVaultState, 0);
+    const initialConsensusTimeout = setTimeout(fetchConsensus, 0);
+    const initialAuditTimeout = setTimeout(fetchOnchainAudit, 0);
     const vaultInterval = setInterval(fetchVaultState, 10_000);
     const consensusInterval = setInterval(fetchConsensus, 30_000);
     const auditInterval = setInterval(fetchOnchainAudit, 60_000);
     return () => {
+      clearTimeout(initialVaultTimeout);
+      clearTimeout(initialConsensusTimeout);
+      clearTimeout(initialAuditTimeout);
       clearInterval(vaultInterval);
       clearInterval(consensusInterval);
       clearInterval(auditInterval);
     };
-  }, [address, chainId]);
+  }, [fetchVaultState, fetchConsensus, fetchOnchainAudit]);
 
   const { data: blockNumber } = useBlockNumber({ watch: true });
-  const queryClient = useQueryClient();
 
   const { data: maxWithdraw, refetch: refetchUserData } = useReadContract({
     address: KEEPER_ADDRESS,
@@ -194,14 +189,12 @@ export default function CommandCenter() {
     consensus?.consensus ??
     (vaultState?.previousApr != null ? Math.round(vaultState.previousApr * 10_000) : null);
 
-  if (!mounted) return null;
-
   return (
     <div className="min-h-screen">
       <Header isHealthy={!!isHealthy} isWarning={!!isWarning} />
 
-      <main className="max-w-7xl mx-auto px-6 pb-40">
-        <div className="pt-12 mb-16">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-28 sm:pb-40">
+        <div className="pt-8 sm:pt-12 mb-10 sm:mb-16">
           <PortfolioTicker
             balance={balance}
             unrealizedYield={userUnrealized}
@@ -211,9 +204,9 @@ export default function CommandCenter() {
           />
         </div>
 
-        <div className="mb-20 animate-fade-in">
+        <div className="mb-14 sm:mb-20 animate-fade-in">
           <div className={`
-            ys-card p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-[#0B0F0D]/60
+            ys-card p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-[#0B0F0D]/60
             ${isHealthy ? 'border-[#C2E812]/10' : isWarning ? 'border-amber-500/10' : 'border-[#FF4466]/10'}
           `}>
             <div className="flex items-center gap-5">
@@ -225,7 +218,7 @@ export default function CommandCenter() {
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-10">
+            <div className="flex flex-wrap items-center gap-5 sm:gap-10">
               <div className="flex items-center gap-3">
                 <Activity size={16} className="text-[#C2E812]" />
                 <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
@@ -252,7 +245,7 @@ export default function CommandCenter() {
           label="Vault Allocation"
           sublabel="Principal control & parameterization"
         />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-24 animate-fade-in">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-10 mb-16 sm:mb-24 animate-fade-in">
           <DepositModule />
           <ConfidentialStrategyBox />
         </div>
@@ -286,12 +279,18 @@ export default function CommandCenter() {
           <WithdrawModule />
         </div>
 
-        <footer className="mt-60 pt-20 border-t border-white/[0.05]">
+        <footer className="mt-32 sm:mt-60 pt-16 sm:pt-20 border-t border-white/[0.05]">
           <div className="flex flex-col md:flex-row items-center justify-between gap-16">
             <div className="flex flex-col gap-8">
               <div className="flex items-center gap-5">
-                <div className="w-12 h-12 rounded-2xl bg-[#C2E812] flex items-center justify-center shadow-lg shadow-[#C2E812]/20">
-                  <ShieldCheck size={24} className="text-[#030605]" />
+                <div className="relative w-12 h-12 overflow-hidden rounded-2xl border border-[#C2E812]/20 bg-[#C2E812]/5 shadow-lg shadow-[#C2E812]/10">
+                  <Image
+                    src="/YieldSenseLogo.png"
+                    alt="YieldSense"
+                    fill
+                    sizes="48px"
+                    className="object-cover"
+                  />
                 </div>
                 <div>
                   <span className="font-heading font-bold text-3xl text-[#F5F7FA]">YieldSense</span>

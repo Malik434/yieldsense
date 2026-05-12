@@ -1,10 +1,19 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useAccount, useWriteContract, useChainId } from 'wagmi';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAccount, useChainId, useWriteContract } from 'wagmi';
 import { parseUnits } from 'viem';
 import { baseSepolia } from 'wagmi/chains';
-import { Terminal, Droplets, ArrowRight, CheckCircle2, ShieldCheck, Loader2, Zap, Cpu, TerminalSquare } from 'lucide-react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  Cpu,
+  Droplets,
+  Loader2,
+  ShieldCheck,
+  TerminalSquare,
+  Zap,
+} from 'lucide-react';
 import { MOCK_USDC_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
 
@@ -15,7 +24,27 @@ interface HardwareLog {
   txHash?: string;
 }
 
-function formatStageMessage(log: any): string {
+interface TelemetryLog {
+  event?: string;
+  timestamp?: number;
+  message?: string;
+  txHash?: string;
+  chainId?: number | string;
+  stage?: string;
+  keeperAddress?: string;
+  activeGridLevels?: number;
+  configuredGridLevels?: number;
+  reason?: string;
+  currentPrice?: number | string;
+  pendingTrades?: number;
+  nonce?: number | string;
+  submittedTrades?: number;
+  status?: string;
+  apr?: number;
+  hwAddress?: string;
+}
+
+function formatStageMessage(log: TelemetryLog): string {
   switch (log.stage) {
     case 'start':
       return `Processor started: keeper ${String(log.keeperAddress ?? '').slice(0, 10)}...`;
@@ -38,8 +67,31 @@ function formatStageMessage(log: any): string {
   }
 }
 
+function mapTelemetryLog(log: TelemetryLog): HardwareLog {
+  let type: HardwareLog['type'] = 'EXECUTION';
+  if (log.event === 'processor_heartbeat') type = 'ATTESTATION';
+  if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') type = 'STORAGE_SYNC';
+  if (log.event === 'runtime_error' || log.event === 'processor_error' || log.event === 'grid_check_error') type = 'ERROR';
+
+  let message = log.message || log.event || 'telemetry_event';
+  if (log.event === 'processor_stage') message = formatStageMessage(log);
+  if (log.event === 'profitability_check') message = `Yield checked: ${log.reason} (APR: ${((log.apr || 0) * 100).toFixed(2)}%)`;
+  if (log.event === 'force_test_bypass') message = 'Force test bypass enabled, skipping yield checks';
+  if (log.event === 'harvest_submitted') message = 'Harvest transaction submitted';
+  if (log.event === 'harvest_confirmed') message = 'Harvest transaction confirmed';
+  if (log.event === 'hw_address_report') message = `Acurast Hardware Address: ${log.hwAddress}`;
+  if (type === 'ERROR') message = `${log.event}: ${log.message ?? 'unknown failure'}`;
+
+  return {
+    timestamp: log.timestamp ? log.timestamp * 1000 : Date.now(),
+    type,
+    message,
+    txHash: log.txHash,
+  };
+}
+
 export function TestingSuite() {
-  const { isConnected, address } = useAccount();
+  const { isConnected } = useAccount();
   const chainId = useChainId();
   const { config } = useNetwork();
   const isTestnet = chainId === baseSepolia.id;
@@ -50,45 +102,26 @@ export function TestingSuite() {
 
   const { writeContractAsync } = useWriteContract();
 
-  useEffect(() => {
-    const fetchLogs = async () => {
-      try {
-        const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.logs && Array.isArray(data.logs)) {
-            const mappedLogs = data.logs.map((log: any) => {
-              let type: HardwareLog['type'] = 'EXECUTION';
-              if (log.event === 'processor_heartbeat') type = 'ATTESTATION';
-              if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') type = 'STORAGE_SYNC';
-              if (log.event === 'runtime_error' || log.event === 'processor_error' || log.event === 'grid_check_error') type = 'ERROR';
+  const fetchLogs = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
+      if (!res.ok) return;
 
-              let message = log.message || log.event;
-              if (log.event === 'processor_stage') message = formatStageMessage(log);
-              if (log.event === 'profitability_check') message = `Yield checked: ${log.reason} (APR: ${((log.apr || 0) * 100).toFixed(2)}%)`;
-              if (log.event === 'force_test_bypass') message = 'Force test bypass enabled, skipping yield checks';
-              if (log.event === 'harvest_submitted') message = `Harvest transaction submitted`;
-              if (log.event === 'harvest_confirmed') message = `Harvest transaction confirmed`;
-              if (log.event === 'hw_address_report') message = `Acurast Hardware Address: ${log.hwAddress}`;
-              if (type === 'ERROR') message = `${log.event}: ${log.message ?? 'unknown failure'}`;
-
-              return {
-                timestamp: log.timestamp ? log.timestamp * 1000 : Date.now(),
-                type,
-                message,
-                txHash: log.txHash
-              };
-            });
-            setLogs(mappedLogs.reverse());
-          }
-        }
-      } catch { }
-    };
-
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 5000);
-    return () => clearInterval(interval);
+      const data: { logs?: TelemetryLog[] } = await res.json();
+      if (Array.isArray(data.logs)) {
+        setLogs(data.logs.map(mapTelemetryLog).reverse());
+      }
+    } catch { }
   }, [chainId]);
+
+  useEffect(() => {
+    const initialFetch = setTimeout(fetchLogs, 0);
+    const interval = setInterval(fetchLogs, 5000);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(interval);
+    };
+  }, [fetchLogs]);
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -117,131 +150,158 @@ export function TestingSuite() {
   };
 
   return (
-    <div className="flex flex-col gap-10 mt-24">
-      {/* Testnet Header */}
-      <div className="flex items-center justify-between border-b border-white/[0.05] pb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+    <div className="mt-16 flex flex-col gap-8 sm:mt-24 sm:gap-10">
+      <div className="flex flex-col gap-4 border-b border-white/[0.05] pb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="shrink-0 rounded-xl border border-white/10 bg-white/5 p-2.5">
             <TerminalSquare size={18} className="text-[#00FFA3]" />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Hardware Debug</p>
             <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">System Integrity Logs</h3>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-[#00FFA3]/10 border border-[#00FFA3]/20 text-[10px] font-mono font-bold text-[#00FFA3] uppercase tracking-widest">
+        <div className="flex w-fit items-center gap-2 rounded-xl border border-[#00FFA3]/20 bg-[#00FFA3]/10 px-4 py-1.5 text-[10px] font-mono font-bold text-[#00FFA3] uppercase tracking-widest">
           <Zap size={12} />
           {isTestnet ? 'Sepolia Testnet Active' : 'Base Mainnet Active'}
         </div>
       </div>
 
-      <div className={`grid grid-cols-1 ${isTestnet ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-10`}>
-        {/* Faucet Controls */}
-        {isTestnet && <div className="lg:col-span-1 flex flex-col gap-6">
-          <div className="ys-card p-8 flex flex-col gap-6 bg-[#0B0F0D]/40">
-            <div className="flex items-center gap-3">
-              <Droplets size={20} className="text-[#00d4ff]" />
-              <span className="text-[10px] font-mono font-bold text-[#F5F7FA] uppercase tracking-widest">Testnet Provisioning</span>
-            </div>
+      <div className={`grid grid-cols-1 gap-8 sm:gap-10 ${isTestnet ? 'lg:grid-cols-3' : 'lg:grid-cols-1'}`}>
+        {isTestnet && (
+          <div className="flex flex-col gap-6 lg:col-span-1">
+            <div className="ys-card flex flex-col gap-6 bg-[#0B0F0D]/40 p-6 sm:p-8">
+              <div className="flex items-center gap-3">
+                <Droplets size={20} className="text-[#00d4ff]" />
+                <span className="text-[10px] font-mono font-bold text-[#F5F7FA] uppercase tracking-widest">Testnet Provisioning</span>
+              </div>
 
-            <p className="text-[11px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
-              Acquire Mock USDC and Sepolia ETH to verify the autonomous harvest cycle.
-            </p>
+              <p className="text-[11px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
+                Acquire Mock USDC and Sepolia ETH to verify the autonomous harvest cycle.
+              </p>
 
-            <div className="space-y-4">
-              <button
-                onClick={handleMint}
-                disabled={!isConnected || minting || !isTestnet}
-                className={`w-full flex items-center justify-between p-5 rounded-2xl border transition-all ${mintSuccess
+              <div className="space-y-4">
+                <button
+                  onClick={handleMint}
+                  disabled={!isConnected || minting || !isTestnet}
+                  className={`flex w-full items-center justify-between rounded-2xl border p-5 transition-all ${mintSuccess
                     ? 'bg-[#00FFA3]/10 border-[#00FFA3]/30 text-[#00FFA3]'
                     : 'bg-white/5 border-white/10 text-[#F5F7FA] hover:border-[#00d4ff]/30 hover:bg-[#00d4ff]/5'
-                  }`}
-              >
-                <div className="flex flex-col items-start">
-                  <span className="text-xs font-heading font-bold">Mock USDC</span>
-                  <span className="text-[9px] font-mono text-[#484F58] uppercase">1,000.00 Tokens</span>
-                </div>
-                {minting ? <Loader2 size={16} className="animate-spin" /> :
-                  mintSuccess ? <CheckCircle2 size={16} /> : <ArrowRight size={16} className="text-[#484F58]" />}
-              </button>
+                    }`}
+                >
+                  <div className="flex flex-col items-start">
+                    <span className="text-xs font-heading font-bold">Mock USDC</span>
+                    <span className="text-[9px] font-mono text-[#484F58] uppercase">1,000.00 Tokens</span>
+                  </div>
+                  {minting ? <Loader2 size={16} className="animate-spin" /> :
+                    mintSuccess ? <CheckCircle2 size={16} /> : <ArrowRight size={16} className="text-[#484F58]" />}
+                </button>
 
-              <a
-                href="https://portal.cdp.coinbase.com/products/faucet"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-white/10 text-[#F5F7FA] hover:border-[#C2E812]/30 hover:bg-[#C2E812]/5 transition-all"
-              >
-                <div className="flex flex-col items-start">
-                  <span className="text-xs font-heading font-bold">Base Sepolia ETH</span>
-                  <span className="text-[9px] font-mono text-[#484F58] uppercase">Gas Faucet</span>
-                </div>
-                <ExternalLink size={16} className="text-[#484F58]" />
-              </a>
-            </div>
-          </div>
-
-          <div className="ys-card p-8 bg-gradient-to-br from-[#C2E812]/5 to-transparent border-[#C2E812]/10">
-            <div className="flex items-center gap-3 mb-4">
-              <ShieldCheck size={16} className="text-[#C2E812]" />
-              <span className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-widest">Verification Status</span>
-            </div>
-            <p className="text-[11px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
-              Connected Acurast Enclave is reporting synchronized state. All decision logic is hardware-attested.
-            </p>
-          </div>
-        </div>}
-
-        {/* Console Logs */}
-        <div className={`${isTestnet ? 'lg:col-span-2' : ''} ys-card p-0 bg-black overflow-hidden flex flex-col h-[550px] border-white/[0.05]`}>
-          <div className="flex items-center justify-between p-5 border-b border-white/[0.05] bg-white/[0.02]">
-            <div className="flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse" />
-              <span className="text-[10px] font-mono font-bold text-[#F5F7FA] uppercase tracking-[0.2em]">Live Telemetry Stream</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="text-[9px] font-mono text-[#484F58] uppercase font-bold tracking-widest">Buffer: {logs.length} events</span>
-              <div className="h-4 w-px bg-white/10" />
-              <Cpu size={14} className="text-[#484F58]" />
-            </div>
-          </div>
-
-          <div 
-            ref={scrollContainerRef}
-            className="flex-1 p-8 overflow-y-auto font-mono text-[11px] space-y-3"
-          >
-            {logs.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-[#484F58] animate-pulse uppercase tracking-[0.3em]">
-                Initializing secure channel...
+                <a
+                  href="https://portal.cdp.coinbase.com/products/faucet"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-5 text-[#F5F7FA] transition-all hover:border-[#C2E812]/30 hover:bg-[#C2E812]/5"
+                >
+                  <div className="flex flex-col items-start">
+                    <span className="text-xs font-heading font-bold">Base Sepolia ETH</span>
+                    <span className="text-[9px] font-mono text-[#484F58] uppercase">Gas Faucet</span>
+                  </div>
+                  <ExternalLink size={16} className="text-[#484F58]" />
+                </a>
               </div>
-            ) : (
-              logs.map((log, i) => (
-                <div key={i} className="flex items-start gap-4 animate-slide-in-right" style={{ animationDelay: `${i * 0.05}s` }}>
-                  <span className="text-[#484F58] shrink-0 font-bold">
-                    {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                  <span className={`shrink-0 font-bold px-2 py-0.5 rounded text-[9px] ${log.type === 'ATTESTATION' ? 'text-[#00FFA3] bg-[#00FFA3]/5' :
-                      log.type === 'STORAGE_SYNC' ? 'text-[#C2E812] bg-[#C2E812]/5' :
-                        log.type === 'ERROR' ? 'text-[#FF4466] bg-[#FF4466]/10' :
-                        'text-[#00d4ff] bg-[#00d4ff]/5'
-                    }`}>
-                    [{log.type}]
-                  </span>
-                  <span className="text-[#F5F7FA] leading-relaxed opacity-90">
-                    {log.message}
-                    {log.txHash && (
-                      <a
-                        href={`${config.explorer}/tx/${log.txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ml-3 text-[#C2E812] hover:underline"
-                      >
-                        VIEW RECEIPT ↗
-                      </a>
-                    )}
-                  </span>
+            </div>
+
+            <div className="ys-card border-[#C2E812]/10 bg-gradient-to-br from-[#C2E812]/5 to-transparent p-6 sm:p-8">
+              <div className="mb-4 flex items-center gap-3">
+                <ShieldCheck size={16} className="text-[#C2E812]" />
+                <span className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-widest">Verification Status</span>
+              </div>
+              <p className="text-[11px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
+                Connected Acurast Enclave is reporting synchronized state. All decision logic is hardware-attested.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className={`${isTestnet ? 'lg:col-span-2' : ''} relative min-w-0`}>
+          <div className="relative mx-auto aspect-[9/19] min-h-[560px] max-h-[740px] w-full max-w-[430px] overflow-hidden rounded-[3rem] border border-white/10 bg-[#07090A] p-3 shadow-2xl shadow-black/60 md:aspect-[16/7.8] md:min-h-[360px] md:max-h-[620px] md:max-w-none">
+            <div className="absolute left-1/2 top-1 h-1 w-24 -translate-x-1/2 rounded-full bg-white/10 md:left-12 md:right-12 md:w-auto md:translate-x-0" />
+            <div className="absolute bottom-1 left-1/2 h-1 w-24 -translate-x-1/2 rounded-full bg-white/5 md:left-12 md:right-12 md:w-auto md:translate-x-0" />
+            <div className="absolute -left-1 top-36 h-16 w-1 rounded-r bg-white/15 md:top-1/2 md:h-20 md:-translate-y-1/2" />
+            <div className="absolute -right-1 top-28 h-14 w-1 rounded-l bg-white/15 md:top-24" />
+            <div className="absolute -right-1 top-48 h-14 w-1 rounded-l bg-white/10 md:top-44" />
+
+            <div className="relative flex h-full flex-col overflow-hidden rounded-[2.35rem] border border-white/10 bg-black md:flex-row">
+              <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.06] bg-[#050708] px-8 md:h-auto md:w-16 md:flex-col md:border-b-0 md:border-r md:px-0 md:py-6">
+                <div className="h-2 w-20 rounded-full bg-white/10 md:h-24 md:w-2" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#0B0F0D]">
+                  <div className="h-4 w-4 rounded-full border border-[#1B2A25] bg-[#030605] shadow-inner shadow-[#00FFA3]/20" />
                 </div>
-              ))
-            )}
+                <div className="h-1.5 w-14 rounded-full bg-white/5 md:h-16 md:w-1.5" />
+              </div>
+
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex flex-col gap-3 border-b border-white/[0.05] bg-white/[0.025] px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-[#00FFA3] animate-pulse" />
+                    <span className="text-[10px] font-mono font-bold text-[#F5F7FA] uppercase tracking-[0.2em]">Live Telemetry Stream</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest md:hidden">Pixel 8 Portrait</span>
+                    <span className="hidden text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest md:inline">Pixel 8 Landscape</span>
+                    <div className="h-4 w-px bg-white/10" />
+                    <span className="text-[9px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">{logs.length} events</span>
+                    <Cpu size={14} className="text-[#484F58]" />
+                  </div>
+                </div>
+
+                <div
+                  ref={scrollContainerRef}
+                  className="flex-1 space-y-3 overflow-y-auto p-4 font-mono text-[10px] sm:p-6 sm:text-[11px]"
+                >
+                  {logs.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-center text-[#484F58] animate-pulse uppercase tracking-[0.3em]">
+                      Initializing secure channel...
+                    </div>
+                  ) : (
+                    logs.map((log, i) => (
+                      <div
+                        key={`${log.timestamp}-${i}`}
+                        className="flex flex-col gap-1.5 rounded-xl border border-white/[0.03] bg-white/[0.015] p-3 animate-slide-in-right sm:flex-row sm:items-start sm:gap-3 sm:border-0 sm:bg-transparent sm:p-0"
+                        style={{ animationDelay: `${i * 0.05}s` }}
+                      >
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="font-bold text-[#484F58]">
+                            {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                          <span className={`shrink-0 rounded px-2 py-0.5 text-[8px] font-bold sm:text-[9px] ${log.type === 'ATTESTATION' ? 'text-[#00FFA3] bg-[#00FFA3]/5' :
+                            log.type === 'STORAGE_SYNC' ? 'text-[#C2E812] bg-[#C2E812]/5' :
+                              log.type === 'ERROR' ? 'text-[#FF4466] bg-[#FF4466]/10' :
+                                'text-[#00d4ff] bg-[#00d4ff]/5'
+                            }`}>
+                            [{log.type}]
+                          </span>
+                        </div>
+                        <span className="min-w-0 break-words text-[#F5F7FA] leading-relaxed opacity-90">
+                          {log.message}
+                          {log.txHash && (
+                            <a
+                              href={`${config.explorer}/tx/${log.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-2 whitespace-nowrap text-[#C2E812] hover:underline"
+                            >
+                              VIEW RECEIPT
+                            </a>
+                          )}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
