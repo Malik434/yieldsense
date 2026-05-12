@@ -101,6 +101,7 @@ const CONFIG = {
   dryRun: process.env.DRY_RUN === "true",
   runCooldownGuard: process.env.RUN_COOLDOWN_GUARD !== "false",
   minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 60_000),
+  enableGridKeeper: process.env.ENABLE_GRID_KEEPER === "true",
 };
 
 function shouldSkipRecentRun(
@@ -279,6 +280,17 @@ async function ensureKeeperOnExecutionChain(
 
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
+  await emitTelemetry({
+    event: "processor_boot",
+    timestamp: startNow,
+    phase: "main_entered",
+    hasAcurastStd: Boolean(getAcurastStd()),
+    hasUserAddress: Boolean(process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS),
+    hasProcessorSharedSecret: Boolean(process.env.PROCESSOR_SHARED_SECRET || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET),
+    dryRun: CONFIG.dryRun,
+    forceTestHarvest: CONFIG.forceTestHarvest,
+  });
+
   const state = await loadState(CONFIG.statePath);
 
   // ── Crash-safe cooldown guard ─────────────────────────────────────────────
@@ -354,21 +366,31 @@ async function main(): Promise<void> {
     userAddress: envUser // Explicitly pass to ensure first log isn't anonymous
   });
 
-  // 2. Run Grid/Stop-Loss Check
-  try {
-    await monitorAndExecuteGrid();
-  } catch (gridError) {
+  // 2. Optional Grid/Stop-Loss Check
+  if (CONFIG.enableGridKeeper) {
+    try {
+      await monitorAndExecuteGrid();
+    } catch (gridError) {
+      await emitTelemetry({
+        event: "grid_check_error",
+        timestamp: Math.floor(Date.now() / 1000),
+        stage: "monitorAndExecuteGrid",
+        message: gridError instanceof Error ? gridError.message : String(gridError),
+        name: gridError instanceof Error ? gridError.name : undefined,
+        stack: gridError instanceof Error ? gridError.stack?.split("\n").slice(0, 6).join("\n") : undefined,
+        chainId: executionChainId,
+        userAddress: envUser,
+      });
+      console.error(JSON.stringify({ event: "grid_check_error", message: String(gridError) }));
+    }
+  } else {
     await emitTelemetry({
-      event: "grid_check_error",
+      event: "grid_check_skipped",
       timestamp: Math.floor(Date.now() / 1000),
-      stage: "monitorAndExecuteGrid",
-      message: gridError instanceof Error ? gridError.message : String(gridError),
-      name: gridError instanceof Error ? gridError.name : undefined,
-      stack: gridError instanceof Error ? gridError.stack?.split("\n").slice(0, 6).join("\n") : undefined,
+      reason: "ENABLE_GRID_KEEPER_not_true",
       chainId: executionChainId,
       userAddress: envUser,
     });
-    console.error(JSON.stringify({ event: "grid_check_error", message: String(gridError) }));
   }
 
   // 2. Continue with Harvest Profitability Check

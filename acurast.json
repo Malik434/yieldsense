@@ -19,11 +19,18 @@
         "maxNetworkRequests": 120,
         "maxStorage": 1000000
       },
-      "numberOfReplicas": 2,
+      "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
       "maxCostPerExecution": 5500000000,
-      "includeEnvironmentVariables": [],
+      "includeEnvironmentVariables": [
+        "PROCESSOR_SHARED_SECRET",
+        "TELEMETRY_DIAGNOSTIC_URL",
+        "RPC_REQUEST_TIMEOUT_MS",
+        "RPC_CALL_TIMEOUT_MS",
+        "RPC_LOG_TIMEOUT_MS",
+        "RPC_CHUNK_DELAY_MS"
+      ],
       "processorWhitelist": []
     },
     "YieldSenseTest": {

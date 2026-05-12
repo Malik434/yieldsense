@@ -258,6 +258,13 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       patch.error = (event.message as string | undefined) ?? currentState.error;
       break;
 
+    case 'telemetry_config_error':
+      patch.apiFailureStreak = (currentState.apiFailureStreak ?? 0) + 1;
+      patch.lastDecisionReason = 'telemetry_config_error';
+      patch.error =
+        `${event.reason ?? 'unknown'} while emitting ${event.originalEvent ?? 'unknown_event'}`;
+      break;
+
     case 'run_skipped_recent':
       patch.lastDecisionReason = 'cooldown_guard';
       break;
