@@ -3,18 +3,15 @@
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits } from 'viem';
+import { AlertTriangle, CheckCircle2, Info, Loader2, LogOut, Shield } from 'lucide-react';
 import { KEEPER_ABI } from '@/lib/contracts';
-import { LogOut, AlertTriangle, CheckCircle2, Loader2, Shield, Info } from 'lucide-react';
 import { useNetwork } from '@/providers/NetworkProvider';
 
-/**
- * WithdrawModule — full-balance withdrawal from the ERC-4626 vault.
- */
 export function WithdrawModule() {
   const { address, isConnected } = useAccount();
   const { config } = useNetwork();
   const KEEPER_ADDRESS = config.keeper;
-  
+
   const [confirming, setConfirming] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -27,23 +24,51 @@ export function WithdrawModule() {
     query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
 
+  const { data: userSharesRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && !!KEEPER_ADDRESS },
+  });
+
+  const { data: totalSharesRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'totalSupply',
+    query: { enabled: !!KEEPER_ADDRESS },
+  });
+
+  const { data: totalAssetsRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'totalAssets',
+    query: { enabled: !!KEEPER_ADDRESS },
+  });
+
   const { writeContractAsync } = useWriteContract();
 
-  const balance = maxWithdrawRaw ? (maxWithdrawRaw as bigint) : BigInt(0);
-  const balanceNum = parseFloat(formatUnits(balance, 6));
+  const withdrawableRaw = maxWithdrawRaw ? (maxWithdrawRaw as bigint) : BigInt(0);
+  const withdrawable = parseFloat(formatUnits(withdrawableRaw, 6));
+  const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
+  const totalShares = totalSharesRaw ? parseFloat(formatUnits(totalSharesRaw as bigint, 6)) : 0;
+  const totalAssets = totalAssetsRaw ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6)) : 0;
+  const shareFraction = totalShares > 0 && userShares > 0 ? Math.min(userShares / totalShares, 1) : 0;
+  const liveVaultPosition = totalAssets * shareFraction;
 
   const handleWithdraw = async () => {
     if (!confirming) {
       setConfirming(true);
       return;
     }
+
     setWithdrawing(true);
     try {
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
         functionName: 'withdraw',
-        args: [balance, address as `0x${string}`, address as `0x${string}`],
+        args: [withdrawableRaw, address as `0x${string}`, address as `0x${string}`],
       });
       setSuccess(true);
       setConfirming(false);
@@ -67,9 +92,9 @@ export function WithdrawModule() {
   }
 
   return (
-    <div className="ys-card p-12 flex flex-col gap-10 relative overflow-hidden group">
+    <div className="ys-card p-8 sm:p-12 flex flex-col gap-10 relative overflow-hidden group">
       <div className="absolute top-0 right-0 p-12 bg-[#FF4466]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-      
+
       <div className="flex items-center justify-between relative z-10">
         <div className="flex items-center gap-4">
           <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
@@ -86,21 +111,35 @@ export function WithdrawModule() {
         </div>
       </div>
 
-      {/* Balance display */}
-      <div className="rounded-3xl p-8 bg-white/[0.02] border border-white/[0.04] relative z-10">
-        <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-3">Withdrawable Position</p>
-        <div className="flex items-baseline gap-3">
-          <span className="text-5xl font-heading font-bold text-[#F5F7FA] tracking-tight">
-            {balanceNum.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })}
+      <div className="rounded-3xl p-6 sm:p-8 bg-white/[0.02] border border-white/[0.04] relative z-10">
+        <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-3">Live Vault Position</p>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <span className="text-4xl sm:text-5xl font-heading font-bold text-[#F5F7FA] tracking-tight">
+            {liveVaultPosition.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })}
           </span>
           <span className="text-xl font-heading font-bold text-[#484F58]">USDC</span>
         </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-white/[0.04] bg-black/20 p-4">
+            <p className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Vault Shares</p>
+            <p className="mt-1 text-sm font-heading font-bold text-[#F5F7FA]">
+              {userShares.toLocaleString(undefined, { maximumFractionDigits: 6 })} ysUSDC
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/[0.04] bg-black/20 p-4">
+            <p className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Immediately Withdrawable</p>
+            <p className="mt-1 text-sm font-heading font-bold text-[#F5F7FA]">
+              {withdrawable.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} USDC
+            </p>
+          </div>
+        </div>
+
         <p className="text-[9px] font-mono text-[#484F58] mt-4 uppercase tracking-widest">
-          Full vault position — Verified on-chain
+          Live share of total vault assets, including deployed LP value.
         </p>
       </div>
 
-      {/* Performance fee notice */}
       <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10 relative z-10 group/notice transition-all hover:bg-[#C2E812]/[0.05]">
         <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
         <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
@@ -109,7 +148,6 @@ export function WithdrawModule() {
         </p>
       </div>
 
-      {/* Confirmation warning */}
       {confirming && (
         <div className="flex items-center gap-4 p-5 rounded-2xl bg-[#FF4466]/[0.05] border border-[#FF4466]/20 animate-fade-in relative z-10">
           <AlertTriangle size={18} className="text-[#FF4466] flex-shrink-0" />
@@ -119,7 +157,6 @@ export function WithdrawModule() {
         </div>
       )}
 
-      {/* Action button */}
       <div className="flex flex-col gap-4 relative z-10 mt-auto">
         {success ? (
           <div className="flex items-center justify-center gap-3 py-5 rounded-2xl bg-[#00FFA3]/10 border border-[#00FFA3]/30 animate-fade-in">
@@ -132,10 +169,10 @@ export function WithdrawModule() {
           <div className="flex flex-col gap-3">
             <button
               onClick={handleWithdraw}
-              disabled={balanceNum === 0 || withdrawing}
+              disabled={withdrawable === 0 || withdrawing}
               className={`
                 ys-btn-primary w-full h-16 text-sm relative group overflow-hidden
-                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : balanceNum === 0 ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
+                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : withdrawable === 0 ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
               `}
             >
               <div className="relative flex items-center justify-center gap-3">
@@ -148,7 +185,7 @@ export function WithdrawModule() {
                 )}
               </div>
             </button>
-            
+
             {confirming && (
               <button
                 onClick={() => setConfirming(false)}
@@ -164,7 +201,7 @@ export function WithdrawModule() {
       <div className="flex items-center gap-3 relative z-10 pt-6 border-t border-white/[0.03]">
         <Shield size={14} className="text-[#484F58]" />
         <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">
-          Atomic on-chain execution · Zero counterparty risk
+          Atomic on-chain execution. Zero counterparty risk.
         </p>
       </div>
     </div>

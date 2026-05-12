@@ -7,6 +7,21 @@ export interface TelemetryEvent {
 
 const BUILTIN_TELEMETRY_URL = "https://yieldsense.huzaifamalik.tech/api/telemetry";
 
+function positiveIntEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function diagnosticUrlFor(telemetryUrl: string): string | null {
   const configured = process.env.TELEMETRY_DIAGNOSTIC_URL?.trim();
   if (configured) return configured;
@@ -57,7 +72,7 @@ async function emitTelemetryDiagnostic(
   };
 
   try {
-    await fetch(diagnosticUrl, {
+    await fetchWithTimeout(diagnosticUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -65,7 +80,7 @@ async function emitTelemetryDiagnostic(
         "Accept": "application/json",
       },
       body: JSON.stringify(payload),
-    });
+    }, positiveIntEnv("TELEMETRY_DIAGNOSTIC_TIMEOUT_MS", 2_500));
   } catch {
     // Last-resort diagnostics must never change processor control flow.
   }
@@ -120,11 +135,11 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
       return;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: "POST",
       headers,
       body: payload,
-    });
+    }, positiveIntEnv("TELEMETRY_TIMEOUT_MS", 1_000));
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "no-body");

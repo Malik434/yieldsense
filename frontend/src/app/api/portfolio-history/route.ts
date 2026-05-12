@@ -9,6 +9,7 @@ const DEPOSIT_EVENT = parseAbiItem(
 const WITHDRAW_EVENT = parseAbiItem(
   'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)'
 );
+const EMPTY_HISTORY = { events: [] };
 
 type PortfolioEvent = {
   type: 'deposit' | 'withdraw';
@@ -85,16 +86,16 @@ async function loadEventsFromBaseScan(
       topic0_3_opr: 'and',
     }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
       if (!res.ok) return null;
       const data = (await res.json()) as BaseScanResponse;
       if (data.status === '0' && data.message !== 'No records found') return null;
       return Array.isArray(data.result) ? data.result : [];
-    } finally {
-      clearTimeout(timeout);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[api/portfolio-history] BaseScan ${topicKey} unavailable: ${message}`);
+      return null;
     }
   };
 
@@ -173,6 +174,9 @@ export async function GET(request: Request) {
         ? await loadEventsFromBaseScan(config.keeper, userAddress, fromBlock)
         : null;
       if (baseScanEvents) return baseScanEvents;
+      if (chainId === 8453 && process.env.ALLOW_PORTFOLIO_RPC_FALLBACK !== 'true') {
+        return [];
+      }
 
       const [depositLogs, withdrawLogs] = await Promise.all([
         getLogsPaginated(client, {
@@ -229,10 +233,8 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ events });
   } catch (error: unknown) {
-    console.error('[api/portfolio-history] Failed to load portfolio history:', error);
-    return NextResponse.json(
-      { events: [], error: 'Failed to load portfolio history' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[api/portfolio-history] Returning empty history after provider failure: ${message}`);
+    return NextResponse.json(EMPTY_HISTORY);
   }
 }

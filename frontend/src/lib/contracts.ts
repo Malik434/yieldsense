@@ -220,6 +220,27 @@ export const KEEPER_ABI = [
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
     "stateMutability": "view",
     "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
+      { "indexed": false, "internalType": "int256", "name": "pnlDelta", "type": "int256" },
+      { "indexed": false, "internalType": "uint256", "name": "nonce", "type": "uint256" },
+      { "indexed": true, "internalType": "bytes32", "name": "digest", "type": "bytes32" }
+    ],
+    "name": "TradeExecuted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "processor", "type": "address" },
+      { "indexed": true, "internalType": "uint256", "name": "nonce", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "profitCredited", "type": "uint256" }
+    ],
+    "name": "HarvestExecuted",
+    "type": "event"
   }
 ] as const;
 

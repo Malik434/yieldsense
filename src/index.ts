@@ -59,8 +59,8 @@ const CONFIG = {
   aprFreshnessWindowSec: Number(process.env.APR_FRESHNESS_WINDOW_SEC ?? 1200),
   statePath: process.env.STATE_PATH ?? ".yieldsense-state.json",
   feeWindowSec: Number(process.env.FEE_WINDOW_SEC ?? 3600),
-  feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 1800),
-  logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 900),
+  feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 900),
+  logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 450),
   rewardEwmaHalfLifeSec: Number(process.env.REWARD_EWMA_HALF_LIFE_SEC ?? 259200),
   minYieldConfidence: Number(process.env.MIN_YIELD_CONFIDENCE ?? process.env.MIN_APR_CONFIDENCE ?? 0.55),
   yieldFallbackMode: (process.env.YIELD_FALLBACK_MODE as FallbackMode) || "auto",
@@ -93,6 +93,11 @@ const CONFIG = {
    * Example: 1000000 = accept at least 1.00 USDC per harvest.
    */
   harvestMinAssetOut: Number(process.env.HARVEST_MIN_ASSET_OUT ?? 0),
+  /** Static token metadata to save RPC calls */
+  token0: process.env.TOKEN0_ADDRESS?.trim(),
+  token1: process.env.TOKEN1_ADDRESS?.trim(),
+  decimals0: process.env.TOKEN0_DECIMALS ? Number(process.env.TOKEN0_DECIMALS) : undefined,
+  decimals1: process.env.TOKEN1_DECIMALS ? Number(process.env.TOKEN1_DECIMALS) : undefined,
   /**
    * When true: build and sign the payload but do NOT submit the on-chain transaction.
    * Useful for local testing to verify the full pipeline without spending gas or hitting
@@ -102,7 +107,15 @@ const CONFIG = {
   runCooldownGuard: process.env.RUN_COOLDOWN_GUARD !== "false",
   minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 60_000),
   enableGridKeeper: process.env.ENABLE_GRID_KEEPER === "true",
+  gasSponsorMode: (process.env.GAS_SPONSOR_MODE ?? "native").toLowerCase(),
+  paymasterDiscoveryOnly: process.env.PAYMASTER_DISCOVERY_ONLY === "true",
+  startupRpcProbe: process.env.STARTUP_RPC_PROBE === "true",
+  yieldEstimateTimeoutMs: Number(process.env.YIELD_ESTIMATE_TIMEOUT_MS ?? 60_000),
+  keeperReadTimeoutMs: Number(process.env.KEEPER_READ_TIMEOUT_MS ?? 8_000),
+  feeDataTimeoutMs: Number(process.env.FEE_DATA_TIMEOUT_MS ?? 8_000),
 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function shouldSkipRecentRun(
   state: Awaited<ReturnType<typeof loadState>>,
@@ -151,6 +164,10 @@ function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateR
     minApiConfidence: CONFIG.minAprConfidence,
     strategyDeltaUsd: CONFIG.strategyDeltaUsd,
     apyCompoundPeriodsPerYear: CONFIG.apyCompoundsPerYear,
+    token0: CONFIG.token0,
+    token1: CONFIG.token1,
+    decimals0: CONFIG.decimals0,
+    decimals1: CONFIG.decimals1,
   };
 }
 
@@ -265,9 +282,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 async function ensureKeeperOnExecutionChain(
   provider: ethers.JsonRpcProvider,
   keeperAddress: string,
-  rpcUrl: string
+  rpcUrl: string,
+  timeoutMs = Number(process.env.RPC_STARTUP_TIMEOUT_MS ?? 4_000)
 ): Promise<void> {
-  const code = await provider.getCode(keeperAddress);
+  const code = await withTimeout(provider.getCode(keeperAddress), timeoutMs, "keeper.getCode startup probe");
   if (code === "0x") {
     throw new Error(
       `KEEPER_ADDRESS ${keeperAddress} has no contract on execution RPC (${rpcUrl}). ` +
@@ -280,6 +298,42 @@ async function ensureKeeperOnExecutionChain(
 
 async function main(): Promise<void> {
   const startNow = Math.floor(Date.now() / 1000);
+  const state = await loadState(CONFIG.statePath);
+
+  // Crash-safe cooldown guard.
+  // Stamp the run immediately. If we crash 1 second from now, the next 
+  // restart will see this timestamp and skip.
+  const std = getAcurastStd();
+  const guardStorageKey = `worker-state:${(process.env.USER_ADDRESS ?? "default").toLowerCase()}:.yieldsense-state.json`;
+  
+  // 1. Check Cooldown
+  const recentRun = shouldSkipRecentRun(state, startNow);
+  if (recentRun.skip) {
+    const lastSkippedAt = state.lastSkippedAt ?? 0;
+    if (startNow - lastSkippedAt >= 60) {
+      state.lastSkippedAt = startNow;
+      state.lastDecisionReason = "cooldown_guard";
+      await saveState(CONFIG.statePath, state);
+      await emitTelemetry({
+        event: "run_skipped_recent",
+        timestamp: startNow,
+        elapsedMs: recentRun.elapsedMs,
+        waitMs: recentRun.waitMs,
+        intervalMs: recentRun.intervalMs,
+        reason: "cooldown_guard",
+        hasAcurastStd: Boolean(getAcurastStd()),
+      });
+    }
+    // To prevent Acurast from immediately restarting the script and hitting 
+    // the cooldown check again (busy-wait), we wait a bit before exiting.
+    const sleepMs = Math.min(recentRun.waitMs, 30_000);
+    if (sleepMs > 500) {
+      console.log(`[cooldown] Sleeping for ${Math.round(sleepMs / 1000)}s before exit to prevent restart loop.`);
+      await sleep(sleepMs);
+    }
+    return;
+  }
+
   await emitTelemetry({
     event: "processor_boot",
     timestamp: startNow,
@@ -291,26 +345,14 @@ async function main(): Promise<void> {
     forceTestHarvest: CONFIG.forceTestHarvest,
   });
 
-  const state = await loadState(CONFIG.statePath);
-
-  // ── Crash-safe cooldown guard ─────────────────────────────────────────────
-  // Stamp the run immediately. If we crash 1 second from now, the next 
-  // restart will see this timestamp and skip.
-  const std = getAcurastStd();
-  const guardStorageKey = `worker-state:${(process.env.USER_ADDRESS ?? "default").toLowerCase()}:.yieldsense-state.json`;
-  
-  // 1. Check Cooldown
-  const recentRun = shouldSkipRecentRun(state, startNow);
-  if (recentRun.skip) {
+  if (std) {
+    const hwAddress = ethers.getAddress(std.chains.ethereum.getAddress());
     await emitTelemetry({
-      event: "run_skipped_recent",
+      event: "hw_address_report",
       timestamp: startNow,
-      elapsedMs: recentRun.elapsedMs,
-      waitMs: recentRun.waitMs,
-      intervalMs: recentRun.intervalMs,
-      reason: "cooldown_guard",
+      hwAddress,
+      note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
     });
-    return;
   }
 
   // 2. Stamp and Save Immediately
@@ -331,6 +373,21 @@ async function main(): Promise<void> {
   console.log(`[CONFIG] User: ${envUser || "MISSING"}`);
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
+  await emitTelemetry({
+    event: "worker_stage",
+    timestamp: Math.floor(Date.now() / 1000),
+    stage: "config_loaded",
+    keeperAddress: CONFIG.keeperAddress,
+    rpcUrlConfigured: Boolean(CONFIG.rpcUrl),
+    dataRpcUrlConfigured: Boolean(CONFIG.dataRpcUrl),
+    dryRun: CONFIG.dryRun,
+    forceTestHarvest: CONFIG.forceTestHarvest,
+    enableGridKeeper: CONFIG.enableGridKeeper,
+    gasSponsorMode: CONFIG.gasSponsorMode,
+    paymasterDiscoveryOnly: CONFIG.paymasterDiscoveryOnly,
+    startupRpcProbe: CONFIG.startupRpcProbe,
+    userAddress: envUser,
+  });
 
   const configuredExecutionChainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined;
   const executionProvider = createJsonRpcProvider(
@@ -341,8 +398,21 @@ async function main(): Promise<void> {
     CONFIG.dataRpcUrl.length > 0
       ? createJsonRpcProvider(CONFIG.dataRpcUrl, CONFIG.yieldChainId ?? 8453)
       : executionProvider;
-  const executionChainId = Number((await executionProvider.getNetwork()).chainId);
-  const dataChainId = Number((await dataProvider.getNetwork()).chainId);
+  await emitTelemetry({
+    event: "worker_stage",
+    timestamp: Math.floor(Date.now() / 1000),
+    stage: "providers_created",
+    configuredExecutionChainId,
+    configuredYieldChainId: CONFIG.yieldChainId,
+    userAddress: envUser,
+  });
+  const rpcStartupTimeoutMs = Number(process.env.RPC_STARTUP_TIMEOUT_MS ?? 4_000);
+  const executionChainId = Number.isFinite(configuredExecutionChainId)
+    ? Number(configuredExecutionChainId)
+    : Number((await withTimeout(executionProvider.getNetwork(), rpcStartupTimeoutMs, "executionProvider.getNetwork")).chainId);
+  const dataChainId = Number.isFinite(CONFIG.yieldChainId)
+    ? Number(CONFIG.yieldChainId)
+    : Number((await withTimeout(dataProvider.getNetwork(), rpcStartupTimeoutMs, "dataProvider.getNetwork")).chainId);
   let yieldChainId = CONFIG.yieldChainId;
   if (yieldChainId == null || !Number.isFinite(yieldChainId)) {
     yieldChainId = dataChainId;
@@ -355,7 +425,27 @@ async function main(): Promise<void> {
     );
   }
 
-  await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl);
+  if (CONFIG.startupRpcProbe) {
+    await emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "rpc_probe_start",
+      rpcStartupTimeoutMs,
+      userAddress: envUser,
+    });
+    await ensureKeeperOnExecutionChain(executionProvider, CONFIG.keeperAddress, CONFIG.rpcUrl, rpcStartupTimeoutMs);
+  }
+
+  console.log(`[BOOT] Connecting to Execution RPC: ${CONFIG.rpcUrl}...`);
+  await emitTelemetry({
+    event: "worker_stage",
+    timestamp: Math.floor(Date.now() / 1000),
+    stage: "network_ready",
+    executionChainId,
+    dataChainId,
+    yieldChainId,
+    userAddress: envUser,
+  });
 
   // 2. Send Heartbeat
   await emitTelemetry({
@@ -403,7 +493,11 @@ async function main(): Promise<void> {
     state.lastRunAt != null ? Math.max(60, nowSec - state.lastRunAt) : 300;
 
   const ethPricePromise = getEthPrice();
-  const feeDataPromise = executionProvider.getFeeData();
+  const feeDataPromise = withTimeout(
+    executionProvider.getFeeData(),
+    CONFIG.feeDataTimeoutMs,
+    "executionProvider.getFeeData"
+  );
   let lastHarvestPromise: Promise<bigint>;
   if (CONFIG.forceTestHarvest) {
     lastHarvestPromise = Promise.resolve(0n);
@@ -411,7 +505,11 @@ async function main(): Promise<void> {
     lastHarvestPromise = (async () => {
       for (let i = 0; i < 3; i++) {
         try {
-          return await keeperRead.lastHarvest();
+          return await withTimeout(
+            keeperRead.lastHarvest(),
+            CONFIG.keeperReadTimeoutMs,
+            "keeper.lastHarvest"
+          );
         } catch (err: any) {
           if (i === 2) throw err;
           await new Promise((res) => setTimeout(res, 1000 * (i + 1)));
@@ -429,22 +527,89 @@ async function main(): Promise<void> {
       rewardAprEwmNext: null
     };
   } else {
-    yieldResult = await getRobustYieldEstimate(
-      {
-        provider: dataProvider,
-        indexerCheckpointBlock: state.yieldIndexerCheckpointBlock ?? undefined,
-        rewardAprEwmPrev: state.rewardAprEwm ?? undefined,
-      },
-      buildYieldRequest(yieldChainId, CONFIG.poolAddress),
-      { elapsedSecSinceLastEwma: elapsedEwma }
-    );
+    await emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "yield_estimate_start",
+      yieldEstimateTimeoutMs: CONFIG.yieldEstimateTimeoutMs,
+      keeperReadTimeoutMs: CONFIG.keeperReadTimeoutMs,
+      feeDataTimeoutMs: CONFIG.feeDataTimeoutMs,
+      chainId: executionChainId,
+      userAddress: envUser,
+    });
+
+    try {
+      yieldResult = await withTimeout(
+        getRobustYieldEstimate(
+          {
+            provider: dataProvider,
+            indexerCheckpointBlock: state.yieldIndexerCheckpointBlock ?? undefined,
+            rewardAprEwmPrev: state.rewardAprEwm ?? undefined,
+          },
+          buildYieldRequest(yieldChainId, CONFIG.poolAddress),
+          { elapsedSecSinceLastEwma: elapsedEwma }
+        ),
+        CONFIG.yieldEstimateTimeoutMs,
+        "getRobustYieldEstimate"
+      );
+    } catch (error: any) {
+      state.apiFailureStreak += 1;
+      state.lastRunAt = nowSec;
+      state.lastDecisionReason = "yield_estimate_failed";
+      state.suggestedNextCheckMs = 10 * 60 * 1000;
+      await saveState(CONFIG.statePath, state);
+      await emitTelemetry({
+        event: "yield_estimate_failed",
+        timestamp: Math.floor(Date.now() / 1000),
+        message: error?.message ?? String(error),
+        name: error?.name,
+        apiFailureStreak: state.apiFailureStreak,
+        recommendedNextCheckMs: state.suggestedNextCheckMs,
+        chainId: executionChainId,
+        userAddress: envUser,
+      });
+      return;
+    }
+
+    await emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "yield_estimate_complete",
+      usable: yieldResult.estimate.usable,
+      confidence: yieldResult.estimate.confidence,
+      sources: yieldResult.estimate.dataSourcesUsed,
+      chainId: executionChainId,
+      userAddress: envUser,
+    });
   }
 
-  const [ethPrice, lastHarvest, feeData] = await Promise.all([
-    ethPricePromise,
-    lastHarvestPromise,
-    feeDataPromise,
-  ]);
+  let ethPrice: number;
+  let lastHarvest: bigint;
+  let feeData: ethers.FeeData;
+  try {
+    [ethPrice, lastHarvest, feeData] = await Promise.all([
+      ethPricePromise,
+      lastHarvestPromise,
+      feeDataPromise,
+    ]);
+  } catch (error: any) {
+    state.apiFailureStreak += 1;
+    state.lastRunAt = nowSec;
+    state.lastDecisionReason = "keeper_or_fee_read_failed";
+    state.suggestedNextCheckMs = 10 * 60 * 1000;
+    await saveState(CONFIG.statePath, state);
+    await emitTelemetry({
+      event: "keeper_or_fee_read_failed",
+      timestamp: Math.floor(Date.now() / 1000),
+      message: error?.message ?? String(error),
+      name: error?.name,
+      apiFailureStreak: state.apiFailureStreak,
+      recommendedNextCheckMs: state.suggestedNextCheckMs,
+      chainId: executionChainId,
+      userAddress: envUser,
+    });
+    return;
+  }
 
   const aprConsensus = yieldResult.estimate;
   state.yieldIndexerCheckpointBlock = yieldResult.indexerCheckpointBlock;
@@ -697,41 +862,37 @@ async function main(): Promise<void> {
 
   if (acurastStd) {
     const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
+    const usePaymaster = false;
 
-    // Report the TEE's Ethereum address on every run so the operator can
-    // attest it on-chain via ownerAttestProcessor(hwAddress).
-    await emitTelemetry({
-      event: "hw_address_report",
-      timestamp: nowSec,
-      hwAddress,
-      note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
-    });
+    if (false) {
+      // Paymaster logic removed to reduce bundle size
+    } else {
+      const submitted = await fulfillEthereumHarvest(acurastStd, {
+        rpcUrl: CONFIG.rpcUrl,
+        keeperAddress: CONFIG.keeperAddress,
+        nonce,
+        targetPool: CONFIG.poolAddress,
+        minLpOut: harvestParams.minLpOut,
+        amountToSwap: harvestParams.amountToSwap,
+        deadline,
+        routes,
+        gasLimit: CONFIG.estGasUnits.toString(),
+        maxFeePerGas: maxFeePerGas.toString(),
+        maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+      });
+      txHash = submitted.hash;
 
-    const submitted = await fulfillEthereumHarvest(acurastStd, {
-      rpcUrl: CONFIG.rpcUrl,
-      keeperAddress: CONFIG.keeperAddress,
-      nonce,
-      targetPool: CONFIG.poolAddress,
-      minLpOut: harvestParams.minLpOut,
-      amountToSwap: harvestParams.amountToSwap,
-      deadline,
-      routes,
-      gasLimit: CONFIG.estGasUnits.toString(),
-      maxFeePerGas: maxFeePerGas.toString(),
-      maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
-    });
-    txHash = submitted.hash;
-
-    await emitTelemetry({
-      event: "harvest_submitted",
-      timestamp: nowSec,
-      txHash,
-      payloadHash: harvestPayloadHash,
-      signingMode: "acurast_fulfill_attested_sender",
-      processorAddress: hwAddress,
-      ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
-    });
-    receipt = await executionProvider.waitForTransaction(txHash);
+      await emitTelemetry({
+        event: "harvest_submitted",
+        timestamp: nowSec,
+        txHash,
+        payloadHash: harvestPayloadHash,
+        signingMode: "acurast_fulfill_attested_sender",
+        processorAddress: hwAddress,
+        ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+      });
+      receipt = await executionProvider.waitForTransaction(txHash);
+    }
   } else {
     const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
 
@@ -822,16 +983,35 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch(async (error: any) => {
-  const state = await loadState(CONFIG.statePath);
-  state.apiFailureStreak += 1;
-  state.lastRunAt = Math.floor(Date.now() / 1000);
-  state.lastDecisionReason = "runtime_error";
-  await saveState(CONFIG.statePath, state);
-  await emitTelemetry({
-    event: "runtime_error",
-    timestamp: state.lastRunAt,
-    message: error?.message ?? String(error),
+main()
+  .then(async () => {
+    // Timed-out RPC/API promises may leave sockets alive after a fail-soft return.
+    // Acurast expects each scheduled execution to terminate, so force a clean exit.
+    process.exitCode = 0;
+    // Drain telemetry
+    await sleep(2000);
+    setTimeout(() => process.exit(0), 50);
+  })
+  .catch(async (error: any) => {
+    const state = await loadState(CONFIG.statePath);
+    state.apiFailureStreak += 1;
+    state.lastRunAt = Math.floor(Date.now() / 1000);
+    state.lastDecisionReason = "runtime_error";
+    await saveState(CONFIG.statePath, state);
+    await emitTelemetry({
+      event: "runtime_error",
+      timestamp: state.lastRunAt,
+      message: error?.message ?? String(error),
+      name: error?.name,
+      stack: error?.stack?.split("\n").slice(0, 8).join("\n"),
+      chainId: process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined,
+      userAddress: process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS,
+    });
+    // Acurast retries non-zero executions immediately. We already persisted and
+    // emitted the failure, so exit cleanly to avoid boot-log storms that hide the
+    // underlying runtime_error event.
+    process.exitCode = 0;
+    // Drain telemetry
+    await sleep(2000);
+    setTimeout(() => process.exit(0), 50);
   });
-  process.exitCode = 1;
-});

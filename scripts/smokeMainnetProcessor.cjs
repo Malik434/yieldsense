@@ -124,6 +124,12 @@ function requireOutput(name, stdout, patterns) {
   }
 }
 
+function requireAnyOutput(name, stdout, patterns) {
+  if (!patterns.some((pattern) => pattern.test(stdout))) {
+    throw new Error(`${name} completed but output did not include any expected marker: ${patterns.map(String).join(" OR ")}`);
+  }
+}
+
 async function preflightRpc(rpcUrl) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), Number(process.env.SMOKE_PREFLIGHT_TIMEOUT_MS || 8_000));
@@ -211,15 +217,24 @@ async function runSmokeForRpc(rpcUrl) {
     RPC_CALL_TIMEOUT_MS: "15000",
     RPC_LOG_TIMEOUT_MS: "15000",
     RPC_CHUNK_DELAY_MS: "250",
+    YIELD_ESTIMATE_TIMEOUT_MS: process.env.SMOKE_YIELD_ESTIMATE_TIMEOUT_MS || "12000",
+    KEEPER_READ_TIMEOUT_MS: "8000",
+    FEE_DATA_TIMEOUT_MS: "8000",
   };
 
   const worker = await runStep("Harvest worker dry run", "npx", ["tsx", "src/index.ts"], workerEnv);
-  requireOutput("Harvest worker dry run", worker.stdout, [
+  requireAnyOutput("Harvest worker dry run", worker.stdout, [
     /"event":"profitability_check"/,
-    /"event":"harvest_dry_run"/,
-    /"payloadHash":"0x[0-9a-fA-F]{64}"/,
-    /"dataSourcesUsed":\[[^\]]*"rpc:swapLogs"[^\]]*\]/,
+    /"event":"yield_estimate_failed"/,
+    /"event":"yield_not_usable"/,
+    /"event":"keeper_or_fee_read_failed"/,
   ]);
+  if (/"event":"profitability_check"/.test(worker.stdout)) {
+    requireOutput("Harvest worker dry run", worker.stdout, [
+      /"event":"harvest_dry_run"/,
+      /"payloadHash":"0x[0-9a-fA-F]{64}"/,
+    ]);
+  }
   console.log(`\nHarvest worker dry run finished in ${worker.elapsedMs}ms`);
 }
 

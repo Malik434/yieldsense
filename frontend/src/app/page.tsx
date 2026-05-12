@@ -1,25 +1,21 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import Image from 'next/image';
-import { useAccount, useReadContract, useBlockNumber } from 'wagmi';
-import { formatUnits } from 'viem';
-import { useNetwork } from '@/providers/NetworkProvider';
+import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
+import { useAccount, useReadContract, useBlockNumber } from "wagmi";
+import { formatUnits } from "viem";
+import { useNetwork } from "@/providers/NetworkProvider";
 
-import { KEEPER_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
-import { Header } from '@/components/Header';
-import { DepositModule } from '@/components/DepositModule';
-import { ConfidentialStrategyBox } from '@/components/ConfidentialStrategyBox';
-import { PnlChart } from '@/components/PnlChart';
-import { TransactionHistory } from '@/components/TransactionHistory';
-import { WithdrawModule } from '@/components/WithdrawModule';
-import { PortfolioTicker } from '@/components/PortfolioTicker';
-import { TestingSuite } from '@/components/TestingSuite';
-import {
-  Activity,
-  Cpu,
-  ArrowRight
-} from 'lucide-react';
+import { KEEPER_ABI, OPERATOR_ADDRESS } from "@/lib/contracts";
+import { Header } from "@/components/Header";
+import { DepositModule } from "@/components/DepositModule";
+import { ConfidentialStrategyBox } from "@/components/ConfidentialStrategyBox";
+import { PnlChart } from "@/components/PnlChart";
+import { TransactionHistory } from "@/components/TransactionHistory";
+import { WithdrawModule } from "@/components/WithdrawModule";
+import { PortfolioTicker } from "@/components/PortfolioTicker";
+import { TestingSuite } from "@/components/TestingSuite";
+import { Activity, Cpu, ArrowRight } from "lucide-react";
 
 interface WorkerState {
   previousApr: number | null;
@@ -29,7 +25,11 @@ interface WorkerState {
   lastExecutionAt: number | null;
   suggestedNextCheckMs: number;
   yieldIndexerCheckpointBlock: number | null;
-  rewardAprEwm: { mean: number; variance: number; lastTimestamp: number } | null;
+  rewardAprEwm: {
+    mean: number;
+    variance: number;
+    lastTimestamp: number;
+  } | null;
   gridTradesExecuted?: number;
   lastGridTradeAt?: number | null;
   totalRealizedProfitUsd?: number;
@@ -51,7 +51,15 @@ interface OnchainAudit {
   totalProfitCreditedUsd: number;
 }
 
-function SectionHeading({ id, label, sublabel }: { id: string; label: string; sublabel: string }) {
+function SectionHeading({
+  id,
+  label,
+  sublabel,
+}: {
+  id: string;
+  label: string;
+  sublabel: string;
+}) {
   return (
     <div id={id} className="mb-8 pt-16 group sm:mb-12 sm:pt-24">
       <div className="flex items-center gap-4 mb-4">
@@ -78,12 +86,14 @@ export default function CommandCenter() {
 
   const fetchVaultState = useCallback(async () => {
     try {
-      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
+      const res = await fetch(
+        `/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`,
+      );
       if (res.ok) {
         const data = await res.json();
         setVaultState(data);
       }
-    } catch { }
+    } catch {}
   }, [chainId]);
 
   const fetchConsensus = useCallback(async () => {
@@ -93,7 +103,7 @@ export default function CommandCenter() {
         const data = await res.json();
         setConsensus(data);
       }
-    } catch { }
+    } catch {}
   }, [chainId]);
 
   const fetchOnchainAudit = useCallback(async () => {
@@ -103,12 +113,14 @@ export default function CommandCenter() {
     }
 
     try {
-      const res = await fetch(`/api/onchain-audit?userAddress=${address}&chainId=${chainId}`);
+      const res = await fetch(
+        `/api/onchain-audit?userAddress=${address}&chainId=${chainId}`,
+      );
       if (res.ok) {
         const data = await res.json();
         setOnchainAudit(data);
       }
-    } catch { }
+    } catch {}
   }, [address, chainId]);
 
   useEffect(() => {
@@ -133,7 +145,7 @@ export default function CommandCenter() {
   const { data: maxWithdraw, refetch: refetchUserData } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
-    functionName: 'maxWithdraw',
+    functionName: "maxWithdraw",
     args: address ? [address] : undefined,
     query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
@@ -141,7 +153,7 @@ export default function CommandCenter() {
   const { data: userSharesRaw, refetch: refetchUserShares } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
-    functionName: 'balanceOf',
+    functionName: "balanceOf",
     args: address ? [address] : undefined,
     query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
@@ -149,14 +161,14 @@ export default function CommandCenter() {
   const { data: totalSharesRaw } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
-    functionName: 'totalSupply',
+    functionName: "totalSupply",
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
   const { data: totalAssetsRaw } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
-    functionName: 'totalAssets',
+    functionName: "totalAssets",
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
@@ -167,27 +179,43 @@ export default function CommandCenter() {
     }
   }, [blockNumber, refetchUserData, refetchUserShares]);
 
-  const balance = maxWithdraw ? parseFloat(formatUnits(maxWithdraw as bigint, 6)) : 0;
-  const totalShares = totalSharesRaw ? parseFloat(formatUnits(totalSharesRaw as bigint, 6)) : 0;
-  const globalTvl = totalAssetsRaw ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6)) : 0;
-  const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
+  const withdrawableBalance = maxWithdraw
+    ? parseFloat(formatUnits(maxWithdraw as bigint, 6))
+    : 0;
+  const totalShares = totalSharesRaw
+    ? parseFloat(formatUnits(totalSharesRaw as bigint, 6))
+    : 0;
+  const globalTvl = totalAssetsRaw
+    ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6))
+    : 0;
+  const userShares = userSharesRaw
+    ? parseFloat(formatUnits(userSharesRaw as bigint, 6))
+    : 0;
 
   const vaultShareFraction: number =
     totalShares > 0 && userShares > 0
       ? Math.min(userShares / totalShares, 1)
-      : balance > 0 ? 1 : 0;
+      : withdrawableBalance > 0
+        ? 1
+        : 0;
 
   const vaultUnrealized = vaultState?.unrealizedYieldUsd ?? 0;
   const userProfit = onchainAudit?.userProfitCreditedUsd ?? 0;
-  const userPrincipal = onchainAudit?.principalUsd ?? balance;
+  const userVaultValue = globalTvl * vaultShareFraction;
+  const userPrincipal = onchainAudit?.principalUsd ?? userVaultValue;
   const userUnrealized = vaultUnrealized * vaultShareFraction;
 
-  const isHealthy = vaultState?.apiFailureStreak === 0 && !vaultState?.defaultState;
-  const isWarning = (vaultState?.apiFailureStreak ?? 0) > 0 && (vaultState?.apiFailureStreak ?? 0) < 3;
+  const isHealthy =
+    vaultState?.apiFailureStreak === 0 && !vaultState?.defaultState;
+  const isWarning =
+    (vaultState?.apiFailureStreak ?? 0) > 0 &&
+    (vaultState?.apiFailureStreak ?? 0) < 3;
 
   const prevApr =
     consensus?.consensus ??
-    (vaultState?.previousApr != null ? Math.round(vaultState.previousApr * 10_000) : null);
+    (vaultState?.previousApr != null
+      ? Math.round(vaultState.previousApr * 10_000)
+      : null);
 
   return (
     <div className="min-h-screen">
@@ -196,7 +224,7 @@ export default function CommandCenter() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-28 sm:pb-40">
         <div className="pt-8 sm:pt-12 mb-10 sm:mb-16">
           <PortfolioTicker
-            balance={balance}
+            balance={userVaultValue}
             unrealizedYield={userUnrealized}
             totalRealized={userProfit}
             apr={prevApr != null ? prevApr / 100 : 0}
@@ -205,16 +233,24 @@ export default function CommandCenter() {
         </div>
 
         <div className="mb-14 sm:mb-20 animate-fade-in">
-          <div className={`
+          <div
+            className={`
             ys-card p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-[#0B0F0D]/60
-            ${isHealthy ? 'border-[#C2E812]/10' : isWarning ? 'border-amber-500/10' : 'border-[#FF4466]/10'}
-          `}>
+            ${isHealthy ? "border-[#C2E812]/10" : isWarning ? "border-amber-500/10" : "border-[#FF4466]/10"}
+          `}
+          >
             <div className="flex items-center gap-5">
               <div className="relative">
-                <div className={`status-dot ${isHealthy ? 'bg-[#C2E812]' : isWarning ? 'bg-amber-400' : 'bg-[#FF4466]'}`} />
+                <div
+                  className={`status-dot ${isHealthy ? "bg-[#C2E812]" : isWarning ? "bg-amber-400" : "bg-[#FF4466]"}`}
+                />
               </div>
               <span className="font-heading font-bold text-sm tracking-tight text-[#F5F7FA] uppercase">
-                {isHealthy ? 'Autonomous Guardian — Active' : isWarning ? 'Oracle Synchronization Degradation' : 'Hardware Signal Lost'}
+                {isHealthy
+                  ? "Autonomous Guardian — Active"
+                  : isWarning
+                    ? "Oracle Synchronization Degradation"
+                    : "Hardware Signal Lost"}
               </span>
             </div>
 
@@ -222,13 +258,19 @@ export default function CommandCenter() {
               <div className="flex items-center gap-3">
                 <Activity size={16} className="text-[#C2E812]" />
                 <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
-                  Trades: <span className="text-[#F5F7FA]">{vaultState?.gridTradesExecuted ?? 0}</span>
+                  Trades:{" "}
+                  <span className="text-[#F5F7FA]">
+                    {vaultState?.gridTradesExecuted ?? 0}
+                  </span>
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 <Cpu size={16} className="text-[#00FFA3]" />
                 <span className="text-[10px] font-mono font-bold text-[#484F58] tracking-widest uppercase">
-                  Checkpoint: <span className="text-[#F5F7FA]">{vaultState?.yieldIndexerCheckpointBlock ?? '0'}</span>
+                  Checkpoint:{" "}
+                  <span className="text-[#F5F7FA]">
+                    {vaultState?.yieldIndexerCheckpointBlock ?? "0"}
+                  </span>
                 </span>
               </div>
               {vaultState?.lastDecisionReason && (
@@ -255,9 +297,12 @@ export default function CommandCenter() {
           label="Activity & Audit"
           sublabel="Real-time verified yield engine"
         />
-        <div className="animate-fade-in space-y-10" style={{ animationDelay: '0.1s' }}>
+        <div
+          className="animate-fade-in space-y-10"
+          style={{ animationDelay: "0.1s" }}
+        >
           <PnlChart
-            currentBalance={balance}
+            currentBalance={userVaultValue}
             initialDeposit={userPrincipal}
             totalRealized={userProfit}
             unrealizedYield={userUnrealized}
@@ -275,7 +320,10 @@ export default function CommandCenter() {
           label="Liquidity Exit"
           sublabel="Vault withdrawal & settlement"
         />
-        <div className="max-w-3xl mx-auto animate-fade-in" style={{ animationDelay: '0.2s' }}>
+        <div
+          className="max-w-3xl mx-auto animate-fade-in"
+          style={{ animationDelay: "0.2s" }}
+        >
           <WithdrawModule />
         </div>
 
@@ -293,13 +341,18 @@ export default function CommandCenter() {
                   />
                 </div>
                 <div>
-                  <span className="font-heading font-bold text-3xl text-[#F5F7FA]">YieldSense</span>
-                  <p className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-[0.5em] mt-1">Autonomous Systems</p>
+                  <span className="font-heading font-bold text-3xl text-[#F5F7FA]">
+                    YieldSense
+                  </span>
+                  <p className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-[0.5em] mt-1">
+                    Autonomous Systems
+                  </p>
                 </div>
               </div>
               <p className="text-xs font-mono text-[#484F58] max-w-sm leading-relaxed uppercase tracking-[0.2em]">
                 Protocol-level security powered by Acurast TEE. <br />
-                Strategy parameters are encrypted and verified at runtime in secure hardware enclaves.
+                Strategy parameters are encrypted and verified at runtime in
+                secure hardware enclaves.
               </p>
             </div>
 
@@ -311,7 +364,10 @@ export default function CommandCenter() {
                 className="group flex items-center gap-4 text-[11px] font-mono font-bold text-[#8B949E] hover:text-[#C2E812] transition-all duration-500 uppercase tracking-[0.4em]"
               >
                 Explorer Verified
-                <ArrowRight size={16} className="group-hover:translate-x-3 transition-transform duration-500" />
+                <ArrowRight
+                  size={16}
+                  className="group-hover:translate-x-3 transition-transform duration-500"
+                />
               </a>
               <div className="px-6 py-3 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-xs font-mono font-bold text-[#484F58] tracking-widest">
                 {KEEPER_ADDRESS}
@@ -321,7 +377,7 @@ export default function CommandCenter() {
 
           <div className="mt-24 text-center">
             <span className="text-[10px] font-mono text-[#484F58] tracking-[0.6em] uppercase font-bold opacity-40">
-              © 2024 YieldSense Autonomous Guardian
+              © 2026 YieldSense Autonomous Guardian
             </span>
           </div>
         </footer>

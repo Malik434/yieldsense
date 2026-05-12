@@ -58,6 +58,11 @@ export interface YieldEstimateRequest {
   feeWindowSec: number;
   /** max blocks to scan backward for logs from latest (RPC safety) */
   feeMaxBlocks: number;
+  /** Optional static token metadata to save RPC calls */
+  token0?: string;
+  token1?: string;
+  decimals0?: number;
+  decimals1?: number;
   logChunkSize: number;
   poolFeeBps: number;
   rewardSmoothingHalfLifeSec: number;

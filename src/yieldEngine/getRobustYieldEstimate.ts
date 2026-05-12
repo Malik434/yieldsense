@@ -11,6 +11,7 @@ import { totalAprToApy } from "./compute/apy.js";
 import { compositeConfidence, liquiditySensitivityPenalty } from "./robustness/confidence.js";
 import { apiFallbackTotalApr, annotateApiFallbackBreakdown } from "./legacy/apiFallback.js";
 import { estimateForwardApr } from "./compute/forwardAerodrome.js";
+import { emitTelemetry } from "../telemetry.js";
 import type {
   DataSourceTag,
   RewardGaugeSnapshot,
@@ -69,19 +70,30 @@ export async function getRobustYieldEstimate(
   opts?: { elapsedSecSinceLastEwma?: number }
 ): Promise<RobustYieldEngineResult> {
   const { provider } = ctx;
+  emitTelemetry({ event: "worker_stage", stage: "yield_engine_entry", poolAddress: req.poolAddress, timestamp: Math.floor(Date.now() / 1000) });
   const latest = await provider.getBlockNumber();
+  emitTelemetry({ event: "worker_stage", stage: "latest_block_fetched", block: latest, timestamp: Math.floor(Date.now() / 1000) });
   const windowBlocks = Math.min(req.feeMaxBlocks, estimateBlocksForWindow(req.chainId, req.feeWindowSec));
   const fromBlock = Math.max(1, latest - windowBlocks);
 
   const dataSourcesUsed: DataSourceTag[] = [];
-  const spotRaw = await getSpotPricesFromPool(provider, req.poolAddress, "latest");
+  emitTelemetry({ event: "worker_stage", stage: "fetching_spot_prices", timestamp: Math.floor(Date.now() / 1000) });
+  const spotRaw = await getSpotPricesFromPool(provider, req.poolAddress, "latest", {
+    token0: req.token0,
+    token1: req.token1,
+    decimals0: req.decimals0,
+    decimals1: req.decimals1
+  });
+  emitTelemetry({ event: "worker_stage", stage: "spot_prices_fetched", lookup: spotRaw.priceLookup, timestamp: Math.floor(Date.now() / 1000) });
   if (spotRaw.priceLookup === "gecko") dataSourcesUsed.push("api:gecko");
   const spot = attachDivergenceGuard(spotRaw, 0.05);
   dataSourcesUsed.push("oracle:spotReserves", "rpc:poolState");
 
   const poolFeeBps =
     req.poolFeeBps > 0 ? req.poolFeeBps : await readPoolFeeBps(provider, req.poolAddress);
+  console.log(`[DEBUG] poolFeeBps: ${poolFeeBps}`);
 
+  console.log(`[DEBUG] calculating TWAP TVL...`);
   const twab = await twabTvlUsd(
     provider,
     req.poolAddress,
@@ -90,6 +102,7 @@ export async function getRobustYieldEstimate(
     spot,
     geckoNetworkForChainId(req.chainId)
   );
+  console.log(`[DEBUG] TVL TWAP: ${twab.tvlUsd}`);
   const tvlUsdTwab = twab.tvlUsd;
   if (twab.source === "gecko" && !dataSourcesUsed.includes("api:gecko")) {
     dataSourcesUsed.push("api:gecko");
@@ -100,17 +113,29 @@ export async function getRobustYieldEstimate(
   let lpHuman = 0;
   try {
     const lpContract = new Contract(lpToken, LP_ABI, provider);
+    console.log(`[DEBUG] fetching LP total supply and decimals...`);
     const [totalSupplyLp, lpDecRaw] = await Promise.all([
       lpContract.totalSupply(),
       lpContract.decimals(),
     ]);
     lpDecimals = Number(lpDecRaw);
     lpHuman = Number(formatUnits(totalSupplyLp as bigint, lpDecimals));
-  } catch {
-    // Concentrated-liquidity pool contracts are not ERC-20 LPs — set LP_TOKEN_ADDRESS to the staked share token.
+    console.log(`[DEBUG] LP total supply: ${lpHuman}`);
+  } catch (err) {
+    console.log(`[DEBUG] LP metadata fetch failed: ${err}`);
   }
   const lpTokenUsdPerToken = tvlUsdTwab > 0 && lpHuman > 0 ? tvlUsdTwab / lpHuman : 0;
 
+  emitTelemetry({
+    event: "worker_stage",
+    timestamp: Math.floor(Date.now() / 1000),
+    stage: "fee_indexing_start",
+    fromBlock,
+    latest,
+    poolAddress: req.poolAddress,
+  });
+
+  console.log(`[DEBUG] starting log indexing for fees...`);
   const feeIndex = await indexSwapFeesUsd(
     provider,
     req.poolAddress,
@@ -120,6 +145,7 @@ export async function getRobustYieldEstimate(
     poolFeeBps,
     spot
   );
+  console.log(`[DEBUG] fee indexing complete: ${feeIndex.feeUsd} USD`);
   dataSourcesUsed.push("rpc:swapLogs");
 
   let feeApr = annualizedFeeApr(feeIndex.feeUsd, tvlUsdTwab, feeIndex.windowSecActual);
@@ -132,6 +158,12 @@ export async function getRobustYieldEstimate(
   let rewardAprEwmNext: number | null = null;
 
   if (req.gaugeAddress) {
+    emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "reward_indexing_start",
+      gaugeAddress: req.gaugeAddress,
+    });
     try {
       const gaugeToken = new Contract(
         req.gaugeAddress,
@@ -197,6 +229,13 @@ export async function getRobustYieldEstimate(
   let usable = confidence >= req.minExecutionConfidence && (feeIndex.coverageRatio >= 0.5 || totalApr > 0);
 
   if ((!usable || confidence < req.minExecutionConfidence) && req.fallbackMode !== "off") {
+    emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "api_fallback_start",
+      confidence,
+      minRequired: req.minExecutionConfidence,
+    });
     const apiPool = req.apiPoolAddress ?? req.poolAddress;
     const defiLlamaOpts =
       req.defiLlamaProject || req.defiLlamaToken0

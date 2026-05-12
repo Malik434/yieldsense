@@ -94,18 +94,29 @@ async function readBalancesHuman(
 export async function getSpotPricesFromPool(
   provider: JsonRpcProvider,
   poolAddress: string,
-  blockTag: number | "latest"
+  blockTag: number | "latest",
+  metadata?: { token0?: string; token1?: string; decimals0?: number; decimals1?: number }
 ): Promise<SpotPricesFromPool> {
-  const pair = new Contract(poolAddress, PAIR_ABI, provider);
-  const [token0, token1] = await Promise.all([pair.token0(), pair.token1()]);
-  const t0 = token0 as string;
-  const t1 = token1 as string;
+  let t0 = metadata?.token0;
+  let t1 = metadata?.token1;
+  let d0 = metadata?.decimals0;
+  let d1 = metadata?.decimals1;
+
+  if (!t0 || !t1) {
+    const pair = new Contract(poolAddress, PAIR_ABI, provider);
+    const [token0, token1] = await Promise.all([pair.token0(), pair.token1()]);
+    t0 = token0 as string;
+    t1 = token1 as string;
+  }
 
   const c0 = new Contract(t0, ERC20_ABI, provider);
   const c1 = new Contract(t1, ERC20_ABI, provider);
-  const [decimals0, decimals1] = await Promise.all([c0.decimals(), c1.decimals()]);
-  const d0 = Number(decimals0);
-  const d1 = Number(decimals1);
+
+  if (d0 == null || d1 == null) {
+    const [decimals0, decimals1] = await Promise.all([c0.decimals(), c1.decimals()]);
+    d0 = Number(decimals0);
+    d1 = Number(decimals1);
+  }
 
   let r0 = 0;
   let r1 = 0;

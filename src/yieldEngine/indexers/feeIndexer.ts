@@ -85,47 +85,44 @@ export async function indexSwapFeesUsd(
   poolFeeBps: number,
   prices: TokenPricesUsd
 ): Promise<FeeIndexResult> {
-  const v2 = await collectSwapFees(
+  // Query all 3 topics in one go to save round-trips in TEE
+  const topics = [[V2_SWAP_TOPIC, V3_SWAP_TOPIC, AERO_V1_SWAP_TOPIC]];
+  
+  const { logs, failedChunks, totalChunks } = await getLogsChunked(
     provider,
-    poolAddress,
+    { address: poolAddress, topics },
     fromBlock,
     toBlock,
-    chunkSize,
-    V2_SWAP_TOPIC,
-    V2_SWAP_IFACE,
-    poolFeeBps,
-    prices,
-    "v2"
-  );
-  const v3 = await collectSwapFees(
-    provider,
-    poolAddress,
-    fromBlock,
-    toBlock,
-    chunkSize,
-    V3_SWAP_TOPIC,
-    V3_SWAP_IFACE,
-    poolFeeBps,
-    prices,
-    "v3"
-  );
-  const aero = await collectSwapFees(
-    provider,
-    poolAddress,
-    fromBlock,
-    toBlock,
-    chunkSize,
-    AERO_V1_SWAP_TOPIC,
-    AERO_V1_SWAP_IFACE,
-    poolFeeBps,
-    prices,
-    "v2"
+    chunkSize
   );
 
-  const feeUsd = v2.feeUsd + v3.feeUsd + aero.feeUsd;
-  const swapCount = v2.swapCount + v3.swapCount + aero.swapCount;
-  const totalChunks = v2.totalChunks + v3.totalChunks + aero.totalChunks;
-  const failedChunks = v2.failedChunks + v3.failedChunks + aero.failedChunks;
+  let feeUsd = 0;
+  let swapCount = 0;
+
+  for (const log of logs) {
+    try {
+      const topic = log.topics[0];
+      if (topic === V2_SWAP_TOPIC || topic === AERO_V1_SWAP_TOPIC) {
+        const parsed = (topic === V2_SWAP_TOPIC ? V2_SWAP_IFACE : AERO_V1_SWAP_IFACE).parseLog(log);
+        if (parsed) {
+          const amount0In = parsed.args.amount0In as bigint;
+          const amount1In = parsed.args.amount1In as bigint;
+          feeUsd += feeUsdFromSwapInputs(amount0In, amount1In, poolFeeBps, prices);
+          swapCount += 1;
+        }
+      } else if (topic === V3_SWAP_TOPIC) {
+        const parsed = V3_SWAP_IFACE.parseLog(log);
+        if (parsed) {
+          const amount0 = parsed.args.amount0 as bigint;
+          const amount1 = parsed.args.amount1 as bigint;
+          feeUsd += feeUsdFromV3Swap(amount0, amount1, poolFeeBps, prices);
+          swapCount += 1;
+        }
+      }
+    } catch {
+      // parse failure for this specific log
+    }
+  }
 
   const t0 = await getBlockTimestamp(provider, fromBlock);
   const t1 = await getBlockTimestamp(provider, toBlock);

@@ -29,7 +29,7 @@ export async function getLogsChunked(
   provider: JsonRpcProvider,
   filter: {
     address: string;
-    topics?: readonly (string | null)[];
+    topics?: (string | string[] | null)[];
   },
   fromBlock: number,
   toBlock: number,

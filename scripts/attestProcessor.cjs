@@ -59,14 +59,16 @@ async function main() {
   const [deployer] = await hre.ethers.getSigners();
   const network = await hre.ethers.provider.getNetwork();
 
-  const keeperAddress = process.env.KEEPER_ADDRESS?.trim();
+  const keeperAddress = process.env.KEEPER_ADDRESS?.trim() || "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF";
+  const safeAddress = "0x081a4954638f739C2A2Ce84073842FCD5091c64a";
+  
   if (!keeperAddress) throw new Error("KEEPER_ADDRESS env var is required");
 
   // Processor address resolution order:
-  //  1. PROCESSOR_ADDRESS env var (explicit)
-  //  2. Latest hw_address_report from Netlify telemetry (auto-discovery)
-  //  3. Deployer address (local / fallback)
-  let processorAddress = process.env.PROCESSOR_ADDRESS?.trim();
+  //  1. First command line argument
+  //  2. PROCESSOR_ADDRESS env var (explicit)
+  //  3. Latest hw_address_report from Netlify telemetry (auto-discovery)
+  let processorAddress = process.argv[2] || process.env.PROCESSOR_ADDRESS?.trim();
 
   if (!processorAddress) {
     const frontendUrl = process.env.FRONTEND_URL || "https://yieldsense.huzaifamalik.tech";
@@ -92,12 +94,7 @@ async function main() {
 
   // Verify caller is owner
   const owner = await keeper.owner();
-  if (owner.toLowerCase() !== deployer.address.toLowerCase()) {
-    throw new Error(
-      `Deployer ${deployer.address} is not the keeper owner (${owner}). ` +
-      `Set ACURAST_WORKER_KEY to the owner private key.`
-    );
-  }
+  const isSafeOwner = owner.toLowerCase() === safeAddress.toLowerCase();
 
   // Skip if already attested
   const alreadyAttested = await keeper.attestedProcessors(processorAddress);
@@ -105,6 +102,29 @@ async function main() {
     console.log(`✔  ${processorAddress} is already attested — no action needed.`);
     console.log("\n✅ Done.\n");
     return;
+  }
+
+  if (isSafeOwner) {
+    console.log("  [MULTISIG DETECTED]");
+    console.log(`  The Keeper is owned by the Safe: ${owner}`);
+    console.log("  You must propose this transaction via the Gnosis Safe UI.\n");
+    
+    const calldata = keeper.interface.encodeFunctionData("ownerAttestProcessor", [processorAddress]);
+    console.log("  --- TRANSACTION DETAILS ---");
+    console.log(`  Target: ${keeperAddress}`);
+    console.log(`  Value : 0`);
+    console.log(`  Data  : ${calldata}`);
+    console.log("  ---------------------------");
+    console.log(`\n  Open Safe: https://app.safe.global/home?safe=base:${safeAddress}`);
+    console.log("  Use the 'New Transaction' -> 'Transaction Builder' and paste the data above.\n");
+    return;
+  }
+
+  if (owner.toLowerCase() !== deployer.address.toLowerCase()) {
+    throw new Error(
+      `Deployer ${deployer.address} is not the keeper owner (${owner}). ` +
+      `Set ACURAST_WORKER_KEY to the owner private key.`
+    );
   }
 
   console.log(`Attesting processor ${processorAddress}…`);

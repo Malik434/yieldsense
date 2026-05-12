@@ -28,4 +28,11 @@ test_output_utf8.txt
 test_output_final_utf8.txt
 test_output_final.txt
 test_output.txt
-console.log(t.substring(0
+
+# Large files for Acurast limit
+package-lock.json
+flattened_autocompounder.sol
+flattened_keeper.sol
+Core.md
+*.test.ts
+*.test.cjs

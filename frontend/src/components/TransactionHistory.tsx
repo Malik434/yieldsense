@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, ExternalLink, Zap, ArrowUpDown, Search, RefreshCw, Clock, LogOut } from 'lucide-react';
-import { OPERATOR_ADDRESS } from '@/lib/contracts';
+import { usePublicClient } from 'wagmi';
+import { OPERATOR_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
 
 interface TxEvent {
@@ -41,61 +42,100 @@ export function TransactionHistory() {
   const { chainId: activeChainId, config } = useNetwork();
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const publicClient = usePublicClient({ chainId: activeChainId });
 
   const fetchTxs = useCallback(async () => {
+    if (!publicClient) return;
+    
     try {
-      const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${activeChainId}`);
-      if (!res.ok) return;
-      const data: { logs?: TelemetryEvent[] } = await res.json();
-      const logs = data.logs ?? [];
+      const latestBlock = await publicClient.getBlockNumber();
+      const deploymentBlock = config.deploymentBlock;
       
-      const seenHashes = new Set<string>();
-      const mapped = logs.map((log): TxEvent | null => {
-        const ts = (log.timestamp ?? 0) * 1000;
-        const txHash = log.txHash ?? '';
-        const logChainId = Number(log.chainId || log.CHAIN_ID || 0);
+      // Public RPCs like Base often limit eth_getLogs to 10,000 blocks per request.
+      const CHUNK_SIZE = BigInt(10000);
+      // We look back up to 100,000 blocks (~55 hours on Base) or until deployment.
+      const MAX_HISTORY = BigInt(100000);
+      
+      const fromBlock = (latestBlock - deploymentBlock) > MAX_HISTORY
+        ? latestBlock - MAX_HISTORY
+        : deploymentBlock;
 
-        if (!txHash) return null;
+      let allHarvestLogs: any[] = [];
+      let allTradeLogs: any[] = [];
 
-        // --- Network Filtering Logic ---
-        // 1. If log has a chainId, it MUST match the active network.
-        // 2. If log has NO chainId (logChainId === 0), it's considered legacy:
-        //    - Only show legacy logs on Testnet (84532). 
-        //    - Hide legacy logs on Mainnet to avoid showing old testnet data.
-        if (logChainId !== 0) {
-          if (logChainId !== activeChainId) return null;
-        } else {
-          // Legacy log (no chainId)
-          if (activeChainId === 8453) return null; // Hide on Mainnet
+      // Fetch in chunks to avoid RPC limit errors
+      for (let i = fromBlock; i <= latestBlock; i += CHUNK_SIZE + BigInt(1)) {
+        const chunkTo = i + CHUNK_SIZE > latestBlock ? latestBlock : i + CHUNK_SIZE;
+        
+        const [hLogs, tLogs] = await Promise.all([
+          publicClient.getContractEvents({
+            address: config.keeper,
+            abi: KEEPER_ABI,
+            eventName: 'HarvestExecuted',
+            fromBlock: i,
+            toBlock: chunkTo,
+          }),
+          publicClient.getContractEvents({
+            address: config.keeper,
+            abi: KEEPER_ABI,
+            eventName: 'TradeExecuted',
+            args: { user: OPERATOR_ADDRESS },
+            fromBlock: i,
+            toBlock: chunkTo,
+          })
+        ]);
+        
+        allHarvestLogs = [...allHarvestLogs, ...hLogs];
+        allTradeLogs = [...allTradeLogs, ...tLogs];
+      }
+
+      const allRawLogs = [...allHarvestLogs, ...allTradeLogs];
+      const uniqueBlockNumbers = Array.from(new Set(allRawLogs.map(l => l.blockNumber)));
+      
+      const blockMap = new Map<bigint, number>();
+      await Promise.all(uniqueBlockNumbers.map(async (bn) => {
+        try {
+          const block = await publicClient.getBlock({ blockNumber: bn });
+          blockMap.set(bn, Number(block.timestamp));
+        } catch (e) {
+          console.error(`Failed to fetch block ${bn}`, e);
         }
+      }));
 
-        // Deduplication: only show one entry per hash.
-        if (seenHashes.has(txHash)) return null;
-        seenHashes.add(txHash);
-
-        if (log.event === 'harvest_confirmed' || log.event === 'harvest_submitted') {
+      const mapped = allRawLogs.map((log): TxEvent | null => {
+        const timestamp = blockMap.get(log.blockNumber) || 0;
+        const txHash = log.transactionHash;
+        
+        if (log.eventName === 'HarvestExecuted') {
           return {
             type: 'HARVEST',
-            timestamp: ts,
+            timestamp: timestamp * 1000,
             txHash,
-            amount: Number(log.profitCreditedUsd ?? log.estimatedRewardUsd ?? 0),
-            chainId: logChainId
+            amount: Number(log.args.profitCredited ?? 0) / 1e6,
+            chainId: activeChainId
           };
-        }
-        if (log.event === 'grid_trade_executed') {
-          const pnlRaw = log.pnlDelta ? Number(log.pnlDelta) / 1_000_000 : 0;
-          return { type: 'TRADE', timestamp: ts, txHash, pnlDelta: pnlRaw, chainId: logChainId };
+        } else if (log.eventName === 'TradeExecuted') {
+          return {
+            type: 'TRADE',
+            timestamp: timestamp * 1000,
+            txHash,
+            pnlDelta: Number(log.args.pnlDelta ?? 0) / 1e6,
+            chainId: activeChainId
+          };
         }
         return null;
       }).filter((t): t is TxEvent => t !== null);
 
+      // Sort by timestamp descending
+      mapped.sort((a, b) => b.timestamp - a.timestamp);
+      
       setTxs(mapped);
     } catch (err) {
-      console.error(err);
+      console.error('[TransactionHistory] Fetch failed:', err);
     } finally {
       setLoading(false);
     }
-  }, [activeChainId]);
+  }, [activeChainId, config, publicClient]);
 
   useEffect(() => {
     const initialFetch = setTimeout(fetchTxs, 0);

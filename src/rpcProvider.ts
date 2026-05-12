@@ -6,14 +6,25 @@ function positiveIntEnv(name: string, fallback: number): number {
 }
 
 /**
- * Production RPC provider defaults tuned for Acurast/public RPC reliability:
- * - no JSON-RPC batching; several public Base endpoints throttle batched eth_call
- * - static chain when known; avoids ethers background chain-detection retries
- * - bounded HTTP timeout; prevents a single hung request from holding the job open
+ * Sequential Failover Provider:
+ * We don't use Ethers' FallbackProvider because it probes all endpoints on boot,
+ * which can trigger rate-limits on free tiers or cause 10-minute "quiesce" hangs.
+ * Instead, we return a provider that uses the primary URL, and we'll handle
+ * rotation at the application level if needed, or rely on a simple try/catch.
  */
 export function createJsonRpcProvider(rpcUrl: string, network?: Networkish): JsonRpcProvider {
-  const request = new FetchRequest(rpcUrl);
-  request.timeout = positiveIntEnv("RPC_REQUEST_TIMEOUT_MS", 15_000);
+  const fallbacks = (process.env.RPC_FALLBACK_URLS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  
+  const urls = [rpcUrl, ...fallbacks];
+  const timeout = positiveIntEnv("RPC_REQUEST_TIMEOUT_MS", 15_000);
+
+  // We use the first available URL. If it fails, the application's retry logic
+  // (like in keeper.lastHarvest) will trigger a fresh boot or a retry.
+  const request = new FetchRequest(urls[0]);
+  request.timeout = timeout;
 
   return new JsonRpcProvider(request, network, {
     batchMaxCount: 1,

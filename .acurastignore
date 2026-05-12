@@ -1,0 +1,26 @@
+# Acurast Live-Code Exclusion List
+# Used to keep the upload under the 500kb limit
+
+# Large Directories
+frontend/
+node_modules/
+.git/
+dist/
+artifacts/
+contracts/
+
+# Large Files
+package-lock.json
+flattened_autocompounder.sol
+flattened_keeper.sol
+YieldSense.pdf
+Core.md
+*.test.ts
+*.test.cjs
+test_output*.txt
+
+# IDE/System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
