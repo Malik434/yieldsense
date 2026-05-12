@@ -33,6 +33,10 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   // STDOUT log for Acurast Console diagnostics
   console.log(`[TELEMETRY_STDOUT] ${payload}`);
 
+  if (process.env.TELEMETRY_DISABLED === "true") {
+    return;
+  }
+
   if (!secret) {
     console.error("[TELEMETRY_ERROR] PROCESSOR_SHARED_SECRET is missing; event was only written to stdout.");
     return;

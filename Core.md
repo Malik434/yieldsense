@@ -382,9 +382,9 @@ COOLDOWN_SEC=300                # Minimum seconds between harvest executions
 MAX_API_FAILURE_STREAK=3        # Circuit breaker: skip after N consecutive API failures
 
 # ── Yield Engine Parameters ────────────────────────────────────────
-FEE_WINDOW_SEC=604800           # Lookback window for Swap log fee indexing (7 days)
-FEE_MAX_BLOCKS=80000            # Max blocks scanned backward (RPC safety cap)
-LOG_CHUNK_SIZE=3000             # Block chunks for eth_getLogs requests
+FEE_WINDOW_SEC=3600             # Lookback window for Swap log fee indexing (public RPC default: 1 hour)
+FEE_MAX_BLOCKS=1800             # Max blocks scanned backward on Base (~1 hour at 2s blocks)
+LOG_CHUNK_SIZE=900              # Block chunks for eth_getLogs requests
 REWARD_EWMA_HALF_LIFE_SEC=259200 # EWMA half-life for reward APR smoothing (3 days)
 MIN_YIELD_CONFIDENCE=0.55       # Minimum confidence score to consider yield usable
 MIN_APR_CONFIDENCE=0.55         # Minimum confidence for API fallback consensus

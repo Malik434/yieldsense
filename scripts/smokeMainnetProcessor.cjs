@@ -27,11 +27,15 @@ loadDotEnvFile(path.join(ROOT, ".env"));
 
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 120_000);
 const MAINNET_RPC = process.env.DATA_RPC_URL || process.env.MAINNET_DATA_RPC_URL || process.env.RPC_URL || "https://mainnet.base.org";
-const RPC_CANDIDATES = [
-  MAINNET_RPC,
-  "https://base.llamarpc.com",
-  "https://base-rpc.publicnode.com",
-].filter((value, index, values) => value && values.indexOf(value) === index);
+const configuredFallbacks = (process.env.RPC_FALLBACK_URLS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const publicFallbacks = process.env.SMOKE_USE_PUBLIC_FALLBACKS === "true"
+  ? ["https://base.llamarpc.com", "https://base-rpc.publicnode.com"]
+  : [];
+const RPC_CANDIDATES = [MAINNET_RPC, ...configuredFallbacks, ...publicFallbacks]
+  .filter((value, index, values) => value && values.indexOf(value) === index);
 
 function displayRpcUrl(url) {
   try {
@@ -120,6 +124,31 @@ function requireOutput(name, stdout, patterns) {
   }
 }
 
+async function preflightRpc(rpcUrl) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), Number(process.env.SMOKE_PREFLIGHT_TIMEOUT_MS || 8_000));
+  try {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const json = await response.json();
+    if (json.error) {
+      throw new Error(json.error.message || "RPC returned an error");
+    }
+    if (json.result !== "0x2105") {
+      throw new Error(`expected Base mainnet chainId 0x2105, got ${json.result}`);
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function runSmokeForRpc(rpcUrl) {
   console.log(`RPC: ${displayRpcUrl(rpcUrl)}`);
   console.log(`Timeout per step: ${TIMEOUT_MS}ms\n`);
@@ -134,11 +163,19 @@ async function runSmokeForRpc(rpcUrl) {
     FEE_WINDOW_SEC: "3600",
     FEE_MAX_BLOCKS: "1800",
     LOG_CHUNK_SIZE: "900",
+    RPC_REQUEST_TIMEOUT_MS: "15000",
+    RPC_CALL_TIMEOUT_MS: "15000",
+    RPC_LOG_TIMEOUT_MS: "15000",
+    RPC_CHUNK_DELAY_MS: "250",
   };
 
-  const apr = await runStep("APR calculation", "npx", ["tsx", "scripts/simulateApr.ts"], aprEnv);
-  requireOutput("APR calculation", apr.stdout, [/APR BREAKDOWN/, /Total APR:/, /Usable:\s+(true|false)/]);
-  console.log(`\nAPR calculation finished in ${apr.elapsedMs}ms\n`);
+  await preflightRpc(rpcUrl);
+
+  if (process.env.SMOKE_SEPARATE_APR === "true") {
+    const apr = await runStep("APR calculation", "npx", ["tsx", "scripts/simulateApr.ts"], aprEnv);
+    requireOutput("APR calculation", apr.stdout, [/APR BREAKDOWN/, /Total APR:/, /Usable:\s+(true|false)/]);
+    console.log(`\nAPR calculation finished in ${apr.elapsedMs}ms\n`);
+  }
 
   const statePath = path.join(os.tmpdir(), `yieldsense-mainnet-smoke-${randomUUID()}.json`);
   const workerEnv = {
@@ -168,6 +205,12 @@ async function runSmokeForRpc(rpcUrl) {
     MAX_GAS_USD: "1000000",
     COOLDOWN_SEC: "0",
     TELEMETRY_URL: "http://127.0.0.1:9",
+    TELEMETRY_DISABLED: "true",
+    PROCESSOR_SHARED_SECRET: "",
+    RPC_REQUEST_TIMEOUT_MS: "15000",
+    RPC_CALL_TIMEOUT_MS: "15000",
+    RPC_LOG_TIMEOUT_MS: "15000",
+    RPC_CHUNK_DELAY_MS: "250",
   };
 
   const worker = await runStep("Harvest worker dry run", "npx", ["tsx", "src/index.ts"], workerEnv);
@@ -175,6 +218,7 @@ async function runSmokeForRpc(rpcUrl) {
     /"event":"profitability_check"/,
     /"event":"harvest_dry_run"/,
     /"payloadHash":"0x[0-9a-fA-F]{64}"/,
+    /"dataSourcesUsed":\[[^\]]*"rpc:swapLogs"[^\]]*\]/,
   ]);
   console.log(`\nHarvest worker dry run finished in ${worker.elapsedMs}ms`);
 }

@@ -1,7 +1,7 @@
-import { JsonRpcProvider } from "ethers";
 import { getRobustYieldEstimate } from "../src/yieldEngine/getRobustYieldEstimate.js";
 import type { YieldEngineContext, YieldEstimateRequest } from "../src/yieldEngine/types.js";
 import dotenv from "dotenv";
+import { createJsonRpcProvider } from "../src/rpcProvider.js";
 
 dotenv.config();
 
@@ -29,7 +29,7 @@ async function main() {
   const rpcUrl = process.env.RPC_URL || "https://mainnet.base.org";
   console.log(`[Simulator] Using RPC: ${displayRpcUrl(rpcUrl)}`);
 
-  const provider = new JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
+  const provider = createJsonRpcProvider(rpcUrl, 8453);
 
   const ctx: YieldEngineContext = {
     provider,
@@ -97,6 +97,8 @@ async function main() {
 
     console.error("[Simulator] Error during estimation:", error);
     process.exitCode = 1;
+  } finally {
+    provider.destroy();
   }
 }
 

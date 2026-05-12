@@ -18,6 +18,7 @@ import {
 } from "./acurastHardware.js";
 import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
+import { createJsonRpcProvider } from "./rpcProvider.js";
 
 const CONFIG = {
   /**
@@ -57,9 +58,9 @@ const CONFIG = {
   minAprConfidence: Number(process.env.MIN_APR_CONFIDENCE ?? 0.55),
   aprFreshnessWindowSec: Number(process.env.APR_FRESHNESS_WINDOW_SEC ?? 1200),
   statePath: process.env.STATE_PATH ?? ".yieldsense-state.json",
-  feeWindowSec: Number(process.env.FEE_WINDOW_SEC ?? 604800),
-  feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 80000),
-  logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 3000),
+  feeWindowSec: Number(process.env.FEE_WINDOW_SEC ?? 3600),
+  feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 1800),
+  logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 900),
   rewardEwmaHalfLifeSec: Number(process.env.REWARD_EWMA_HALF_LIFE_SEC ?? 259200),
   minYieldConfidence: Number(process.env.MIN_YIELD_CONFIDENCE ?? process.env.MIN_APR_CONFIDENCE ?? 0.55),
   yieldFallbackMode: (process.env.YIELD_FALLBACK_MODE as FallbackMode) || "auto",
@@ -242,6 +243,20 @@ async function getEthPrice(): Promise<number> {
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Empty eth_call + lastHarvest decode failure almost always means KEEPER_ADDRESS is not
  * YieldSenseKeeper on the execution chain (e.g. Sepolia keeper while RPC_URL is mainnet).
@@ -305,10 +320,14 @@ async function main(): Promise<void> {
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
 
-  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl, undefined, { batchMaxCount: 1 });
+  const configuredExecutionChainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined;
+  const executionProvider = createJsonRpcProvider(
+    CONFIG.rpcUrl,
+    Number.isFinite(configuredExecutionChainId) ? configuredExecutionChainId : undefined
+  );
   const dataProvider =
     CONFIG.dataRpcUrl.length > 0
-      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl, undefined, { batchMaxCount: 1 })
+      ? createJsonRpcProvider(CONFIG.dataRpcUrl, CONFIG.yieldChainId ?? 8453)
       : executionProvider;
   const executionChainId = Number((await executionProvider.getNetwork()).chainId);
   const dataChainId = Number((await dataProvider.getNetwork()).chainId);
@@ -576,52 +595,63 @@ async function main(): Promise<void> {
   const directRoute = [{ from: AERO, to: USDC, stable: false, factory: FACTORY }];
   let routes = directRoute;
   let estimatedUsdcIn = ethers.parseUnits("10", 6); // fallback
-  
-  try {
-    const router = new ethers.Contract(ROUTER_ADDRESS, ["function getAmountsOut(uint amountIn, tuple(address from, address to, bool stable, address factory)[] memory routes) view returns (uint[] memory amounts)"], dataProvider);
-    // Rough estimate of AERO rewards to find best route (assume 100 AERO)
-    const amountIn = ethers.parseEther("100");
-    const amtDirect = await router.getAmountsOut(amountIn, directRoute);
-    estimatedUsdcIn = amtDirect[amtDirect.length - 1];
-  } catch (e) {
-    // silently fallback to direct route and estimate
-  }
 
   // Zap Math: Calculate optimal swap amount
-  let amountToSwap = 0n;
-  try {
-    const POOL_ABI = [
-      "function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 timestamp)",
-      "function token0() view returns (address)",
-      "function stable() view returns (bool)"
-    ];
-    const pool = new ethers.Contract(CONFIG.poolAddress, POOL_ABI, dataProvider);
-    const stable = await pool.stable();
-    if (stable) {
+  let amountToSwap = estimatedUsdcIn / 2n;
+
+  if (!CONFIG.dryRun) {
+    try {
+      const router = new ethers.Contract(ROUTER_ADDRESS, ["function getAmountsOut(uint amountIn, tuple(address from, address to, bool stable, address factory)[] memory routes) view returns (uint[] memory amounts)"], dataProvider);
+      // Rough estimate of AERO rewards to find best route (assume 100 AERO)
+      const amountIn = ethers.parseEther("100");
+      const amtDirect = await withTimeout(
+        router.getAmountsOut(amountIn, directRoute),
+        8_000,
+        "router.getAmountsOut"
+      );
+      estimatedUsdcIn = amtDirect[amtDirect.length - 1];
       amountToSwap = estimatedUsdcIn / 2n;
-    } else {
-      const [res0, res1] = await pool.getReserves();
-      const token0 = await pool.token0();
-      const isUSDC0 = token0.toLowerCase() === USDC.toLowerCase();
-      const R = isUSDC0 ? (res0 as bigint) : (res1 as bigint);
-      
-      if (R > 0n && estimatedUsdcIn > 0n) {
-        const f = 30n; // 0.3% fee
-        const F2 = (2000n - f) * (2000n - f);
-        const F1 = (1000n - f) * 1000n;
-        const inner = R * (R * F2 + 4n * F1 * estimatedUsdcIn);
-        let z = inner;
-        let x = (z + 1n) / 2n;
-        let sqrt = z;
-        while (x < sqrt) {
-            sqrt = x;
-            x = (z / x + x) / 2n;
-        }
-        amountToSwap = (sqrt - R * (2000n - f)) / (2n * 1000n);
-      }
+    } catch (e) {
+      // fallback to direct route and estimate
     }
-  } catch (e) {
-    amountToSwap = estimatedUsdcIn / 2n;
+
+    try {
+      const POOL_ABI = [
+        "function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 timestamp)",
+        "function token0() view returns (address)",
+        "function stable() view returns (bool)"
+      ];
+      const pool = new ethers.Contract(CONFIG.poolAddress, POOL_ABI, dataProvider);
+      const stable = await withTimeout(pool.stable(), 8_000, "pool.stable");
+      if (stable) {
+        amountToSwap = estimatedUsdcIn / 2n;
+      } else {
+        const [res0, res1, token0] = await withTimeout(
+          Promise.all([pool.getReserves(), pool.token0()]),
+          8_000,
+          "pool reserves/token0"
+        ).then(([reserves, token0]) => [reserves[0], reserves[1], token0] as const);
+        const isUSDC0 = token0.toLowerCase() === USDC.toLowerCase();
+        const R = isUSDC0 ? (res0 as bigint) : (res1 as bigint);
+        
+        if (R > 0n && estimatedUsdcIn > 0n) {
+          const f = 30n; // 0.3% fee
+          const F2 = (2000n - f) * (2000n - f);
+          const F1 = (1000n - f) * 1000n;
+          const inner = R * (R * F2 + 4n * F1 * estimatedUsdcIn);
+          let z = inner;
+          let x = (z + 1n) / 2n;
+          let sqrt = z;
+          while (x < sqrt) {
+              sqrt = x;
+              x = (z / x + x) / 2n;
+          }
+          amountToSwap = (sqrt - R * (2000n - f)) / (2n * 1000n);
+        }
+      }
+    } catch (e) {
+      amountToSwap = estimatedUsdcIn / 2n;
+    }
   }
 
   const nonce = Date.now().toString();

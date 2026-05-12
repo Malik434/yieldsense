@@ -7,6 +7,7 @@ import {
 import { getAcurastStd, storageGet, storageSet } from "./acurastHardware.js";
 import { loadState, saveState } from "./runtimeState.js";
 import { emitTelemetry } from "./telemetry.js";
+import { createJsonRpcProvider } from "./rpcProvider.js";
 
 interface HardwareLog {
   timestamp: number;
@@ -421,7 +422,7 @@ async function submitTrade(
   }
 
   // Local Ethers fallback
-  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
+  const provider = createJsonRpcProvider(rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
   const wallet = new ethers.Wallet(privateKey!, provider);
   const keeper = new ethers.Contract(keeperAddress, KEEPER_ABI, wallet);
   const tx = await keeper.executeTrade(trade.user, trade.pnlDelta, trade.nonce, trade.signature);
@@ -465,8 +466,8 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     return;
   }
 
-  const executionProvider = new ethers.JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
-  const dataProvider = new ethers.JsonRpcProvider(dataRpcUrl, undefined, { batchMaxCount: 1 });
+  const executionProvider = createJsonRpcProvider(rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
+  const dataProvider = createJsonRpcProvider(dataRpcUrl, Number(process.env.YIELD_CHAIN_ID ?? process.env.CHAIN_ID ?? 8453));
   const network = await executionProvider.getNetwork();
   const chainId = network.chainId;
 
