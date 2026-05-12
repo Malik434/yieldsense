@@ -5,11 +5,31 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+function displayRpcUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.username) parsed.username = "***";
+    if (parsed.password) parsed.password = "***";
+    for (const key of parsed.searchParams.keys()) {
+      if (/key|token|secret|auth|apikey/i.test(key)) parsed.searchParams.set(key, "***");
+    }
+    const pathParts = parsed.pathname.split("/");
+    const last = pathParts[pathParts.length - 1];
+    if (/[A-Za-z0-9_-]{20,}/.test(last)) {
+      pathParts[pathParts.length - 1] = "***";
+      parsed.pathname = pathParts.join("/");
+    }
+    return parsed.toString();
+  } catch {
+    return url.replace(/[A-Za-z0-9_-]{20,}/g, "***");
+  }
+}
+
 async function main() {
   const rpcUrl = process.env.RPC_URL || "https://mainnet.base.org";
-  console.log(`[Simulator] Using RPC: ${rpcUrl}`);
+  console.log(`[Simulator] Using RPC: ${displayRpcUrl(rpcUrl)}`);
 
-  const provider = new JsonRpcProvider(rpcUrl);
+  const provider = new JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
 
   const ctx: YieldEngineContext = {
     provider,
@@ -24,9 +44,9 @@ async function main() {
     rewardTokenAddress: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", // AERO
     strategyDeltaUsd: 0,
     poolFeeBps: 30,
-    feeWindowSec: 24 * 3600,
-    feeMaxBlocks: 43200,
-    logChunkSize: 5000,
+    feeWindowSec: Number(process.env.FEE_WINDOW_SEC ?? 24 * 3600),
+    feeMaxBlocks: Number(process.env.FEE_MAX_BLOCKS ?? 43200),
+    logChunkSize: Number(process.env.LOG_CHUNK_SIZE ?? 5000),
     rewardSmoothingHalfLifeSec: 6 * 3600,
     minExecutionConfidence: 0.6,
     fallbackMode: "api",
@@ -38,6 +58,7 @@ async function main() {
     defiLlamaToken0: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC
     defiLlamaToken1: "0x940181a94A35A4569E4529A3CDfB74e38FD98631", // AERO
   };
+  const feeWindowHours = req.feeWindowSec / 3600;
 
   console.log(`[Simulator] Fetching Yield Estimate for Pool: ${req.poolAddress}`);
   console.log(`[Simulator] Gauge: ${req.gaugeAddress}`);
@@ -60,7 +81,7 @@ async function main() {
     console.log(`Sources:     ${estimate.dataSourcesUsed?.join(', ')}`);
     console.log(`\n--- DIAGNOSTICS ---`);
     console.log(`TVL (USD):   $${estimate.diagnostics?.tvlUsdTwab?.toFixed(2)}`);
-    console.log(`24h Fees:    $${estimate.diagnostics?.feeUsdWindow?.toFixed(2)}`);
+    console.log(`${feeWindowHours.toFixed(1)}h Fees:   $${estimate.diagnostics?.feeUsdWindow?.toFixed(2)}`);
     console.log(`AERO/sec:    $${estimate.diagnostics?.rewardUsdPerSec?.toFixed(4)}/sec`);
     console.log(`Coverage:    ${((estimate.diagnostics?.coverageRatio ?? 0) * 100).toFixed(1)}%`);
 
@@ -75,6 +96,7 @@ async function main() {
   } catch (error) {
 
     console.error("[Simulator] Error during estimation:", error);
+    process.exitCode = 1;
   }
 }
 

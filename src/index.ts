@@ -305,10 +305,10 @@ async function main(): Promise<void> {
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
 
-  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
+  const executionProvider = new ethers.JsonRpcProvider(CONFIG.rpcUrl, undefined, { batchMaxCount: 1 });
   const dataProvider =
     CONFIG.dataRpcUrl.length > 0
-      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl)
+      ? new ethers.JsonRpcProvider(CONFIG.dataRpcUrl, undefined, { batchMaxCount: 1 })
       : executionProvider;
   const executionChainId = Number((await executionProvider.getNetwork()).chainId);
   const dataChainId = Number((await dataProvider.getNetwork()).chainId);

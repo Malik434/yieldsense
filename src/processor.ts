@@ -421,7 +421,7 @@ async function submitTrade(
   }
 
   // Local Ethers fallback
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
   const wallet = new ethers.Wallet(privateKey!, provider);
   const keeper = new ethers.Contract(keeperAddress, KEEPER_ABI, wallet);
   const tx = await keeper.executeTrade(trade.user, trade.pnlDelta, trade.nonce, trade.signature);
@@ -465,8 +465,8 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     return;
   }
 
-  const executionProvider = new ethers.JsonRpcProvider(rpcUrl);
-  const dataProvider = new ethers.JsonRpcProvider(dataRpcUrl);
+  const executionProvider = new ethers.JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
+  const dataProvider = new ethers.JsonRpcProvider(dataRpcUrl, undefined, { batchMaxCount: 1 });
   const network = await executionProvider.getNetwork();
   const chainId = network.chainId;
 
