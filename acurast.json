@@ -16,7 +16,7 @@
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
         "maxMemory": 256000000,
-        "maxNetworkRequests": 120,
+        "maxNetworkRequests": 10000,
         "maxStorage": 1000000
       },
       "numberOfReplicas": 1,
@@ -42,7 +42,7 @@
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
         "maxMemory": 256000000,
-        "maxNetworkRequests": 30,
+        "maxNetworkRequests": 500,
         "maxStorage": 1000000
       },
       "numberOfReplicas": 1,

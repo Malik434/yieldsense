@@ -16,7 +16,7 @@ import {
   fulfillEthereumHarvest,
   getAcurastStd,
 } from "./acurastHardware.js";
-import { emitTelemetry } from "./telemetry.js";
+import { emitTelemetry, flushTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
 import { createJsonRpcProvider } from "./rpcProvider.js";
 import {
@@ -1114,6 +1114,8 @@ async function runForever(): Promise<void> {
       status = "error";
       await persistRuntimeError(error);
       console.error(JSON.stringify({ event: "runtime_error", message: serialiseError(error).message }));
+    } finally {
+      await flushTelemetry().catch(() => {});
     }
 
     const state = await loadState(CONFIG.statePath);

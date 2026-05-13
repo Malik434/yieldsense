@@ -61,45 +61,40 @@ export async function POST(request: Request) {
     console.log('[telemetry] Auth OK');
   }
 
-  // ── Payload validation ────────────────────────────────────────────────────
-  let event: Record<string, unknown>;
+  // ── Payload processing ────────────────────────────────────────────────────
+  let body: any;
   try {
-    event = await request.json();
+    body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (!event || typeof event !== 'object' || typeof event.event !== 'string') {
-    console.error(`[telemetry] REJECTED 400 — invalid payload structure: ${JSON.stringify(event).substring(0, 200)}`);
-    return NextResponse.json(
-      { error: 'Invalid payload — must include "event" string field' },
-      { status: 400 }
-    );
+  const events = Array.isArray(body) ? body : [body];
+  let processedCount = 0;
+
+  for (const event of events) {
+    if (!event || typeof event !== 'object' || typeof event.event !== 'string') {
+      console.warn(`[telemetry] Skipping invalid event structure: ${JSON.stringify(event).substring(0, 100)}`);
+      continue;
+    }
+
+    const userAddress = (event.userAddress as string | undefined) || (event.USER_ADDRESS as string | undefined);
+    if (!userAddress || typeof userAddress !== 'string') {
+      console.warn(`[telemetry] Skipping event missing userAddress: ${event.event}`);
+      continue;
+    }
+
+    // Normalise so stateStore keys are always lowercase
+    event.userAddress = userAddress.toLowerCase();
+
+    try {
+      await applyTelemetryEvent(event);
+      processedCount++;
+    } catch (error) {
+      console.error(`[telemetry] Error processing event "${event.event}":`, error);
+    }
   }
-  console.log(`[telemetry] Event type: "${event.event}" userAddress: "${event.userAddress ?? 'MISSING'}"`);
 
-  // ── Tenant isolation: require userAddress ─────────────────────────────────
-  const userAddress =
-    (event.userAddress as string | undefined) ||
-    (event.USER_ADDRESS as string | undefined);
-
-  if (!userAddress || typeof userAddress !== 'string') {
-    console.error(`[telemetry] REJECTED 400 — missing userAddress. Full payload keys: ${Object.keys(event).join(', ')}`);
-    return NextResponse.json(
-      { error: 'Missing userAddress — anonymous telemetry writes are not allowed' },
-      { status: 400 }
-    );
-  }
-
-  // Normalise so stateStore keys are always lowercase
-  event.userAddress = userAddress.toLowerCase();
-
-  try {
-    await applyTelemetryEvent(event);
-    console.log(`[telemetry] OK — persisted event "${event.event}" for user ${event.userAddress}`);
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('[telemetry] applyTelemetryEvent error:', error);
-    return NextResponse.json({ error: 'Failed to process telemetry' }, { status: 500 });
-  }
+  console.log(`[telemetry] OK — processed ${processedCount} events from batch of ${events.length}`);
+  return NextResponse.json({ success: true, count: processedCount });
 }

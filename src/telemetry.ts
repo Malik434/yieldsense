@@ -22,78 +22,13 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-function diagnosticUrlFor(telemetryUrl: string): string | null {
-  const configured = process.env.TELEMETRY_DIAGNOSTIC_URL?.trim();
-  if (configured) return configured;
-
-  try {
-    const url = new URL(telemetryUrl);
-    if (!url.pathname.endsWith("/api/telemetry")) return null;
-    url.pathname = url.pathname.replace(/\/api\/telemetry$/, "/api/telemetry/diagnostic");
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-function redact(value: string | undefined): string | undefined {
-  if (!value) return value;
-  if (value.length <= 10) return "[set]";
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
-}
-
-async function emitTelemetryDiagnostic(
-  url: string,
-  reason: string,
-  event: TelemetryEvent,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  const diagnosticUrl = diagnosticUrlFor(url);
-  if (!diagnosticUrl || typeof fetch === "undefined") return;
-
-  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
-  const envChainId = process.env.CHAIN_ID || (globalThis as any).__ENV__?.CHAIN_ID;
-
-  const payload = {
-    event: "telemetry_config_error",
-    timestamp: Math.floor(Date.now() / 1000),
-    userAddress: event.userAddress || envUser,
-    chainId: event.chainId || (envChainId ? Number(envChainId) : undefined),
-    reason,
-    originalEvent: event.event,
-    hasTelemetryUrl: Boolean(url),
-    hasProcessorSharedSecret: Boolean(process.env.PROCESSOR_SHARED_SECRET || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET),
-    hasAcurastStd: Boolean((globalThis as any)._STD_),
-    dryRun: process.env.DRY_RUN,
-    forceTestHarvest: process.env.FORCE_TEST_HARVEST,
-    rpcUrl: redact(process.env.RPC_URL),
-    dataRpcUrl: redact(process.env.DATA_RPC_URL),
-    ...details,
-  };
-
-  try {
-    await fetchWithTimeout(diagnosticUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) YieldSense-Guardian/1.0 diagnostic",
-        "Accept": "application/json",
-      },
-      body: JSON.stringify(payload),
-    }, positiveIntEnv("TELEMETRY_DIAGNOSTIC_TIMEOUT_MS", 2_500));
-  } catch {
-    // Last-resort diagnostics must never change processor control flow.
-  }
-}
+let telemetryBuffer: TelemetryEvent[] = [];
 
 /**
- * Emits a structured telemetry event to the Next.js telemetry API.
- * 
- * Note: Environment variables (USER_ADDRESS, PROCESSOR_SHARED_SECRET) must be 
- * injected by the Acurast Hub during deployment.
+ * Buffers a telemetry event for later batch transmission.
+ * Events are only written to stdout immediately; network calls are deferred to flushTelemetry().
  */
 export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
-  // ── Environment Baking & Bulletproof Fallbacks ────────────────────────────
   const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   if (!event.userAddress) {
     event.userAddress = envUser;
@@ -104,21 +39,28 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
     event.chainId = Number(envChainId);
   }
 
+  // STDOUT log for Acurast Console diagnostics (immediate)
+  console.log(`[TELEMETRY_STDOUT] ${JSON.stringify(event)}`);
+
+  if (process.env.TELEMETRY_DISABLED !== "true") {
+    telemetryBuffer.push(event);
+  }
+}
+
+/**
+ * Transmits all buffered telemetry events to the Next.js API in a single batch.
+ */
+export async function flushTelemetry(): Promise<void> {
+  if (telemetryBuffer.length === 0) return;
+
+  const eventsToFlush = [...telemetryBuffer];
+  telemetryBuffer = []; // Clear immediately
+
   const url = process.env.TELEMETRY_URL?.trim() || BUILTIN_TELEMETRY_URL;
   const secret = process.env.PROCESSOR_SHARED_SECRET?.trim() || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET;
 
-  const payload = JSON.stringify(event);
-
-  // STDOUT log for Acurast Console diagnostics
-  console.log(`[TELEMETRY_STDOUT] ${payload}`);
-
-  if (process.env.TELEMETRY_DISABLED === "true") {
-    return;
-  }
-
   if (!secret) {
-    console.error("[TELEMETRY_ERROR] PROCESSOR_SHARED_SECRET is missing; event was only written to stdout.");
-    await emitTelemetryDiagnostic(url, "missing_processor_shared_secret", event);
+    console.error(`[TELEMETRY_ERROR] PROCESSOR_SHARED_SECRET missing — ${eventsToFlush.length} events dropped.`);
     return;
   }
 
@@ -130,38 +72,24 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
   };
 
   try {
-    if (typeof fetch === "undefined") {
-      console.error(`[TELEMETRY_ERROR] fetch is undefined.`);
-      return;
-    }
-
     const response = await fetchWithTimeout(url, {
       method: "POST",
       headers,
-      body: payload,
-    }, positiveIntEnv("TELEMETRY_TIMEOUT_MS", 1_000));
+      body: JSON.stringify(eventsToFlush),
+    }, positiveIntEnv("TELEMETRY_TIMEOUT_MS", 10_000));
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "no-body");
-      console.error(`[TELEMETRY_ERROR] API Rejected (${response.status}): ${errorText.substring(0, 150)}`);
-      await emitTelemetryDiagnostic(url, "telemetry_api_rejected", event, {
-        status: response.status,
-        responseText: errorText.substring(0, 150),
-      });
-      // Special hint for common Acurast deployment issues
-      if (response.status === 400) {
-        console.warn(`[TELEMETRY_HINT] 400 usually means USER_ADDRESS is missing or invalid. Check your deployment environment.`);
-      }
-      if (response.status === 401) {
-        console.warn(`[TELEMETRY_HINT] 401 means PROCESSOR_SHARED_SECRET mismatch.`);
+      console.error(`[TELEMETRY_ERROR] Batch Failed (${response.status}): ${errorText.substring(0, 150)}`);
+      // Re-queue on 5xx
+      if (response.status >= 500) {
+        telemetryBuffer = [...eventsToFlush, ...telemetryBuffer];
       }
     } else {
-      console.log(`[TELEMETRY_OK] Event "${event.event}" transmitted successfully.`);
+      console.log(`[TELEMETRY_OK] Batch of ${eventsToFlush.length} events transmitted successfully.`);
     }
   } catch (err: any) {
-    console.error(`[TELEMETRY_ERROR] Network Failure: ${err?.message || String(err)}`);
-    await emitTelemetryDiagnostic(url, "telemetry_network_failure", event, {
-      message: err?.message || String(err),
-    });
+    console.error(`[TELEMETRY_ERROR] Network Failure during flush: ${err?.message || String(err)}`);
+    telemetryBuffer = [...eventsToFlush, ...telemetryBuffer];
   }
 }
