@@ -1,4 +1,5 @@
 // axios removed to reduce bundle size
+import { emitTelemetry } from "./telemetry.js";
 
 export type AprSourceName = "geckoTerminal" | "dexScreener" | "defiLlama";
 
@@ -19,6 +20,9 @@ export interface AprConsensus {
 
 const USER_AGENT = "YieldSense/3.0 (Acurast TEE)";
 const DEFAULT_POOL_FEE_RATE = Number(process.env.POOL_FEE_RATE ?? 0.003);
+const DEFAULT_API_TIMEOUT_MS = Number(process.env.APR_API_TIMEOUT_MS ?? 3500);
+const ENABLE_DEFILLAMA_APR = process.env.ENABLE_DEFILLAMA_APR === "true";
+const apiTelemetryReported = new Set<string>();
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -35,6 +39,67 @@ function median(values: number[]): number {
     return (sorted[mid - 1] + sorted[mid]) / 2;
   }
   return sorted[mid];
+}
+
+async function emitApiTelemetry(
+  source: AprSourceName,
+  stage: "attempt" | "result" | "error" | "skipped",
+  details: Record<string, unknown> = {}
+): Promise<void> {
+  const key = `${source}:${stage}`;
+  if (apiTelemetryReported.has(key)) return;
+  apiTelemetryReported.add(key);
+
+  await emitTelemetry({
+    event: "apr_api_source",
+    timestamp: nowSec(),
+    source,
+    stage,
+    ...details,
+  }).catch(() => {});
+}
+
+async function fetchJsonWithHardTimeout<T>(
+  source: AprSourceName,
+  url: string,
+  timeoutMs: number = DEFAULT_API_TIMEOUT_MS
+): Promise<T> {
+  await emitApiTelemetry(source, "attempt", { timeoutMs });
+
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body = await Promise.race([
+      (async () => {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return (await response.json()) as T;
+      })(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          try {
+            controller.abort();
+          } catch {
+            // Acurast may expose fetch without a functional abort implementation.
+          }
+          reject(new Error(`${source} API timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+    await emitApiTelemetry(source, "result");
+    return body;
+  } catch (error: any) {
+    await emitApiTelemetry(source, "error", {
+      message: error?.message ?? String(error),
+      name: error?.name,
+    });
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 export function buildAprConsensus(
@@ -89,15 +154,10 @@ async function fetchGecko(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`, {
-      signal: controller.signal,
-      headers: { "User-Agent": USER_AGENT },
-    });
-    clearTimeout(timeoutId);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body: any = await response.json();
+    const body = await fetchJsonWithHardTimeout<any>(
+      "geckoTerminal",
+      `https://api.geckoterminal.com/api/v2/networks/base/pools/${addr}`
+    );
     const attr = body?.data?.attributes ?? {};
     const directApr = attr.apr_7d ?? attr.apr;
     if (directApr !== undefined && directApr !== null) {
@@ -128,15 +188,10 @@ async function fetchDexScreener(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
   try {
     const addr = poolAddress.toLowerCase();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/pairs/base/${addr}`, {
-      signal: controller.signal,
-      headers: { "User-Agent": USER_AGENT },
-    });
-    clearTimeout(timeoutId);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body: any = await response.json();
+    const body = await fetchJsonWithHardTimeout<any>(
+      "dexScreener",
+      `https://api.dexscreener.com/latest/dex/pairs/base/${addr}`
+    );
     const pair = body?.pairs?.[0];
     if (!pair) {
       return { source: "dexScreener", apr: null, timestamp, confidence: 0, error: "Pair not found" };
@@ -162,18 +217,19 @@ async function fetchDexScreener(poolAddress: string): Promise<AprObservation> {
 
 async function fetchDefiLlama(poolAddress: string): Promise<AprObservation> {
   const timestamp = nowSec();
+  if (!ENABLE_DEFILLAMA_APR) {
+    await emitApiTelemetry("defiLlama", "skipped", { reason: "ENABLE_DEFILLAMA_APR_not_true" });
+    return { source: "defiLlama", apr: null, timestamp, confidence: 0, error: "disabled" };
+  }
+
   try {
     const addr = poolAddress.toLowerCase();
     const addrNoPrefix = addr.startsWith("0x") ? addr.slice(2) : addr;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-    const response = await fetch("https://yields.llama.fi/pools", {
-      signal: controller.signal,
-      headers: { "User-Agent": USER_AGENT },
-    });
-    clearTimeout(timeoutId);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body: any = await response.json();
+    const body = await fetchJsonWithHardTimeout<any>(
+      "defiLlama",
+      "https://yields.llama.fi/pools",
+      Math.max(DEFAULT_API_TIMEOUT_MS, 5000)
+    );
     const pools: any[] = body?.data ?? [];
 
     const pool = pools.find((p: any) => {

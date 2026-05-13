@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider } from "ethers";
+import { Contract, type JsonRpcApiProvider } from "ethers";
 import { fetchGeckoPoolSpotPricesUsd, geckoNetworkForChainId } from "./geckoPool.js";
 
 const ERC20_ABI = [
@@ -54,7 +54,7 @@ function human1PerToken0FromSqrt(sqrtPriceX96: bigint, d0: number, d1: number): 
 }
 
 async function usdPricesFromSlot0(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   t0: string,
   t1: string,
@@ -92,7 +92,7 @@ async function readBalancesHuman(
  * Spot USD prices from pool token balances (V2 + V3) or slot0 (Slipstream when balances RPC fails).
  */
 export async function getSpotPricesFromPool(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   blockTag: number | "latest",
   metadata?: { token0?: string; token1?: string; decimals0?: number; decimals1?: number }

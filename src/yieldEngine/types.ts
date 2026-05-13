@@ -1,4 +1,4 @@
-import type { JsonRpcProvider } from "ethers";
+import type { JsonRpcApiProvider } from "ethers";
 
 export type DataSourceTag =
   | "rpc:swapLogs"
@@ -88,7 +88,7 @@ export interface YieldEstimateRequest {
 }
 
 export interface YieldEngineContext {
-  provider: JsonRpcProvider;
+  provider: JsonRpcApiProvider;
   /** last block fully scanned for fee logs (persist in worker state) */
   indexerCheckpointBlock?: number;
   /** previous EWMA reward APR (persist) */

@@ -19,6 +19,12 @@ import {
 import { emitTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
 import { createJsonRpcProvider } from "./rpcProvider.js";
+import {
+  calculateRecentRunSkip,
+  calculateSupervisorDelayMs,
+  isProcessorNotAttestedError,
+  serialiseError,
+} from "./processorSupervisor.js";
 
 const CONFIG = {
   /**
@@ -110,38 +116,68 @@ const CONFIG = {
   gasSponsorMode: (process.env.GAS_SPONSOR_MODE ?? "native").toLowerCase(),
   paymasterDiscoveryOnly: process.env.PAYMASTER_DISCOVERY_ONLY === "true",
   startupRpcProbe: process.env.STARTUP_RPC_PROBE === "true",
-  yieldEstimateTimeoutMs: Number(process.env.YIELD_ESTIMATE_TIMEOUT_MS ?? 60_000),
+  yieldEstimateTimeoutMs: Number(process.env.YIELD_ESTIMATE_TIMEOUT_MS ?? 45_000),
   keeperReadTimeoutMs: Number(process.env.KEEPER_READ_TIMEOUT_MS ?? 8_000),
   feeDataTimeoutMs: Number(process.env.FEE_DATA_TIMEOUT_MS ?? 8_000),
+  executionBudgetMs: Number(process.env.PROCESSOR_EXECUTION_BUDGET_MS ?? 50_000),
+  executionShutdownGraceMs: Number(process.env.PROCESSOR_SHUTDOWN_GRACE_MS ?? 8_000),
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const HARDWARE_REPORT_INTERVAL_MS = Number(process.env.HW_ADDRESS_REPORT_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+
+let lastHardwareReportAtMs = 0;
 
 function shouldSkipRecentRun(
   state: Awaited<ReturnType<typeof loadState>>,
   nowSec: number
 ): { skip: boolean; waitMs: number; elapsedMs: number; intervalMs: number } {
-  const lastRunAt = state.lastRunAt;
-  if (!CONFIG.runCooldownGuard || !lastRunAt) {
-    return { skip: false, waitMs: 0, elapsedMs: Number.MAX_SAFE_INTEGER, intervalMs: 0 };
+  return calculateRecentRunSkip({
+    runCooldownGuard: CONFIG.runCooldownGuard,
+    lastRunAt: state.lastRunAt,
+    suggestedNextCheckMs: state.suggestedNextCheckMs,
+    nowSec,
+    minRunIntervalMs: CONFIG.minRunIntervalMs,
+  });
+}
+
+function nextSupervisorDelayMs(state: Awaited<ReturnType<typeof loadState>>): number {
+  return calculateSupervisorDelayMs({
+    minRunIntervalMs: CONFIG.minRunIntervalMs,
+    suggestedNextCheckMs: state.suggestedNextCheckMs,
+  });
+}
+
+async function emitProcessorBoot(processStartedAtSec: number): Promise<void> {
+  await emitTelemetry({
+    event: "processor_boot",
+    timestamp: processStartedAtSec,
+    phase: "process_started",
+    hasAcurastStd: Boolean(getAcurastStd()),
+    hasUserAddress: Boolean(process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS),
+    hasProcessorSharedSecret: Boolean(process.env.PROCESSOR_SHARED_SECRET || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET),
+    dryRun: CONFIG.dryRun,
+    forceTestHarvest: CONFIG.forceTestHarvest,
+  });
+}
+
+async function emitHardwareAddressReport(nowSec: number): Promise<void> {
+  const std = getAcurastStd();
+  if (!std) return;
+
+  const nowMs = Date.now();
+  if (lastHardwareReportAtMs > 0 && nowMs - lastHardwareReportAtMs < HARDWARE_REPORT_INTERVAL_MS) {
+    return;
   }
 
-  const configuredInterval = Number.isFinite(CONFIG.minRunIntervalMs)
-    ? CONFIG.minRunIntervalMs
-    : 60_000;
-  const suggestedInterval = Number.isFinite(state.suggestedNextCheckMs ?? NaN)
-    ? Number(state.suggestedNextCheckMs)
-    : 0;
-  const intervalMs = Math.max(15_000, configuredInterval, suggestedInterval);
-  const elapsedMs = Math.max(0, (nowSec - lastRunAt) * 1000);
-  const waitMs = Math.max(0, intervalMs - elapsedMs);
-
-  return {
-    skip: waitMs > 0,
-    waitMs,
-    elapsedMs,
-    intervalMs,
-  };
+  lastHardwareReportAtMs = nowMs;
+  const hwAddress = ethers.getAddress(std.chains.ethereum.getAddress());
+  await emitTelemetry({
+    event: "hw_address_report",
+    timestamp: nowSec,
+    hwAddress,
+    note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
+  });
 }
 
 function buildYieldRequest(chainId: number, poolAddress: string): YieldEstimateRequest {
@@ -275,12 +311,80 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+function remainingExecutionTimeoutMs(startedAtMs: number, desiredTimeoutMs: number): number {
+  const configuredBudgetMs = Number.isFinite(CONFIG.executionBudgetMs)
+    ? CONFIG.executionBudgetMs
+    : 50_000;
+  const shutdownGraceMs = Number.isFinite(CONFIG.executionShutdownGraceMs)
+    ? CONFIG.executionShutdownGraceMs
+    : 8_000;
+  const deadlineMs = startedAtMs + Math.max(10_000, configuredBudgetMs) - Math.max(1_000, shutdownGraceMs);
+  const remainingMs = deadlineMs - Date.now();
+  const desiredMs = Number.isFinite(desiredTimeoutMs) ? desiredTimeoutMs : 45_000;
+
+  return Math.max(1_000, Math.min(desiredMs, remainingMs));
+}
+
+async function persistYieldEstimateFailure(
+  state: Awaited<ReturnType<typeof loadState>>,
+  nowSec: number,
+  executionChainId: number,
+  envUser: string | undefined,
+  error: unknown
+): Promise<void> {
+  const err = error as { message?: string; name?: string };
+  state.apiFailureStreak += 1;
+  state.lastRunAt = nowSec;
+  state.lastDecisionReason = "yield_estimate_failed";
+  state.suggestedNextCheckMs = 10 * 60 * 1000;
+  await saveState(CONFIG.statePath, state);
+  await emitTelemetry({
+    event: "yield_estimate_failed",
+    timestamp: Math.floor(Date.now() / 1000),
+    message: err?.message ?? String(error),
+    name: err?.name,
+    apiFailureStreak: state.apiFailureStreak,
+    recommendedNextCheckMs: state.suggestedNextCheckMs,
+    chainId: executionChainId,
+    userAddress: envUser,
+  });
+}
+
+async function persistHarvestExecutionFailure(
+  state: Awaited<ReturnType<typeof loadState>>,
+  nowSec: number,
+  executionChainId: number,
+  envUser: string | undefined,
+  error: unknown
+): Promise<void> {
+  const errorDetails = serialiseError(error);
+  const processorNotAttested = isProcessorNotAttestedError(error);
+
+  state.apiFailureStreak += 1;
+  state.lastRunAt = nowSec;
+  state.lastDecisionReason = processorNotAttested ? "processor_not_attested" : "harvest_execution_failed";
+  state.suggestedNextCheckMs = processorNotAttested ? 10 * 60 * 1000 : 60_000;
+  await saveState(CONFIG.statePath, state);
+
+  await emitTelemetry({
+    event: "harvest_execution_failed",
+    timestamp: Math.floor(Date.now() / 1000),
+    reason: state.lastDecisionReason,
+    processorNotAttested,
+    apiFailureStreak: state.apiFailureStreak,
+    recommendedNextCheckMs: state.suggestedNextCheckMs,
+    chainId: executionChainId,
+    userAddress: envUser,
+    ...errorDetails,
+  });
+}
+
 /**
  * Empty eth_call + lastHarvest decode failure almost always means KEEPER_ADDRESS is not
  * YieldSenseKeeper on the execution chain (e.g. Sepolia keeper while RPC_URL is mainnet).
  */
 async function ensureKeeperOnExecutionChain(
-  provider: ethers.JsonRpcProvider,
+  provider: ethers.JsonRpcApiProvider,
   keeperAddress: string,
   rpcUrl: string,
   timeoutMs = Number(process.env.RPC_STARTUP_TIMEOUT_MS ?? 4_000)
@@ -296,7 +400,8 @@ async function ensureKeeperOnExecutionChain(
   }
 }
 
-async function main(): Promise<void> {
+async function runOnce(): Promise<number | undefined> {
+  const startedAtMs = Date.now();
   const startNow = Math.floor(Date.now() / 1000);
   const state = await loadState(CONFIG.statePath);
 
@@ -324,36 +429,10 @@ async function main(): Promise<void> {
         hasAcurastStd: Boolean(getAcurastStd()),
       });
     }
-    // To prevent Acurast from immediately restarting the script and hitting 
-    // the cooldown check again (busy-wait), we wait a bit before exiting.
-    const sleepMs = Math.min(recentRun.waitMs, 30_000);
-    if (sleepMs > 500) {
-      console.log(`[cooldown] Sleeping for ${Math.round(sleepMs / 1000)}s before exit to prevent restart loop.`);
-      await sleep(sleepMs);
-    }
-    return;
+    return recentRun.waitMs;
   }
 
-  await emitTelemetry({
-    event: "processor_boot",
-    timestamp: startNow,
-    phase: "main_entered",
-    hasAcurastStd: Boolean(getAcurastStd()),
-    hasUserAddress: Boolean(process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS),
-    hasProcessorSharedSecret: Boolean(process.env.PROCESSOR_SHARED_SECRET || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET),
-    dryRun: CONFIG.dryRun,
-    forceTestHarvest: CONFIG.forceTestHarvest,
-  });
-
-  if (std) {
-    const hwAddress = ethers.getAddress(std.chains.ethereum.getAddress());
-    await emitTelemetry({
-      event: "hw_address_report",
-      timestamp: startNow,
-      hwAddress,
-      note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
-    });
-  }
+  await emitHardwareAddressReport(startNow);
 
   // 2. Stamp and Save Immediately
   state.lastRunAt = startNow;
@@ -373,7 +452,7 @@ async function main(): Promise<void> {
   console.log(`[CONFIG] User: ${envUser || "MISSING"}`);
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
-  await emitTelemetry({
+  emitTelemetry({
     event: "worker_stage",
     timestamp: Math.floor(Date.now() / 1000),
     stage: "config_loaded",
@@ -387,7 +466,7 @@ async function main(): Promise<void> {
     paymasterDiscoveryOnly: CONFIG.paymasterDiscoveryOnly,
     startupRpcProbe: CONFIG.startupRpcProbe,
     userAddress: envUser,
-  });
+  }).catch(() => {});
 
   const configuredExecutionChainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined;
   const executionProvider = createJsonRpcProvider(
@@ -398,14 +477,14 @@ async function main(): Promise<void> {
     CONFIG.dataRpcUrl.length > 0
       ? createJsonRpcProvider(CONFIG.dataRpcUrl, CONFIG.yieldChainId ?? 8453)
       : executionProvider;
-  await emitTelemetry({
+  emitTelemetry({
     event: "worker_stage",
     timestamp: Math.floor(Date.now() / 1000),
     stage: "providers_created",
     configuredExecutionChainId,
     configuredYieldChainId: CONFIG.yieldChainId,
     userAddress: envUser,
-  });
+  }).catch(() => {});
   const rpcStartupTimeoutMs = Number(process.env.RPC_STARTUP_TIMEOUT_MS ?? 4_000);
   const executionChainId = Number.isFinite(configuredExecutionChainId)
     ? Number(configuredExecutionChainId)
@@ -437,7 +516,27 @@ async function main(): Promise<void> {
   }
 
   console.log(`[BOOT] Connecting to Execution RPC: ${CONFIG.rpcUrl}...`);
-  await emitTelemetry({
+  // Pre-flight raw fetch probe to bypass any Ethers initialization hangs
+  try {
+    const controller = new AbortController();
+    const tId = setTimeout(() => controller.abort(), 8000);
+    const probe = await fetch(CONFIG.rpcUrl.trim(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+      signal: controller.signal
+    });
+    clearTimeout(tId);
+    if (probe.ok) {
+      console.log(`[BOOT] Raw RPC Probe Success: HTTP ${probe.status}`);
+    } else {
+      console.warn(`[BOOT] Raw RPC Probe Warning: HTTP ${probe.status}`);
+    }
+  } catch (e: any) {
+    console.error(`[BOOT] Raw RPC Probe Failed: ${e?.message || String(e)}`);
+  }
+
+  emitTelemetry({
     event: "worker_stage",
     timestamp: Math.floor(Date.now() / 1000),
     stage: "network_ready",
@@ -445,16 +544,7 @@ async function main(): Promise<void> {
     dataChainId,
     yieldChainId,
     userAddress: envUser,
-  });
-
-  // 2. Send Heartbeat
-  await emitTelemetry({
-    event: "processor_heartbeat",
-    message: `Guardian starting for ${envUser ? envUser.slice(0, 10) : "unknown"}...`,
-    timestamp: startNow,
-    chainId: executionChainId,
-    userAddress: envUser // Explicitly pass to ensure first log isn't anonymous
-  });
+  }).catch(() => {});
 
   // 2. Optional Grid/Stop-Loss Check
   if (CONFIG.enableGridKeeper) {
@@ -492,33 +582,6 @@ async function main(): Promise<void> {
   const elapsedEwma =
     state.lastRunAt != null ? Math.max(60, nowSec - state.lastRunAt) : 300;
 
-  const ethPricePromise = getEthPrice();
-  const feeDataPromise = withTimeout(
-    executionProvider.getFeeData(),
-    CONFIG.feeDataTimeoutMs,
-    "executionProvider.getFeeData"
-  );
-  let lastHarvestPromise: Promise<bigint>;
-  if (CONFIG.forceTestHarvest) {
-    lastHarvestPromise = Promise.resolve(0n);
-  } else {
-    lastHarvestPromise = (async () => {
-      for (let i = 0; i < 3; i++) {
-        try {
-          return await withTimeout(
-            keeperRead.lastHarvest(),
-            CONFIG.keeperReadTimeoutMs,
-            "keeper.lastHarvest"
-          );
-        } catch (err: any) {
-          if (i === 2) throw err;
-          await new Promise((res) => setTimeout(res, 1000 * (i + 1)));
-        }
-      }
-      return 0n;
-    })();
-  }
-
   let yieldResult;
   if (CONFIG.forceTestHarvest) {
     yieldResult = {
@@ -527,18 +590,26 @@ async function main(): Promise<void> {
       rewardAprEwmNext: null
     };
   } else {
-    await emitTelemetry({
+    emitTelemetry({
       event: "worker_stage",
       timestamp: Math.floor(Date.now() / 1000),
       stage: "yield_estimate_start",
       yieldEstimateTimeoutMs: CONFIG.yieldEstimateTimeoutMs,
+      effectiveYieldEstimateTimeoutMs: remainingExecutionTimeoutMs(startedAtMs, CONFIG.yieldEstimateTimeoutMs),
+      executionBudgetMs: CONFIG.executionBudgetMs,
+      executionShutdownGraceMs: CONFIG.executionShutdownGraceMs,
       keeperReadTimeoutMs: CONFIG.keeperReadTimeoutMs,
       feeDataTimeoutMs: CONFIG.feeDataTimeoutMs,
       chainId: executionChainId,
       userAddress: envUser,
-    });
+    }).catch(() => {});
 
     try {
+      const effectiveYieldEstimateTimeoutMs = remainingExecutionTimeoutMs(
+        startedAtMs,
+        CONFIG.yieldEstimateTimeoutMs
+      );
+
       yieldResult = await withTimeout(
         getRobustYieldEstimate(
           {
@@ -549,29 +620,15 @@ async function main(): Promise<void> {
           buildYieldRequest(yieldChainId, CONFIG.poolAddress),
           { elapsedSecSinceLastEwma: elapsedEwma }
         ),
-        CONFIG.yieldEstimateTimeoutMs,
+        effectiveYieldEstimateTimeoutMs,
         "getRobustYieldEstimate"
       );
     } catch (error: any) {
-      state.apiFailureStreak += 1;
-      state.lastRunAt = nowSec;
-      state.lastDecisionReason = "yield_estimate_failed";
-      state.suggestedNextCheckMs = 10 * 60 * 1000;
-      await saveState(CONFIG.statePath, state);
-      await emitTelemetry({
-        event: "yield_estimate_failed",
-        timestamp: Math.floor(Date.now() / 1000),
-        message: error?.message ?? String(error),
-        name: error?.name,
-        apiFailureStreak: state.apiFailureStreak,
-        recommendedNextCheckMs: state.suggestedNextCheckMs,
-        chainId: executionChainId,
-        userAddress: envUser,
-      });
+      await persistYieldEstimateFailure(state, nowSec, executionChainId, envUser, error);
       return;
     }
 
-    await emitTelemetry({
+    emitTelemetry({
       event: "worker_stage",
       timestamp: Math.floor(Date.now() / 1000),
       stage: "yield_estimate_complete",
@@ -580,18 +637,39 @@ async function main(): Promise<void> {
       sources: yieldResult.estimate.dataSourcesUsed,
       chainId: executionChainId,
       userAddress: envUser,
-    });
+    }).catch(() => {});
   }
 
   let ethPrice: number;
   let lastHarvest: bigint;
   let feeData: ethers.FeeData;
   try {
-    [ethPrice, lastHarvest, feeData] = await Promise.all([
-      ethPricePromise,
-      lastHarvestPromise,
-      feeDataPromise,
-    ]);
+    ethPrice = await getEthPrice();
+    feeData = await withTimeout(
+      executionProvider.getFeeData(),
+      CONFIG.feeDataTimeoutMs,
+      "executionProvider.getFeeData"
+    );
+
+    if (CONFIG.forceTestHarvest) {
+      lastHarvest = 0n;
+    } else {
+      lastHarvest = await (async () => {
+        for (let i = 0; i < 3; i++) {
+          try {
+            return await withTimeout(
+              keeperRead.lastHarvest(),
+              CONFIG.keeperReadTimeoutMs,
+              "keeper.lastHarvest"
+            );
+          } catch (err: any) {
+            if (i === 2) throw err;
+            await new Promise((res) => setTimeout(res, 1000 * (i + 1)));
+          }
+        }
+        return 0n;
+      })();
+    }
   } catch (error: any) {
     state.apiFailureStreak += 1;
     state.lastRunAt = nowSec;
@@ -857,16 +935,12 @@ async function main(): Promise<void> {
   const maxFeePerGas = feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0);
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0);
 
-  let txHash: string;
-  let receipt: ethers.TransactionReceipt | null;
+  let txHash = "";
+  let receipt: ethers.TransactionReceipt | null = null;
 
-  if (acurastStd) {
-    const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
-    const usePaymaster = false;
-
-    if (false) {
-      // Paymaster logic removed to reduce bundle size
-    } else {
+  try {
+    if (acurastStd) {
+      const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
       const submitted = await fulfillEthereumHarvest(acurastStd, {
         rpcUrl: CONFIG.rpcUrl,
         keeperAddress: CONFIG.keeperAddress,
@@ -892,21 +966,20 @@ async function main(): Promise<void> {
         ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
       });
       receipt = await executionProvider.waitForTransaction(txHash);
-    }
-  } else {
-    const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
+    } else {
+      const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
 
-    // DRY_RUN: sign + validate the payload without touching the chain.
-    // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
-    // and any real tx will revert. The payload hash + signature are logged so you can
-    // verify them off-chain or manually call the contract once the key is attested.
-    if (CONFIG.dryRun) {
-      await emitTelemetry({
-        event: "harvest_dry_run",
-        timestamp: nowSec,
-        payloadHash: harvestPayloadHash,
-        signerAddress: wallet?.address ?? null,
-        keeperAddress: CONFIG.keeperAddress,
+      // DRY_RUN: sign + validate the payload without touching the chain.
+      // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
+      // and any real tx will revert. The payload hash + signature are logged so you can
+      // verify them off-chain or manually call the contract once the key is attested.
+      if (CONFIG.dryRun) {
+        await emitTelemetry({
+          event: "harvest_dry_run",
+          timestamp: nowSec,
+          payloadHash: harvestPayloadHash,
+          signerAddress: wallet?.address ?? null,
+          keeperAddress: CONFIG.keeperAddress,
         note: "DRY_RUN=true — tx not submitted. Deployed executeHarvest payload validated end-to-end.",
         ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
       });
@@ -956,6 +1029,10 @@ async function main(): Promise<void> {
     });
     receipt = await tx.wait();
   }
+  } catch (error) {
+    await persistHarvestExecutionFailure(state, nowSec, executionChainId, envUser, error);
+    return;
+  }
 
   if (!receipt) {
     throw new Error(`Harvest transaction ${txHash} was submitted but no receipt was returned.`);
@@ -983,35 +1060,72 @@ async function main(): Promise<void> {
   });
 }
 
-main()
-  .then(async () => {
-    // Timed-out RPC/API promises may leave sockets alive after a fail-soft return.
-    // Acurast expects each scheduled execution to terminate, so force a clean exit.
-    process.exitCode = 0;
-    // Drain telemetry
-    await sleep(2000);
-    setTimeout(() => process.exit(0), 50);
-  })
-  .catch(async (error: any) => {
-    const state = await loadState(CONFIG.statePath);
-    state.apiFailureStreak += 1;
-    state.lastRunAt = Math.floor(Date.now() / 1000);
-    state.lastDecisionReason = "runtime_error";
-    await saveState(CONFIG.statePath, state);
-    await emitTelemetry({
-      event: "runtime_error",
-      timestamp: state.lastRunAt,
-      message: error?.message ?? String(error),
-      name: error?.name,
-      stack: error?.stack?.split("\n").slice(0, 8).join("\n"),
-      chainId: process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined,
-      userAddress: process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS,
-    });
-    // Acurast retries non-zero executions immediately. We already persisted and
-    // emitted the failure, so exit cleanly to avoid boot-log storms that hide the
-    // underlying runtime_error event.
-    process.exitCode = 0;
-    // Drain telemetry
-    await sleep(2000);
-    setTimeout(() => process.exit(0), 50);
+async function persistRuntimeError(error: unknown): Promise<void> {
+  const state = await loadState(CONFIG.statePath);
+  state.apiFailureStreak += 1;
+  state.lastRunAt = Math.floor(Date.now() / 1000);
+  state.lastDecisionReason = "runtime_error";
+  state.suggestedNextCheckMs = 60_000;
+  await saveState(CONFIG.statePath, state);
+  await emitTelemetry({
+    event: "runtime_error",
+    timestamp: state.lastRunAt,
+    chainId: process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined,
+    userAddress: process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS,
+    ...serialiseError(error),
   });
+}
+
+async function emitSupervisorHeartbeat(
+  cycle: number,
+  processStartedAtMs: number,
+  nextDelayMs: number,
+  status: "ok" | "error"
+): Promise<void> {
+  const state = await loadState(CONFIG.statePath);
+  await emitTelemetry({
+    event: "processor_heartbeat",
+    timestamp: Math.floor(Date.now() / 1000),
+    phase: "cycle_complete",
+    status,
+    cycle,
+    uptimeMs: Date.now() - processStartedAtMs,
+    nextDelayMs,
+    lastDecisionReason: state.lastDecisionReason,
+    apiFailureStreak: state.apiFailureStreak,
+    chainId: process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined,
+    userAddress: process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS,
+  });
+}
+
+async function runForever(): Promise<void> {
+  const processStartedAtMs = Date.now();
+  await emitProcessorBoot(Math.floor(processStartedAtMs / 1000));
+
+  let cycle = 0;
+  for (;;) {
+    cycle += 1;
+    let status: "ok" | "error" = "ok";
+    let requestedDelayMs: number | undefined;
+
+    try {
+      requestedDelayMs = await runOnce();
+    } catch (error) {
+      status = "error";
+      await persistRuntimeError(error);
+      console.error(JSON.stringify({ event: "runtime_error", message: serialiseError(error).message }));
+    }
+
+    const state = await loadState(CONFIG.statePath);
+    const nextDelayMs = Number.isFinite(requestedDelayMs ?? NaN)
+      ? Math.max(15_000, Number(requestedDelayMs))
+      : nextSupervisorDelayMs(state);
+    await emitSupervisorHeartbeat(cycle, processStartedAtMs, nextDelayMs, status);
+    await sleep(nextDelayMs);
+  }
+}
+
+runForever().catch((error) => {
+  console.error(JSON.stringify({ event: "supervisor_fatal_error", message: serialiseError(error).message }));
+  process.exitCode = 1;
+});

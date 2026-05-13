@@ -351,7 +351,7 @@ function signTradeDigest(digest: string, privateKey?: string): string {
   return wallet.signingKey.sign(ethDigest).serialized;
 }
 
-async function fetchPoolPrice(provider: ethers.JsonRpcProvider, poolAddress: string): Promise<number> {
+async function fetchPoolPrice(provider: ethers.JsonRpcApiProvider, poolAddress: string): Promise<number> {
   try {
     const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
     const slot0 = await pool.slot0();

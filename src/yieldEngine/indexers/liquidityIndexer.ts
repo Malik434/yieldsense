@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider } from "ethers";
+import { Contract, type JsonRpcApiProvider } from "ethers";
 import { fetchGeckoPoolReserveUsd } from "../ingestion/geckoPool.js";
 import { tvlUsdFromReserves, type TokenPricesUsd } from "../ingestion/prices.js";
 
@@ -10,7 +10,7 @@ const ERC20_ABI = [
 ];
 
 async function balancesAtBlock(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   prices: Pick<TokenPricesUsd, "decimals0" | "decimals1">,
   blockTag: number | "latest"
@@ -45,7 +45,7 @@ async function balancesAtBlock(
 export type TwabTvlResult = { tvlUsd: number; source: "onchain" | "gecko" };
 
 export async function twabTvlUsd(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   fromBlock: number,
   toBlock: number,

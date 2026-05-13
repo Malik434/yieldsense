@@ -1,6 +1,8 @@
 type AssignmentStrategy = { type: "Single" | "RoundRobin" };
 type ExecutionConfig = { type: "interval"; intervalInMs: number; numberOfExecutions: number };
 
+const PROCESSOR_INTERVAL_MS = 10 * 60_000;
+
 interface AcurastProjectConfig {
   projectName: string;
   fileUrl: string;
@@ -40,13 +42,13 @@ const config: AcurastConfig = {
       assignmentStrategy: { type: "Single" },
       execution: {
         type: "interval",
-        intervalInMs: 60_000,
-        numberOfExecutions: 100_000,
+        intervalInMs: PROCESSOR_INTERVAL_MS,
+        numberOfExecutions: 52_560,
       },
       maxAllowedStartDelayInMs: 30_000,
       usageLimit: {
         maxMemory: 256_000_000,
-        maxNetworkRequests: 120,
+        maxNetworkRequests: 250,
         maxStorage: 5_000_000,
       },
       numberOfReplicas: 1,

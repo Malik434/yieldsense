@@ -36,3 +36,8 @@ flattened_keeper.sol
 Core.md
 *.test.ts
 *.test.cjs
+Dashboard.png
+profilepic.jpg
+Telemetry.png
+StrategyParameters.png
+.acurast/bundles/YieldSense.zip

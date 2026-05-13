@@ -1,4 +1,4 @@
-import { type Log, JsonRpcProvider } from "ethers";
+import { type Log, type JsonRpcApiProvider } from "ethers";
 
 function positiveIntEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -26,7 +26,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 
 /** Chunked eth_getLogs with optional checkpoint continuation. */
 export async function getLogsChunked(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   filter: {
     address: string;
     topics?: (string | string[] | null)[];
@@ -75,7 +75,7 @@ export async function getLogsChunked(
   return { logs, failedChunks, totalChunks };
 }
 
-export async function getBlockTimestamp(provider: JsonRpcProvider, blockNumber: number): Promise<number> {
+export async function getBlockTimestamp(provider: JsonRpcApiProvider, blockNumber: number): Promise<number> {
   const block = await withTimeout(
     provider.getBlock(blockNumber),
     positiveIntEnv("RPC_CALL_TIMEOUT_MS", 15_000),

@@ -1,4 +1,4 @@
-import { Contract, Interface, JsonRpcProvider } from "ethers";
+import { Contract, Interface, type JsonRpcApiProvider } from "ethers";
 import { getLogsChunked, getBlockTimestamp } from "../ingestion/rpc.js";
 import type { FeeIndexResult } from "../types.js";
 import { feeUsdFromSwapInputs, type TokenPricesUsd } from "../ingestion/prices.js";
@@ -34,7 +34,7 @@ function feeUsdFromV3Swap(
 }
 
 async function collectSwapFees(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   fromBlock: number,
   toBlock: number,
@@ -77,7 +77,7 @@ async function collectSwapFees(
 }
 
 export async function indexSwapFeesUsd(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   poolAddress: string,
   fromBlock: number,
   toBlock: number,
@@ -142,7 +142,7 @@ export async function indexSwapFeesUsd(
 }
 
 /** V2: fee in bps. V3 / Slipstream: fee in hundredths of a bip (500 = 0.05% = 5 bps). */
-export async function readPoolFeeBps(provider: JsonRpcProvider, poolAddress: string): Promise<number> {
+export async function readPoolFeeBps(provider: JsonRpcApiProvider, poolAddress: string): Promise<number> {
   try {
     const POOL_FEES_ABI = ["function fee() view returns (uint24)"];
     const c = new Contract(poolAddress, POOL_FEES_ABI, provider);

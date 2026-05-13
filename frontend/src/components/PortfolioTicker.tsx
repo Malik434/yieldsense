@@ -3,10 +3,13 @@
 import { useEffect, useState, useMemo } from 'react';
 import { TrendingUp, Wallet, ArrowUpRight, BarChart3, Target, Fuel, PieChart, Layers } from 'lucide-react';
 
+const MS_IN_YEAR = 365 * 24 * 60 * 60 * 1000;
+
 interface PortfolioTickerProps {
   balance: number;
   unrealizedYield: number;
   totalRealized: number;
+  /** Percentage APR, e.g. 25.54 means 25.54%. */
   apr: number;
   globalTvl?: number;
 }
@@ -14,23 +17,31 @@ interface PortfolioTickerProps {
 export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, globalTvl = 0 }: PortfolioTickerProps) {
   // Net Worth already includes realized yield (compounded in share price).
   // We only add unrealizedYield (pending in strategy) to get the true total value.
-  const [tickerBalance, setTickerBalance] = useState(balance + unrealizedYield);
+  const currentPositionValue = useMemo(() => {
+    const value = balance + unrealizedYield;
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }, [balance, unrealizedYield]);
+  const projectedAnnualYield = useMemo(() => {
+    const value = currentPositionValue * (apr / 100);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }, [currentPositionValue, apr]);
+  const hasActivePosition = currentPositionValue > 0;
+  const [tickerBalance, setTickerBalance] = useState(currentPositionValue);
 
   // Velocity calculation
-  const msInYear = 365 * 24 * 60 * 60 * 1000;
   const yieldPerMs = useMemo(() => {
-    return (balance * (apr / 100)) / msInYear;
-  }, [balance, apr]);
+    return projectedAnnualYield / MS_IN_YEAR;
+  }, [projectedAnnualYield]);
 
   useEffect(() => {
-    setTickerBalance(balance + unrealizedYield);
+    setTickerBalance(currentPositionValue);
 
     const interval = setInterval(() => {
       setTickerBalance(prev => prev + yieldPerMs * 100);
     }, 100);
 
     return () => clearInterval(interval);
-  }, [balance, unrealizedYield, yieldPerMs]);
+  }, [currentPositionValue, yieldPerMs]);
 
   const netWorth = tickerBalance;
 
@@ -141,14 +152,16 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
           <div className="h-8 w-px bg-white/[0.05]" />
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-heading font-bold text-[#F5F7FA]">
-              ${(balance * (apr / 100)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${projectedAnnualYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-xs font-mono font-bold text-[#484F58] uppercase tracking-widest">Yearly Yield Estimate</span>
+            <span className="text-xs font-mono font-bold text-[#484F58] uppercase tracking-widest">
+              {hasActivePosition ? 'Projected Annual Yield' : 'No Active Position'}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-4">
           <div className="px-5 py-2 rounded-xl bg-[#C2E812] text-[#030605] font-heading font-bold text-sm tracking-tight">
-            +{apr.toFixed(2)}% APR
+            +{apr.toFixed(2)}% Strategy APR
           </div>
           <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">
             <Layers size={12} />

@@ -1,4 +1,4 @@
-import { JsonRpcProvider } from "ethers";
+import type { JsonRpcApiProvider } from "ethers";
 import { readGaugeSnapshot } from "../indexers/rewardIndexer.js";
 import { findPoolByTokens, type DefiLlamaPoolYield } from "./defiLlamaYields.js";
 
@@ -42,7 +42,7 @@ export interface AerodromeGaugeResult {
  * @param token1              Optional: underlying token1 address for DefiLlama lookup
  */
 export async function fetchAerodromeGaugeResult(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   gaugeAddress: string,
   lpTokenAddress: string,
   lpTokenUsdPerToken: number,

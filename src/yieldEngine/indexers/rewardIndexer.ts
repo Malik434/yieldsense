@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, formatUnits } from "ethers";
+import { Contract, formatUnits, type JsonRpcApiProvider } from "ethers";
 import type { RewardGaugeSnapshot } from "../types.js";
 
 const GAUGE_ABI = [
@@ -13,7 +13,7 @@ const ERC20_ABI = ["function decimals() view returns (uint8)"];
 const SECONDS_PER_YEAR = 31_536_000;
 
 export async function readGaugeSnapshot(
-  provider: JsonRpcProvider,
+  provider: JsonRpcApiProvider,
   gaugeAddress: string,
   lpTokenAddress: string,
   lpTokenUsdPerToken: number,

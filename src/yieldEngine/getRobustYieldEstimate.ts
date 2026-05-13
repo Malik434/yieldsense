@@ -71,6 +71,53 @@ export async function getRobustYieldEstimate(
 ): Promise<RobustYieldEngineResult> {
   const { provider } = ctx;
   emitTelemetry({ event: "worker_stage", stage: "yield_engine_entry", poolAddress: req.poolAddress, timestamp: Math.floor(Date.now() / 1000) });
+
+  const compounds = req.apyCompoundPeriodsPerYear ?? 365;
+
+  if (req.fallbackMode === "api") {
+    emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "api_fallback_start",
+      mode: "api_only",
+    });
+
+    const defiLlamaOpts =
+      req.defiLlamaProject || req.defiLlamaToken0
+        ? {
+            project: req.defiLlamaProject,
+            token0: req.defiLlamaToken0,
+            token1: req.defiLlamaToken1,
+          }
+        : undefined;
+    const fb = await apiFallbackTotalApr(
+      req.apiPoolAddress ?? req.poolAddress,
+      req.aprFreshnessWindowSec,
+      req.minApiConfidence,
+      compounds,
+      defiLlamaOpts
+    );
+
+    if (!fb || fb.estimate.totalApr <= 0) {
+      throw new Error(`API yield estimate unavailable for pool ${req.poolAddress}`);
+    }
+
+    emitTelemetry({
+      event: "worker_stage",
+      timestamp: Math.floor(Date.now() / 1000),
+      stage: "api_fallback_complete",
+      usable: fb.estimate.usable,
+      confidence: fb.estimate.confidence,
+      sources: fb.estimate.dataSourcesUsed,
+    });
+
+    return {
+      estimate: fb.estimate,
+      rewardAprEwmNext: ctx.rewardAprEwmPrev ?? null,
+      indexerCheckpointBlock: ctx.indexerCheckpointBlock ?? 0,
+    };
+  }
+
   const latest = await provider.getBlockNumber();
   emitTelemetry({ event: "worker_stage", stage: "latest_block_fetched", block: latest, timestamp: Math.floor(Date.now() / 1000) });
   const windowBlocks = Math.min(req.feeMaxBlocks, estimateBlocksForWindow(req.chainId, req.feeWindowSec));
@@ -207,7 +254,6 @@ export async function getRobustYieldEstimate(
   let confidence = confidenceRaw * liqPen;
 
   let totalApr = feeApr + rewardApr;
-  const compounds = req.apyCompoundPeriodsPerYear ?? 365;
   let estimatedApy = totalAprToApy(totalApr, compounds);
 
   let forwardAprEstimate: RobustYieldEstimate["forwardAprEstimate"];
