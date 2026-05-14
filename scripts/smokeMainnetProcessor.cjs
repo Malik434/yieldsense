@@ -184,62 +184,52 @@ async function runSmokeForRpc(rpcUrl) {
   }
 
   const statePath = path.join(os.tmpdir(), `yieldsense-mainnet-smoke-${randomUUID()}.json`);
+  const localAcurastStoragePath = path.join(os.tmpdir(), `yieldsense-local-acurast-${randomUUID()}.json`);
   const workerEnv = {
     RPC_URL: rpcUrl,
-    DATA_RPC_URL: rpcUrl,
-    MAINNET_DATA_RPC_URL: rpcUrl,
-    YIELD_CHAIN_ID: "8453",
-    CHAIN_ID: "8453",
-    DRY_RUN: "true",
-    FORCE_TEST_HARVEST: "false",
-    FORCE_TEST_ALLOW_MAINNET: "false",
+    DATA_RPC_URL: process.env.DATA_RPC_URL || rpcUrl,
+    MAINNET_DATA_RPC_URL: process.env.MAINNET_DATA_RPC_URL || rpcUrl,
+    YIELD_CHAIN_ID: process.env.YIELD_CHAIN_ID || "8453",
+    CHAIN_ID: process.env.CHAIN_ID || "8453",
+    DRY_RUN: "false",
+    LOCAL_ACURAST_STORAGE_PATH: localAcurastStoragePath,
     RUN_COOLDOWN_GUARD: "false",
     STATE_PATH: statePath,
-    GRID_CONFIG_JSON: "[]",
-    STOP_LOSS_SECRET_JSON: "",
-    STOP_LOSS_SIGNED_PAYLOAD: "",
-    YIELD_FALLBACK_MODE: "api",
-    POOL_FEE_BPS: "30",
-    FEE_WINDOW_SEC: "3600",
-    FEE_MAX_BLOCKS: "1800",
-    LOG_CHUNK_SIZE: "900",
-    MIN_YIELD_CONFIDENCE: "0.1",
-    MIN_APR_CONFIDENCE: "0.1",
-    STRATEGY_TVL_USD: "1000000000",
-    EFFICIENCY_MULTIPLIER: "0",
-    MIN_NET_REWARD_USD: "0",
-    MAX_GAS_USD: "1000000",
-    COOLDOWN_SEC: "0",
-    TELEMETRY_URL: "http://127.0.0.1:9",
-    TELEMETRY_DISABLED: "true",
-    PROCESSOR_SHARED_SECRET: "",
-    RPC_REQUEST_TIMEOUT_MS: "15000",
-    RPC_CALL_TIMEOUT_MS: "15000",
-    RPC_LOG_TIMEOUT_MS: "15000",
-    RPC_CHUNK_DELAY_MS: "250",
+    YIELD_FALLBACK_MODE: process.env.YIELD_FALLBACK_MODE || "api",
+    RPC_REQUEST_TIMEOUT_MS: process.env.RPC_REQUEST_TIMEOUT_MS || "15000",
+    RPC_CALL_TIMEOUT_MS: process.env.RPC_CALL_TIMEOUT_MS || "15000",
+    RPC_LOG_TIMEOUT_MS: process.env.RPC_LOG_TIMEOUT_MS || "15000",
+    RPC_CHUNK_DELAY_MS: process.env.RPC_CHUNK_DELAY_MS || "250",
     YIELD_ESTIMATE_TIMEOUT_MS: process.env.SMOKE_YIELD_ESTIMATE_TIMEOUT_MS || "12000",
-    KEEPER_READ_TIMEOUT_MS: "8000",
-    FEE_DATA_TIMEOUT_MS: "8000",
+    KEEPER_READ_TIMEOUT_MS: process.env.KEEPER_READ_TIMEOUT_MS || "8000",
+    FEE_DATA_TIMEOUT_MS: process.env.FEE_DATA_TIMEOUT_MS || "8000",
+    EST_GAS_UNITS: process.env.SMOKE_EST_GAS_UNITS || "1200000",
+    ACURAST_FAST_SUBMIT: process.env.SMOKE_ACURAST_FAST_SUBMIT || "false",
+    WAIT_FOR_HARVEST_RECEIPT: process.env.SMOKE_WAIT_FOR_HARVEST_RECEIPT || "true",
   };
 
-  const worker = await runStep("Harvest worker dry run", "npx", ["tsx", "src/index.ts"], workerEnv);
-  requireAnyOutput("Harvest worker dry run", worker.stdout, [
-    /"event":"profitability_check"/,
-    /"event":"yield_estimate_failed"/,
-    /"event":"yield_not_usable"/,
-    /"event":"keeper_or_fee_read_failed"/,
+  const worker = await runStep("Harvest worker local Acurast execution", "npx", ["tsx", "scripts/localAcurastJob.ts"], workerEnv);
+  requireOutput("Harvest worker local Acurast execution", worker.stdout, [
+    /\[LOCAL_ACURAST_STD\] Installed local _STD_/,
+    /"hasAcurastStd":true/,
+    /"event":"harvest_submit_attempt"/,
+    /"payloadHash":"0x[0-9a-fA-F]{64}"/,
   ]);
-  if (/"event":"profitability_check"/.test(worker.stdout)) {
-    requireOutput("Harvest worker dry run", worker.stdout, [
-      /"event":"harvest_dry_run"/,
-      /"payloadHash":"0x[0-9a-fA-F]{64}"/,
-    ]);
-  }
-  console.log(`\nHarvest worker dry run finished in ${worker.elapsedMs}ms`);
+  requireAnyOutput("Harvest worker local Acurast execution", worker.stdout, [
+    /"event":"harvest_submitted"/,
+    /"event":"harvest_submission_failed"/,
+    /"event":"harvest_receipt_wait_failed"/,
+    /"event":"harvest_confirmed"/,
+  ]);
+  console.log(`\nHarvest worker local Acurast execution finished in ${worker.elapsedMs}ms`);
 }
 
 async function main() {
   console.log("YieldSense mainnet processor smoke test");
+  if (!process.env.ACURAST_WORKER_KEY) {
+    throw new Error("ACURAST_WORKER_KEY is required. This smoke test installs a local _STD_ shim and sends a real transaction.");
+  }
+  console.warn("WARNING: this smoke test sends a real Base mainnet transaction via the local Acurast _STD_ shim.");
   const failures = [];
 
   for (const rpcUrl of RPC_CANDIDATES) {

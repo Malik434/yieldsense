@@ -28,7 +28,7 @@ let telemetryBuffer: TelemetryEvent[] = [];
  * Buffers a telemetry event for later batch transmission.
  * Events are only written to stdout immediately; network calls are deferred to flushTelemetry().
  */
-export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
+export async function emitTelemetry(event: TelemetryEvent, immediate: boolean = false): Promise<void> {
   const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   if (!event.userAddress) {
     event.userAddress = envUser;
@@ -44,6 +44,9 @@ export async function emitTelemetry(event: TelemetryEvent): Promise<void> {
 
   if (process.env.TELEMETRY_DISABLED !== "true") {
     telemetryBuffer.push(event);
+    if (immediate) {
+      await flushTelemetry().catch(() => {});
+    }
   }
 }
 
@@ -76,7 +79,7 @@ export async function flushTelemetry(): Promise<void> {
       method: "POST",
       headers,
       body: JSON.stringify(eventsToFlush),
-    }, positiveIntEnv("TELEMETRY_TIMEOUT_MS", 10_000));
+    }, positiveIntEnv("TELEMETRY_TIMEOUT_MS", 3_000));
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "no-body");

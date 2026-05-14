@@ -60,30 +60,60 @@ async function runQueuedRpc<T>(task: () => Promise<T>): Promise<T> {
 }
 
 class NativeFetchJsonRpcProvider extends JsonRpcApiProvider {
-  readonly #rpcUrl: string;
+  readonly #urls: string[];
+  #currentUrlIndex: number = 0;
   readonly #timeoutMs: number;
 
-  constructor(rpcUrl: string, network?: Networkish, options?: JsonRpcApiProviderOptions) {
+  constructor(urls: string | string[], network?: Networkish, options?: JsonRpcApiProviderOptions) {
     super(network, options);
-    this.#rpcUrl = rpcUrl;
+    this.#urls = Array.isArray(urls) ? urls : [urls];
     this.#timeoutMs = positiveIntEnv("RPC_REQUEST_TIMEOUT_MS", 6_000);
     this._start();
   }
 
   async _send(payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult | JsonRpcError>> {
-    return runQueuedRpc(() => this.#sendNow(payload));
+    return runQueuedRpc(() => this.#sendWithFailover(payload));
   }
 
-  async #sendNow(payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult | JsonRpcError>> {
+  async #sendWithFailover(payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult | JsonRpcError>> {
     const method = firstPayloadMethod(payload);
-    await emitRpcTransportTelemetry("attempt", this.#rpcUrl, method);
+    let lastError: any;
+
+    // Try up to 3 URLs in our list
+    const maxTries = Math.min(this.#urls.length, 3);
+    for (let i = 0; i < maxTries; i++) {
+      const url = this.#urls[this.#currentUrlIndex];
+      try {
+        return await this.#sendNow(url, payload);
+      } catch (error) {
+        lastError = error;
+        const msg = String(error);
+        
+        // If it's a 429 or timeout, rotate to the next URL immediately
+        if (msg.includes("429") || msg.includes("timed out") || msg.includes("500") || msg.includes("503")) {
+          const oldHost = rpcHost(url);
+          this.#currentUrlIndex = (this.#currentUrlIndex + 1) % this.#urls.length;
+          const newHost = rpcHost(this.#urls[this.#currentUrlIndex]);
+          console.warn(`[RPC_FAILOVER] ${method} failed on ${oldHost} (${msg}). Rotating to ${newHost}.`);
+        } else {
+          // If it's a logic error (revert), don't bother rotating, just throw
+          throw error;
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async #sendNow(rpcUrl: string, payload: JsonRpcPayload | Array<JsonRpcPayload>): Promise<Array<JsonRpcResult | JsonRpcError>> {
+    const method = firstPayloadMethod(payload);
+    await emitRpcTransportTelemetry("attempt", rpcUrl, method);
 
     const controller = new AbortController();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
       const json = await Promise.race([
         (async () => {
-          const response = await fetch(this.#rpcUrl, {
+          const response = await fetch(rpcUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -111,11 +141,11 @@ class NativeFetchJsonRpcProvider extends JsonRpcApiProvider {
         }),
       ]);
       const result = Array.isArray(json) ? json : [json];
-      await emitRpcTransportTelemetry("result", this.#rpcUrl, method, { count: result.length });
+      await emitRpcTransportTelemetry("result", rpcUrl, method, { count: result.length });
       return result;
     } catch (error) {
       const err = error as { name?: string; message?: string };
-      await emitRpcTransportTelemetry("error", this.#rpcUrl, method, {
+      await emitRpcTransportTelemetry("error", rpcUrl, method, {
         name: err?.name,
         message: err?.message ?? String(error),
       });
@@ -128,10 +158,8 @@ class NativeFetchJsonRpcProvider extends JsonRpcApiProvider {
 
 /**
  * Sequential Failover Provider:
- * We don't use Ethers' FallbackProvider because it probes all endpoints on boot,
- * which can trigger rate-limits on free tiers or cause 10-minute "quiesce" hangs.
- * Instead, we return a provider that uses the primary URL, and we'll handle
- * rotation at the application level if needed, or rely on a simple try/catch.
+ * We handle rotation internally in NativeFetchJsonRpcProvider if the primary URL
+ * hits a 429 or timeout.
  */
 export function createJsonRpcProvider(rpcUrl: string, network?: Networkish): JsonRpcApiProvider {
   const fallbacks = (process.env.RPC_FALLBACK_URLS || "")
@@ -141,7 +169,7 @@ export function createJsonRpcProvider(rpcUrl: string, network?: Networkish): Jso
   
   const urls = [rpcUrl.trim(), ...fallbacks.map(u => u.trim())];
 
-  return new NativeFetchJsonRpcProvider(urls[0], network, {
+  return new NativeFetchJsonRpcProvider(urls, network, {
     batchMaxCount: 1,
     staticNetwork: network == null ? null : true,
     cacheTimeout: positiveIntEnv("RPC_CACHE_TIMEOUT_MS", 1_000),
