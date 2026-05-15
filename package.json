@@ -14,6 +14,7 @@
     "test:mainnet-processor": "node scripts/smokeMainnetProcessor.cjs",
     "dev": "node --env-file=.env dist/index.bundle.cjs",
     "dev:processor": "node --env-file=.env dist/processor.bundle.cjs",
+    "rpc:relay": "node scripts/rpcRelay.cjs",
     "print:acurast-env": "node scripts/printAcurastConfigEnv.cjs",
     "verify:lp": "node scripts/verifyLpPosition.cjs"
   },

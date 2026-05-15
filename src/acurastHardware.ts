@@ -183,7 +183,11 @@ export function fulfillEthereumHarvest(
         maxPriorityFeePerGas: params.maxPriorityFeePerGas,
       },
       (operationHash: string) => resolve({ hash: operationHash }),
-      (messages: string[]) => reject(new Error(messages.join("; ")))
+      (messages: string[]) => {
+        const error = new Error(messages.join("; "));
+        (error as Error & { acurastFulfillMessages?: string[] }).acurastFulfillMessages = messages;
+        reject(error);
+      }
     );
   });
 }

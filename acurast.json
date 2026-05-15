@@ -4,7 +4,7 @@
       "projectName": "YieldSense",
       "fileUrl": "dist/index.bundle.cjs",
       "network": "mainnet",
-      "onlyAttestedDevices": true,
+      "onlyAttestedDevices": false,
       "assignmentStrategy": {
         "type": "Single"
       },
@@ -22,7 +22,7 @@
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
-      "maxCostPerExecution": 5500000000,
+      "maxCostPerExecution": 15500000000,
       "includeEnvironmentVariables": [],
       "processorWhitelist": []
     },

@@ -1,32 +1,40 @@
-# YieldSense Security Model
+# YieldSense Security Architecture
 
-YieldSense is built on a "Defense in Depth" philosophy, combining hardware-level isolation with cryptographic on-chain verification.
+YieldSense is designed with a **defense-in-depth** strategy, combining hardware-level isolation, cryptographic attestations, and decentralized governance to protect user capital.
 
-## 1. The Trust Anchor: Acurast TEE
-The core security guarantee is that **code is law** inside the enclave.
-- **Remote Attestation**: Every transaction submitted to the `YieldSenseKeeper` includes a cryptographic proof (Remote Attestation) that the code hasn't been tampered with.
-- **Hardware-Locked Secrets**: Signing keys are generated in the Secure Element of the hardware. Even with root access to the server, the private key cannot be extracted.
+## 1. Hardware-Level Isolation (Acurast TEE)
 
-## 2. MEV & Front-running Protection
-YieldSense implements two layers of protection against predatory bots:
-- **Private Broadcast**: Signed transactions are pushed via private RPC endpoints (QuickNode/Alchemy) to bypass the public mempool.
-- **Slippage Enforcer**: Every grid trade and harvest-swap includes a hardcoded or user-signed slippage limit (default 0.5%). The TEE will refuse to sign a transaction if the routing path doesn't satisfy these economic constraints.
+The "Decision Plane" of the protocol runs exclusively inside **Trusted Execution Environments (TEEs)**.
+- **Private Key Sovereignty:** Signing keys are generated within the enclave's secure element. They never leave the hardware boundary and are inaccessible even to the protocol developers.
+- **One-Shot Isolation:** By running as a **One-Shot Task**, the worker process has a limited lifecycle. It initializes, executes, and terminates, minimizing the attack surface for long-running memory exploits.
+- **Encrypted Environment:** All sensitive configuration (stop-loss rules, secrets) is injected into the TEE via encrypted environment variables or signed EIP-712 payloads.
 
-## 3. Cryptographic Handshake (EIP-712)
-Strategy delivery is secured via the **EIP-712** standard.
-- **Non-Repudiation**: Users sign their strategy parameters (e.g., "Stop-loss at $3,200") with their own wallet.
-- **Enclave Verification**: The TEE worker recovers the address from the signature. It only executes strategies for users who have provided a valid, cryptographically-signed intent. This prevents "Ghost Trades" or unauthorized parameter tampering.
+## 2. On-Chain Attestation (RIP-7212)
 
-## 4. Smart Contract Guardrails
-The `YieldSenseKeeper.sol` is designed with strict boundary conditions:
-- **Whitelisted Processors**: Only hardware processors that have been manually whitelisted by the protocol owner can trigger vault actions.
-- **Inactivity Guard**: To mitigate the risk of TEE downtime, a secondary permissioned multisig can trigger emergency harvests if the autonomous agent hasn't checked in for 48 hours.
+The `YieldSenseKeeper.sol` contract acts as an on-chain gatekeeper that verifies the source of every execution.
+- **P-256 Signature Verification:** The contract utilizes the `RIP-7212` precompile (available on Base) to natively verify P-256 signatures from Acurast hardware.
+- **Processor Whitelisting:** Only processors that have provided a valid hardware attestation (proving they are running unmodified YieldSense code) are authorized to call `executeHarvest` or `executeTrade`.
+- **Nonce Bitmap:** Every transaction is protected by a mandatory nonce bitmap to prevent replay attacks across different workers or timeframes.
+
+## 3. Governance & Administrative Security
+
+Protocol-level permissions are strictly controlled to prevent "Rug Pull" or centralized failure scenarios.
+- **Gnosis Safe Multisig:** The `YieldSenseKeeper` owner is a **multisig wallet** (0x081a...c64a). Any change to protocol fees, whitelisted processors, or admin parameters requires a consensus of signatures.
+- **Two-Day Timelock:** Critical administrative changes are subject to a 48-hour timelock, giving users time to withdraw funds if they disagree with a proposed update.
+- **Non-Custodial Logic:** The smart contract logic is restricted to interacting only with authorized yield sources (Aerodrome, Moonwell). There is no "drain" function or administrative path to transfer principal funds to an external address.
+
+## 4. Reliability & Network Security
+
+- **RPC Failover Transport:** To prevent "Denial of Service" attacks via RPC rate-limiting, the worker implements an automated failover mechanism. It can rotate through a pool of distinct providers to ensure that time-critical trades (like stop-losses) are always submitted.
+- **Deterministic Guardrails:** The TEE code contains hardcoded "Circuit Breakers" that skip execution if yield data is stale, gas is abnormally high, or the profitability confidence score is too low.
+
+## Reporting a Vulnerability
+
+If you discover a security vulnerability, please do not open a public issue. Instead, contact the security team directly at security@yieldsense.tech or via our bug bounty program on Immunefi (coming soon).
 - **Immutable Logic**: Critical profitability constants (Efficiency Multipliers) are defined at the TEE level but verified via the `PayloadHash` on-chain.
 
 ## 5. Risk Disclosures
 - **Oracle Risk**: While YieldSense uses a multi-source consensus for APR, spot price relies on Uniswap V3 `slot0` data. We mitigate this using a **Divergence Guard** that compares the on-chain price against an off-chain oracle (Gecko) before execution.
-- **Contract Risk**: While the Acurast TEE is secure, bugs in the underlying lending protocols (Aerodrome/Moonwell) can still impact the vault.
-
 ---
 
 ## Technical Audit Checkpoints

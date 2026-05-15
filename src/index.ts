@@ -129,6 +129,8 @@ const CONFIG = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const HARDWARE_REPORT_INTERVAL_MS = Number(process.env.HW_ADDRESS_REPORT_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
 const HARVEST_RECEIPT_TIMEOUT_MS = Number(process.env.HARVEST_RECEIPT_TIMEOUT_MS ?? 15_000);
+const PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS = Number(process.env.PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS ?? 2_500);
+const FINAL_LOG_DRAIN_MS = Number(process.env.FINAL_LOG_DRAIN_MS ?? 1_500);
 const FALLBACK_MAX_FEE_PER_GAS = BigInt(process.env.FALLBACK_MAX_FEE_PER_GAS_WEI ?? "100000000");
 const FALLBACK_MAX_PRIORITY_FEE_PER_GAS = BigInt(process.env.FALLBACK_MAX_PRIORITY_FEE_PER_GAS_WEI ?? "1000000");
 const AERO = "0x940181a94A35A4569E4529A3CDfB74e38FD98631";
@@ -159,7 +161,67 @@ function nextSupervisorDelayMs(state: Awaited<ReturnType<typeof loadState>>): nu
   });
 }
 
+function emitOperationalLog(
+  event: string,
+  details: Record<string, unknown> = {},
+  level: "info" | "error" = "info"
+): void {
+  const payload = {
+    event,
+    timestamp: Math.floor(Date.now() / 1000),
+    chainId: process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined,
+    userAddress: process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS,
+    ...details,
+  };
+  const line = `[OP_LOG] ${JSON.stringify(payload)}`;
+  if (level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+}
+
+function sanitizeBroadcastError(error: unknown): Record<string, unknown> {
+  const anyError = error as any;
+  const nestedError = anyError?.error;
+  const transactionHash =
+    anyError?.transactionHash ??
+    anyError?.receipt?.hash ??
+    anyError?.receipt?.transactionHash ??
+    nestedError?.transactionHash;
+
+  return {
+    name: anyError?.name,
+    code: anyError?.code ?? nestedError?.code,
+    reason: anyError?.reason ?? nestedError?.reason,
+    shortMessage: anyError?.shortMessage,
+    message: String(anyError?.message ?? nestedError?.message ?? error).slice(0, 500),
+    acurastFulfillMessages: Array.isArray(anyError?.acurastFulfillMessages)
+      ? anyError.acurastFulfillMessages.map((message: unknown) => String(message).slice(0, 300)).slice(0, 5)
+      : undefined,
+    transactionHash,
+  };
+}
+
+function rpcUrlHost(rpcUrl: string): string {
+  try {
+    return new URL(rpcUrl).host;
+  } catch {
+    return "invalid_rpc_url";
+  }
+}
+
 async function emitProcessorBoot(processStartedAtSec: number): Promise<void> {
+  emitOperationalLog("processor_boot", {
+    phase: "process_started",
+    hasAcurastStd: Boolean(getAcurastStd()),
+    hasUserAddress: Boolean(process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS),
+    hasProcessorSharedSecret: Boolean(process.env.PROCESSOR_SHARED_SECRET || (globalThis as any).__ENV__?.PROCESSOR_SHARED_SECRET),
+    dryRun: CONFIG.dryRun,
+    acurastFastSubmit: CONFIG.acurastFastSubmit,
+    acurastUseFallbackFees: CONFIG.acurastUseFallbackFees,
+    waitForHarvestReceipt: CONFIG.waitForHarvestReceipt,
+  });
   await emitTelemetry({
     event: "processor_boot",
     timestamp: processStartedAtSec,
@@ -183,11 +245,76 @@ async function emitHardwareAddressReport(nowSec: number): Promise<void> {
 
   lastHardwareReportAtMs = nowMs;
   const hwAddress = ethers.getAddress(std.chains.ethereum.getAddress());
+  emitOperationalLog("hw_address_report", {
+    hwAddress,
+    note: "Attest and fund this exact address for production Acurast executions.",
+  });
   await emitTelemetry({
     event: "hw_address_report",
     timestamp: nowSec,
     hwAddress,
     note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
+  });
+}
+
+async function emitProcessorChainDiagnostics(
+  provider: ethers.JsonRpcApiProvider,
+  processorAddress: string,
+  keeperAddress: string,
+  executionChainId: number,
+  envUser: string | undefined
+): Promise<void> {
+  const attestationContract = new ethers.Contract(
+    keeperAddress,
+    ["function attestedProcessors(address) view returns (bool)"],
+    provider
+  );
+
+  const [balanceResult, pendingNonceResult, latestNonceResult, attestationResult] = await Promise.allSettled([
+    withTimeout(provider.getBalance(processorAddress), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getBalance"),
+    withTimeout(provider.getTransactionCount(processorAddress, "pending"), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getTransactionCount pending"),
+    withTimeout(provider.getTransactionCount(processorAddress, "latest"), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getTransactionCount latest"),
+    withTimeout(attestationContract.attestedProcessors(processorAddress), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "keeper.attestedProcessors"),
+  ]);
+
+  const diagnostics: Record<string, unknown> = {
+    processorAddress,
+    keeperAddress,
+    diagnosticTimeoutMs: PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS,
+  };
+
+  if (balanceResult.status === "fulfilled") {
+    diagnostics.balanceWei = balanceResult.value.toString();
+    diagnostics.balanceEth = ethers.formatEther(balanceResult.value);
+  } else {
+    diagnostics.balanceError = sanitizeBroadcastError(balanceResult.reason);
+  }
+
+  if (pendingNonceResult.status === "fulfilled") {
+    diagnostics.pendingNonce = pendingNonceResult.value;
+  } else {
+    diagnostics.pendingNonceError = sanitizeBroadcastError(pendingNonceResult.reason);
+  }
+
+  if (latestNonceResult.status === "fulfilled") {
+    diagnostics.latestNonce = latestNonceResult.value;
+  } else {
+    diagnostics.latestNonceError = sanitizeBroadcastError(latestNonceResult.reason);
+  }
+
+  if (attestationResult.status === "fulfilled") {
+    diagnostics.processorAttested = Boolean(attestationResult.value);
+  } else {
+    diagnostics.attestationError = sanitizeBroadcastError(attestationResult.reason);
+  }
+
+  emitOperationalLog("processor_chain_diagnostics", diagnostics);
+  await emitTelemetry({
+    event: "processor_chain_diagnostics",
+    timestamp: Math.floor(Date.now() / 1000),
+    chainId: executionChainId,
+    userAddress: envUser,
+    ...diagnostics,
   });
 }
 
@@ -409,6 +536,15 @@ async function persistHarvestExecutionFailure(
   state.lastDecisionReason = processorNotAttested ? "processor_not_attested" : "harvest_submission_failed";
   state.suggestedNextCheckMs = processorNotAttested ? 10 * 60 * 1000 : 60_000;
   await saveState(CONFIG.statePath, state);
+
+  emitOperationalLog("harvest_submission_failed", {
+    reason: state.lastDecisionReason,
+    processorNotAttested,
+    apiFailureStreak: state.apiFailureStreak,
+    recommendedNextCheckMs: state.suggestedNextCheckMs,
+    message: errorDetails.message,
+    name: errorDetails.name,
+  }, "error");
 
   await emitTelemetry({
     event: "harvest_submission_failed",
@@ -986,6 +1122,21 @@ async function runOnce(): Promise<number | undefined> {
   let receipt: ethers.TransactionReceipt | null = null;
 
   try {
+    emitOperationalLog("harvest_submit_attempt", {
+      keeperAddress: CONFIG.keeperAddress,
+      targetPool: harvestParams.targetPool,
+      minLpOut: harvestParams.minLpOut,
+      amountToSwap: harvestParams.amountToSwap,
+      deadline: harvestParams.deadline,
+      routeCount: harvestParams.routes.length,
+      usedYieldFallback: yieldEstimateFailed,
+      usedFeeFallback: keeperOrFeeReadFailed,
+      dryRun: CONFIG.dryRun,
+      gasLimit: CONFIG.estGasUnits.toString(),
+      maxFeePerGas: maxFeePerGas.toString(),
+      maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+      signingMode: acurastStd ? "acurast_fulfill_attested_sender" : "local_private_key",
+    });
     await emitTelemetry({
       event: "harvest_submit_attempt",
       timestamp: nowSec,
@@ -1006,21 +1157,79 @@ async function runOnce(): Promise<number | undefined> {
 
     if (acurastStd) {
       const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
-      const submitted = await fulfillEthereumHarvest(acurastStd, {
-        rpcUrl: CONFIG.rpcUrl,
+      await emitProcessorChainDiagnostics(executionProvider, hwAddress, CONFIG.keeperAddress, executionChainId, envUser);
+
+      const broadcastContext = {
+        payloadHash: harvestPayloadHash,
         keeperAddress: CONFIG.keeperAddress,
-        nonce: harvestParams.nonce,
-        targetPool: CONFIG.poolAddress,
-        minLpOut: harvestParams.minLpOut,
-        amountToSwap: harvestParams.amountToSwap,
-        deadline: harvestParams.deadline,
-        routes,
+        processorAddress: hwAddress,
+        rpcUrlHost: rpcUrlHost(CONFIG.rpcUrl),
         gasLimit: CONFIG.estGasUnits.toString(),
         maxFeePerGas: maxFeePerGas.toString(),
         maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+        signingMode: "acurast_fulfill_attested_sender",
+      };
+      emitOperationalLog("broadcast_start", broadcastContext);
+      await emitTelemetry({
+        event: "broadcast_start",
+        timestamp: Math.floor(Date.now() / 1000),
+        chainId: executionChainId,
+        userAddress: envUser,
+        ...broadcastContext,
       });
+
+      let submitted: Awaited<ReturnType<typeof fulfillEthereumHarvest>>;
+      try {
+        submitted = await fulfillEthereumHarvest(acurastStd, {
+          rpcUrl: CONFIG.rpcUrl,
+          keeperAddress: CONFIG.keeperAddress,
+          nonce: harvestParams.nonce,
+          targetPool: CONFIG.poolAddress,
+          minLpOut: harvestParams.minLpOut,
+          amountToSwap: harvestParams.amountToSwap,
+          deadline: harvestParams.deadline,
+          routes,
+          gasLimit: CONFIG.estGasUnits.toString(),
+          maxFeePerGas: maxFeePerGas.toString(),
+          maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+        });
+      } catch (broadcastError) {
+        const sanitizedError = sanitizeBroadcastError(broadcastError);
+        emitOperationalLog("broadcast_error", {
+          ...broadcastContext,
+          ...sanitizedError,
+        }, "error");
+        await emitTelemetry({
+          event: "broadcast_error",
+          timestamp: Math.floor(Date.now() / 1000),
+          chainId: executionChainId,
+          userAddress: envUser,
+          ...broadcastContext,
+          ...sanitizedError,
+        });
+        throw broadcastError;
+      }
       txHash = submitted.hash;
 
+      emitOperationalLog("broadcast_result", {
+        ...broadcastContext,
+        txHash,
+      });
+      await emitTelemetry({
+        event: "broadcast_result",
+        timestamp: Math.floor(Date.now() / 1000),
+        txHash,
+        chainId: executionChainId,
+        userAddress: envUser,
+        ...broadcastContext,
+      });
+
+      emitOperationalLog("harvest_submitted", {
+        txHash,
+        payloadHash: harvestPayloadHash,
+        signingMode: "acurast_fulfill_attested_sender",
+        processorAddress: hwAddress,
+      });
       await emitTelemetry({
         event: "harvest_submitted",
         timestamp: nowSec,
@@ -1035,6 +1244,10 @@ async function runOnce(): Promise<number | undefined> {
         state.lastRunAt = nowSec;
         state.suggestedNextCheckMs = 10 * 60 * 1000;
         await saveState(CONFIG.statePath, state);
+        emitOperationalLog("harvest_receipt_wait_skipped", {
+          txHash,
+          reason: "WAIT_FOR_HARVEST_RECEIPT_not_true",
+        });
         await emitTelemetry({
           event: "harvest_receipt_wait_skipped",
           timestamp: Math.floor(Date.now() / 1000),
@@ -1092,6 +1305,22 @@ async function runOnce(): Promise<number | undefined> {
       }
 
       let tx;
+      const broadcastContext = {
+        payloadHash: harvestPayloadHash,
+        keeperAddress: CONFIG.keeperAddress,
+        processorAddress: wallet.address,
+        rpcUrlHost: rpcUrlHost(CONFIG.rpcUrl),
+        gasLimit: CONFIG.estGasUnits.toString(),
+        signingMode: "local_private_key",
+      };
+      emitOperationalLog("broadcast_start", broadcastContext);
+      await emitTelemetry({
+        event: "broadcast_start",
+        timestamp: Math.floor(Date.now() / 1000),
+        chainId: executionChainId,
+        userAddress: envUser,
+        ...broadcastContext,
+      });
       try {
         const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
         tx = await keeperWrite.executeHarvest(
@@ -1104,9 +1333,39 @@ async function runOnce(): Promise<number | undefined> {
           { gasLimit: CONFIG.estGasUnits }
         );
       } catch (error: any) {
+        const sanitizedError = sanitizeBroadcastError(error);
+        emitOperationalLog("broadcast_error", {
+          ...broadcastContext,
+          ...sanitizedError,
+        }, "error");
+        await emitTelemetry({
+          event: "broadcast_error",
+          timestamp: Math.floor(Date.now() / 1000),
+          chainId: executionChainId,
+          userAddress: envUser,
+          ...broadcastContext,
+          ...sanitizedError,
+        });
         throw error;
       }
       txHash = tx.hash;
+      emitOperationalLog("broadcast_result", {
+        ...broadcastContext,
+        txHash,
+      });
+      await emitTelemetry({
+        event: "broadcast_result",
+        timestamp: Math.floor(Date.now() / 1000),
+        txHash,
+        chainId: executionChainId,
+        userAddress: envUser,
+        ...broadcastContext,
+      });
+      emitOperationalLog("harvest_submitted", {
+        txHash,
+        payloadHash: harvestPayloadHash,
+        signingMode: "local_private_key",
+      });
       await emitTelemetry({
         event: "harvest_submitted",
         timestamp: nowSec,
@@ -1120,6 +1379,10 @@ async function runOnce(): Promise<number | undefined> {
         state.lastRunAt = nowSec;
         state.suggestedNextCheckMs = 10 * 60 * 1000;
         await saveState(CONFIG.statePath, state);
+        emitOperationalLog("harvest_receipt_wait_skipped", {
+          txHash,
+          reason: "WAIT_FOR_HARVEST_RECEIPT_not_true",
+        });
         await emitTelemetry({
           event: "harvest_receipt_wait_skipped",
           timestamp: Math.floor(Date.now() / 1000),
@@ -1170,6 +1433,13 @@ async function runOnce(): Promise<number | undefined> {
   state.lastDecisionReason = "executed";
   await saveState(CONFIG.statePath, state);
 
+  emitOperationalLog("harvest_confirmed", {
+    txHash,
+    profitCreditedUsd: receiptProof.profitCreditedUsd,
+    profitCreditedRaw: receiptProof.profitCreditedRaw,
+    blockNumber: receiptProof.blockNumber,
+  });
+
   await emitTelemetry({
     event: "harvest_confirmed",
     timestamp: Math.floor(Date.now() / 1000),
@@ -1193,6 +1463,7 @@ async function persistRuntimeError(error: unknown): Promise<void> {
   state.lastDecisionReason = "runtime_error";
   state.suggestedNextCheckMs = 60_000;
   await saveState(CONFIG.statePath, state);
+  emitOperationalLog("runtime_error", serialiseError(error), "error");
   await emitTelemetry({
     event: "runtime_error",
     timestamp: state.lastRunAt,
@@ -1209,6 +1480,15 @@ async function emitProcessorCycleComplete(
   status: "ok" | "error"
 ): Promise<void> {
   const state = await loadState(CONFIG.statePath);
+  emitOperationalLog("processor_cycle_complete", {
+    phase: "cycle_complete",
+    status,
+    cycle,
+    uptimeMs: Date.now() - processStartedAtMs,
+    nextDelayMs,
+    lastDecisionReason: state.lastDecisionReason,
+    apiFailureStreak: state.apiFailureStreak,
+  }, status === "error" ? "error" : "info");
   await emitTelemetry({
     event: "processor_cycle_complete",
     timestamp: Math.floor(Date.now() / 1000),
@@ -1244,10 +1524,26 @@ async function start(): Promise<void> {
       : nextSupervisorDelayMs(state);
 
     await emitProcessorCycleComplete(1, processStartedAtMs, nextDelayMs, status);
-    await flushTelemetry().catch(() => { });
+    try {
+      const flushResult = await flushTelemetry();
+      const flushSucceeded = flushResult.status === "sent" || flushResult.status === "skipped_empty";
+      emitOperationalLog(
+        "telemetry_flush_complete",
+        { ...flushResult },
+        flushSucceeded ? "info" : "error"
+      );
+    } catch (flushError) {
+      emitOperationalLog("telemetry_flush_complete", {
+        status: "exception",
+        ...serialiseError(flushError),
+      }, "error");
+    }
     
     // Explicitly exit with 0 to prevent Acurast from immediate reboot on expected errors
     console.log(`[TERMINAL] Cycle complete (${status}). Exiting.`);
+    if (FINAL_LOG_DRAIN_MS > 0) {
+      await sleep(FINAL_LOG_DRAIN_MS);
+    }
     process.exit(0);
   }
 }
