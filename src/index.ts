@@ -639,9 +639,10 @@ async function runOnce(): Promise<number | undefined> {
         waitMs: recentRun.waitMs,
         intervalMs: recentRun.intervalMs,
         reason: "cooldown_guard",
-        bestEffortSubmissionContinues: true,
+        bestEffortSubmissionContinues: false,
         hasAcurastStd: Boolean(getAcurastStd()),
       });
+      return recentRun.waitMs;
     }
   }
 
@@ -949,6 +950,32 @@ async function runOnce(): Promise<number | undefined> {
         }
         return 0n;
       })();
+
+      // CONTRACT COOLDOWN SAFETY GUARD
+      const MIN_HARVEST_INTERVAL = 45 * 60; // 45 minutes
+      const timeSinceLastHarvest = nowSec - Number(lastHarvest);
+      if (timeSinceLastHarvest < MIN_HARVEST_INTERVAL && !CONFIG.forceTestHarvest) {
+        const remaining = MIN_HARVEST_INTERVAL - timeSinceLastHarvest;
+        state.lastDecisionReason = "contract_cooldown_active";
+        state.lastRunAt = nowSec;
+        state.suggestedNextCheckMs = remaining * 1000;
+        await saveState(CONFIG.statePath, state);
+        
+        emitOperationalLog("harvest_skipped_cooldown", {
+          lastHarvest: Number(lastHarvest),
+          timeSinceLastHarvest,
+          remainingCooldown: remaining,
+        });
+        await emitTelemetry({
+          event: "harvest_skipped_cooldown",
+          timestamp: nowSec,
+          lastHarvest: Number(lastHarvest),
+          timeSinceLastHarvest,
+          remainingCooldown: remaining,
+          chainId: executionChainId,
+        });
+        return remaining * 1000;
+      }
     }
   } catch (error: any) {
     keeperOrFeeReadFailed = true;

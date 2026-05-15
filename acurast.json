@@ -4,14 +4,14 @@
       "projectName": "YieldSense",
       "fileUrl": "dist/index.bundle.cjs",
       "network": "mainnet",
-      "onlyAttestedDevices": false,
+      "onlyAttestedDevices": true,
       "assignmentStrategy": {
         "type": "Single"
       },
       "execution": {
         "type": "interval",
         "intervalInMs": 3600000,
-        "numberOfExecutions": 20
+        "numberOfExecutions": 200
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -22,7 +22,7 @@
       "numberOfReplicas": 1,
       "requiredModules": [],
       "minProcessorReputation": 0,
-      "maxCostPerExecution": 15500000000,
+      "maxCostPerExecution": 5500000000,
       "includeEnvironmentVariables": [],
       "processorWhitelist": []
     },
