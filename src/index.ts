@@ -9,7 +9,9 @@ import {
 // adds ~150KB of dotenvx to the bundle.
 import { evaluateDecision } from "./decisionEngine.js";
 import { getRobustYieldEstimate } from "./yieldEngine/getRobustYieldEstimate.js";
+import { apiSingleSourceApr } from "./yieldEngine/legacy/apiFallback.js";
 import type { FallbackMode, YieldEstimateRequest } from "./yieldEngine/types.js";
+import type { SingleAprSourceName } from "./realtimeApr.js";
 import { loadState, saveState } from "./runtimeState.js";
 import { buildHarvestPayloadHash, type HarvestParams, type Route } from "./signature.js";
 import {
@@ -18,6 +20,12 @@ import {
 } from "./acurastHardware.js";
 import { emitTelemetry, flushTelemetry } from "./telemetry.js";
 import { monitorAndExecuteGrid } from "./processor.js";
+import {
+  getAcurastPaymasterSmartAccountAddress,
+  getPaymasterOwnerMode,
+  getPaymasterRpcUrl,
+  submitHarvestWithBasePaymaster,
+} from "./paymaster.js";
 import { createJsonRpcProvider } from "./rpcProvider.js";
 import {
   calculateRecentRunSkip,
@@ -25,6 +33,20 @@ import {
   isProcessorNotAttestedError,
   serialiseError,
 } from "./processorSupervisor.js";
+
+type FastYieldMode = "api" | "skip";
+
+function normaliseFastYieldMode(value: string | undefined): FastYieldMode {
+  return value?.toLowerCase() === "skip" ? "skip" : "api";
+}
+
+function normaliseFastYieldSource(value: string | undefined): SingleAprSourceName {
+  const normalized = value?.toLowerCase();
+  if (normalized === "dexscreener" || normalized === "dex_screener") {
+    return "dexScreener";
+  }
+  return "geckoTerminal";
+}
 
 const CONFIG = {
   /**
@@ -122,6 +144,9 @@ const CONFIG = {
   executionBudgetMs: Number(process.env.PROCESSOR_EXECUTION_BUDGET_MS ?? 50_000),
   executionShutdownGraceMs: Number(process.env.PROCESSOR_SHUTDOWN_GRACE_MS ?? 8_000),
   acurastFastSubmit: process.env.ACURAST_FAST_SUBMIT !== "false",
+  acurastFastYieldMode: normaliseFastYieldMode(process.env.ACURAST_FAST_YIELD_MODE),
+  acurastFastYieldSource: normaliseFastYieldSource(process.env.ACURAST_FAST_YIELD_SOURCE),
+  acurastFastYieldTimeoutMs: Number(process.env.ACURAST_FAST_YIELD_TIMEOUT_MS ?? process.env.APR_API_TIMEOUT_MS ?? 3_500),
   acurastUseFallbackFees: process.env.ACURAST_USE_FALLBACK_FEES !== "false",
   waitForHarvestReceipt: process.env.WAIT_FOR_HARVEST_RECEIPT === "true",
 };
@@ -371,7 +396,15 @@ interface HarvestReceiptProof {
   blockNumber: number;
 }
 
-function parseHarvestReceiptProof(receipt: ethers.TransactionReceipt): HarvestReceiptProof {
+type HarvestReceiptLike = {
+  logs: readonly {
+    topics: readonly string[];
+    data: string;
+  }[];
+  blockNumber: number | bigint;
+};
+
+function parseHarvestReceiptProof(receipt: HarvestReceiptLike): HarvestReceiptProof {
   let profitCredited = 0n;
   let rewardClaimed: bigint | undefined;
   let profitUsdc: bigint | undefined;
@@ -381,7 +414,7 @@ function parseHarvestReceiptProof(receipt: ethers.TransactionReceipt): HarvestRe
   for (const log of receipt.logs) {
     for (const iface of HARVEST_AUDIT_IFACES) {
       try {
-        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
         if (!parsed) continue;
 
         if (parsed.name === "HarvestExecuted") {
@@ -408,7 +441,7 @@ function parseHarvestReceiptProof(receipt: ethers.TransactionReceipt): HarvestRe
     profitUsdcRaw: profitUsdc?.toString(),
     lpAddedRaw: lpAdded?.toString(),
     profitPulledRaw: profitPulled?.toString(),
-    blockNumber: receipt.blockNumber,
+    blockNumber: Number(receipt.blockNumber),
   };
 }
 
@@ -653,6 +686,9 @@ async function runOnce(): Promise<number | undefined> {
     paymasterDiscoveryOnly: CONFIG.paymasterDiscoveryOnly,
     startupRpcProbe: CONFIG.startupRpcProbe,
     acurastFastSubmit: CONFIG.acurastFastSubmit,
+    acurastFastYieldMode: CONFIG.acurastFastYieldMode,
+    acurastFastYieldSource: CONFIG.acurastFastYieldSource,
+    acurastFastYieldTimeoutMs: CONFIG.acurastFastYieldTimeoutMs,
     acurastUseFallbackFees: CONFIG.acurastUseFallbackFees,
     waitForHarvestReceipt: CONFIG.waitForHarvestReceipt,
     userAddress: envUser,
@@ -740,16 +776,75 @@ async function runOnce(): Promise<number | undefined> {
   let yieldResult;
   let yieldEstimateFailed = false;
   if (fastSubmitMode) {
-    yieldEstimateFailed = true;
-    yieldResult = fallbackYieldResult("acurast_fast_submit");
-    await emitTelemetry({
-      event: "yield_estimate_skipped",
-      timestamp: nowSec,
-      reason: "acurast_fast_submit",
-      note: "Skipping RPC-heavy yield indexing; best-effort harvest submission continues.",
-      chainId: executionChainId,
-      userAddress: envUser,
-    });
+    if (CONFIG.acurastFastYieldMode === "api") {
+      try {
+        const fastYieldTimeoutMs = remainingExecutionTimeoutMs(
+          startedAtMs,
+          CONFIG.acurastFastYieldTimeoutMs
+        );
+        const request = buildYieldRequest(yieldChainId, CONFIG.poolAddress);
+        const fastApr = await withTimeout(
+          apiSingleSourceApr(
+            request.apiPoolAddress ?? request.poolAddress,
+            request.aprFreshnessWindowSec,
+            request.minApiConfidence,
+            request.apyCompoundPeriodsPerYear ?? 365,
+            CONFIG.acurastFastYieldSource
+          ),
+          fastYieldTimeoutMs,
+          "fast API yield estimate"
+        );
+
+        if (!fastApr) {
+          throw new Error(`Fast API APR unavailable from ${CONFIG.acurastFastYieldSource}`);
+        }
+
+        yieldResult = {
+          estimate: fastApr.estimate,
+          indexerCheckpointBlock: state.yieldIndexerCheckpointBlock ?? 0,
+          rewardAprEwmNext: state.rewardAprEwm ?? null,
+        };
+      } catch (error: any) {
+        yieldEstimateFailed = true;
+        yieldResult = fallbackYieldResult("acurast_fast_api_unavailable");
+        await emitTelemetry({
+          event: "yield_estimate_failed",
+          timestamp: Math.floor(Date.now() / 1000),
+          reason: "acurast_fast_api_unavailable",
+          source: CONFIG.acurastFastYieldSource,
+          message: error?.message ?? String(error),
+          name: error?.name,
+          chainId: executionChainId,
+          userAddress: envUser,
+        });
+      }
+
+      await emitTelemetry({
+        event: "yield_estimate_complete",
+        timestamp: Math.floor(Date.now() / 1000),
+        mode: "fast_api",
+        source: CONFIG.acurastFastYieldSource,
+        fallback: yieldEstimateFailed,
+        usable: yieldResult.estimate.usable,
+        confidence: yieldResult.estimate.confidence,
+        apr: yieldResult.estimate.totalApr,
+        estimatedApy: yieldResult.estimate.estimatedApy,
+        sources: yieldResult.estimate.dataSourcesUsed,
+        chainId: executionChainId,
+        userAddress: envUser,
+      });
+    } else {
+      yieldEstimateFailed = true;
+      yieldResult = fallbackYieldResult("acurast_fast_submit");
+      await emitTelemetry({
+        event: "yield_estimate_skipped",
+        timestamp: nowSec,
+        reason: "acurast_fast_submit",
+        note: "Skipping RPC-heavy yield indexing; best-effort harvest submission continues.",
+        chainId: executionChainId,
+        userAddress: envUser,
+      });
+    }
   } else if (CONFIG.forceTestHarvest) {
     yieldResult = {
       estimate: { usable: true, totalApr: 0.1, feeApr: 0.05, rewardApr: 0.05, confidence: 1, dataSourcesUsed: [], diagnostics: {}, estimatedApy: 0.1, forwardAprEstimate: null },
@@ -1119,7 +1214,7 @@ async function runOnce(): Promise<number | undefined> {
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? FALLBACK_MAX_PRIORITY_FEE_PER_GAS;
 
   let txHash = "";
-  let receipt: ethers.TransactionReceipt | null = null;
+  let receipt: HarvestReceiptLike | null = null;
 
   try {
     emitOperationalLog("harvest_submit_attempt", {
@@ -1159,6 +1254,126 @@ async function runOnce(): Promise<number | undefined> {
       const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
       await emitProcessorChainDiagnostics(executionProvider, hwAddress, CONFIG.keeperAddress, executionChainId, envUser);
 
+      if (CONFIG.gasSponsorMode === "paymaster") {
+        const paymasterRpcUrl = getPaymasterRpcUrl();
+        if (!paymasterRpcUrl) {
+          throw new Error("BASE_PAYMASTER_RPC_URL or PAYMASTER_RPC_URL is required when GAS_SPONSOR_MODE=paymaster.");
+        }
+
+        const smartAccountAddress = await getAcurastPaymasterSmartAccountAddress({
+          rpcUrl: CONFIG.rpcUrl,
+          std: acurastStd,
+        });
+        const paymasterContext = {
+          payloadHash: harvestPayloadHash,
+          keeperAddress: CONFIG.keeperAddress,
+          hardwareProcessorAddress: hwAddress,
+          smartAccountAddress,
+          paymasterOwnerMode: getPaymasterOwnerMode(),
+          rpcUrlHost: rpcUrlHost(CONFIG.rpcUrl),
+          paymasterRpcHost: rpcUrlHost(paymasterRpcUrl),
+          signingMode: "coinbase_smart_account_paymaster",
+        };
+
+        emitOperationalLog("paymaster_smart_account_report", {
+          ...paymasterContext,
+          note: "Attest this smartAccountAddress via ownerAttestProcessor before disabling PAYMASTER_DISCOVERY_ONLY.",
+        });
+        await emitTelemetry({
+          event: "paymaster_smart_account_report",
+          timestamp: Math.floor(Date.now() / 1000),
+          chainId: executionChainId,
+          userAddress: envUser,
+          ...paymasterContext,
+        });
+
+        if (CONFIG.paymasterDiscoveryOnly) {
+          state.lastDecisionReason = "paymaster_discovery_only";
+          state.lastRunAt = nowSec;
+          state.suggestedNextCheckMs = 10 * 60 * 1000;
+          await saveState(CONFIG.statePath, state);
+          return;
+        }
+
+        emitOperationalLog("paymaster_userop_submit_start", paymasterContext);
+        await emitTelemetry({
+          event: "paymaster_userop_submit_start",
+          timestamp: Math.floor(Date.now() / 1000),
+          chainId: executionChainId,
+          userAddress: envUser,
+          ...paymasterContext,
+        });
+
+        try {
+          const sponsored = await submitHarvestWithBasePaymaster({
+            std: acurastStd,
+            rpcUrl: CONFIG.rpcUrl,
+            paymasterRpcUrl,
+            keeperAddress: CONFIG.keeperAddress,
+            nonce: harvestParams.nonce,
+            targetPool: harvestParams.targetPool,
+            minLpOut: harvestParams.minLpOut,
+            amountToSwap: harvestParams.amountToSwap,
+            deadline: harvestParams.deadline,
+            routes,
+          });
+
+          txHash = sponsored.hash;
+          receipt = sponsored.receipt;
+
+          emitOperationalLog("paymaster_userop_confirmed", {
+            ...paymasterContext,
+            userOpHash: sponsored.userOpHash,
+            txHash,
+            blockNumber: Number(sponsored.receipt.blockNumber),
+          });
+          await emitTelemetry({
+            event: "paymaster_userop_confirmed",
+            timestamp: Math.floor(Date.now() / 1000),
+            chainId: executionChainId,
+            userAddress: envUser,
+            ...paymasterContext,
+            userOpHash: sponsored.userOpHash,
+            txHash,
+            blockNumber: Number(sponsored.receipt.blockNumber),
+          });
+
+          emitOperationalLog("harvest_submitted", {
+            txHash,
+            payloadHash: harvestPayloadHash,
+            signingMode: "coinbase_smart_account_paymaster",
+            processorAddress: smartAccountAddress,
+            hardwareProcessorAddress: hwAddress,
+            userOpHash: sponsored.userOpHash,
+          });
+          await emitTelemetry({
+            event: "harvest_submitted",
+            timestamp: nowSec,
+            txHash,
+            payloadHash: harvestPayloadHash,
+            signingMode: "coinbase_smart_account_paymaster",
+            processorAddress: smartAccountAddress,
+            hardwareProcessorAddress: hwAddress,
+            userOpHash: sponsored.userOpHash,
+            ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
+          });
+        } catch (paymasterError) {
+          const sanitizedError = sanitizeBroadcastError(paymasterError);
+          emitOperationalLog("paymaster_userop_failed", {
+            ...paymasterContext,
+            ...sanitizedError,
+          }, "error");
+          await emitTelemetry({
+            event: "paymaster_userop_failed",
+            timestamp: Math.floor(Date.now() / 1000),
+            chainId: executionChainId,
+            userAddress: envUser,
+            ...paymasterContext,
+            ...sanitizedError,
+          });
+          throw paymasterError;
+        }
+      } else {
       const broadcastContext = {
         payloadHash: harvestPayloadHash,
         keeperAddress: CONFIG.keeperAddress,
@@ -1276,6 +1491,7 @@ async function runOnce(): Promise<number | undefined> {
           ...serialiseError(receiptError),
         });
         return;
+      }
       }
     } else {
       const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;

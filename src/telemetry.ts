@@ -33,11 +33,75 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 let telemetryBuffer: TelemetryEvent[] = [];
 
+type TelemetryDetail = "essential" | "standard" | "debug";
+
+const STANDARD_SUPPRESSED_EVENTS = new Set([
+  "rpc_transport",
+  "apr_api_source",
+  "worker_stage",
+  "grid_check_skipped",
+  "yield_estimate_skipped",
+  "fee_data_skipped",
+  "harvest_gate_overridden",
+  "processor_chain_diagnostics",
+  "broadcast_start",
+  "broadcast_result",
+]);
+
+const ESSENTIAL_EVENTS = new Set([
+  "processor_boot",
+  "hw_address_report",
+  "harvest_submit_attempt",
+  "harvest_submitted",
+  "harvest_submission_failed",
+  "harvest_confirmed",
+  "harvest_receipt_wait_skipped",
+  "processor_cycle_complete",
+  "runtime_error",
+  "broadcast_error",
+]);
+
+function telemetryDetail(): TelemetryDetail {
+  const value = (process.env.TELEMETRY_DETAIL || (globalThis as any).__ENV__?.TELEMETRY_DETAIL || "standard").toLowerCase();
+  if (value === "debug" || value === "essential") return value;
+  return "standard";
+}
+
+function shouldEmitTelemetry(event: TelemetryEvent): boolean {
+  const detail = telemetryDetail();
+  if (detail === "debug") return true;
+
+  if (event.event.includes("error") || event.event.includes("failed")) {
+    return true;
+  }
+
+  if (detail === "essential") {
+    return ESSENTIAL_EVENTS.has(event.event);
+  }
+
+  if (STANDARD_SUPPRESSED_EVENTS.has(event.event)) {
+    return false;
+  }
+
+  if (
+    event.event === "profitability_check" &&
+    typeof event.diagnostics === "object" &&
+    event.diagnostics !== null &&
+    (event.diagnostics as { fallbackReason?: unknown }).fallbackReason === "acurast_fast_submit"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Buffers a telemetry event for later batch transmission.
  * Events are also written to stdout immediately for Acurast console diagnostics.
  */
 export async function emitTelemetry(event: TelemetryEvent, immediate: boolean = false): Promise<void> {
+  if (!shouldEmitTelemetry(event)) return;
+
   const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   if (!event.userAddress) {
     event.userAddress = envUser;

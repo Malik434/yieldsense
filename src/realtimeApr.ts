@@ -2,6 +2,7 @@
 import { emitTelemetry } from "./telemetry.js";
 
 export type AprSourceName = "geckoTerminal" | "dexScreener" | "defiLlama";
+export type SingleAprSourceName = Exclude<AprSourceName, "defiLlama">;
 
 export interface AprObservation {
   source: AprSourceName;
@@ -262,4 +263,18 @@ export async function getRealtimeAprConsensus(
     fetchDefiLlama(poolAddress),
   ]);
   return buildAprConsensus(observations, freshnessWindowSec, minConfidence);
+}
+
+export async function getRealtimeAprFromSingleSource(
+  source: SingleAprSourceName,
+  poolAddress: string,
+  freshnessWindowSec: number,
+  minConfidence: number
+): Promise<AprConsensus> {
+  const observation =
+    source === "dexScreener"
+      ? await fetchDexScreener(poolAddress)
+      : await fetchGecko(poolAddress);
+
+  return buildAprConsensus([observation], freshnessWindowSec, minConfidence);
 }

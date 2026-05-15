@@ -2,12 +2,20 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {
+    ERC4626
+} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    MessageHashUtils
+} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -20,9 +28,18 @@ struct Route {
 }
 
 interface IAerodromeAutocompounder {
-    function harvestAndCompound(uint256 minLpOut, uint256 amountToSwap, uint256 deadline, Route[] calldata routes) external;
+    function harvestAndCompound(
+        uint256 minLpOut,
+        uint256 amountToSwap,
+        uint256 deadline,
+        Route[] calldata routes
+    ) external;
     function pullProfit(uint256 amount) external;
-    function depositIntoPool(uint256 usdcAmount, uint256 amountToSwap, uint256 minLpOut) external;
+    function depositIntoPool(
+        uint256 usdcAmount,
+        uint256 amountToSwap,
+        uint256 minLpOut
+    ) external;
     function pendingProfit() external view returns (uint256);
     function getDeployedValueInUSDC() external view returns (uint256);
     function unwindLp(uint256 lpAmount) external returns (uint256 usdcUnwound);
@@ -94,10 +111,23 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      * @notice Records a TEE-signed trade proof on-chain for auditability.
      * @dev pnlDelta is in 6-decimal precision (USDC units).
      */
-    event TradeExecuted(address indexed user, int256 pnlDelta, uint256 nonce, bytes32 indexed digest);
-    event HarvestExecuted(address indexed processor, uint256 indexed nonce, uint256 profitCredited);
+    event TradeExecuted(
+        address indexed user,
+        int256 pnlDelta,
+        uint256 nonce,
+        bytes32 indexed digest
+    );
+    event HarvestExecuted(
+        address indexed processor,
+        uint256 indexed nonce,
+        uint256 profitCredited
+    );
     event PoolDeployed(uint256 usdcAmount, uint256 minLpOut);
-    event UpdateInitiated(bytes32 indexed key, address indexed newValue, uint256 effectiveTime);
+    event UpdateInitiated(
+        bytes32 indexed key,
+        address indexed newValue,
+        uint256 effectiveTime
+    );
     event UpdateApplied(bytes32 indexed key, address indexed newValue);
     event ProcessorAttested(address indexed processor, bytes32 certHash);
     event ProcessorAssigned(address indexed user, address indexed processor);
@@ -134,8 +164,16 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         address _yieldSource,
         address _counterparty,
         address _autocompounder
-    ) ERC4626(IERC20(_asset)) ERC20("YieldSense Vault", "ysUSDC") Ownable(msg.sender) {
-        if (_asset == address(0) || _yieldSource == address(0) || _counterparty == address(0)) revert InvalidAddress();
+    )
+        ERC4626(IERC20(_asset))
+        ERC20("YieldSense Vault", "ysUSDC")
+        Ownable(msg.sender)
+    {
+        if (
+            _asset == address(0) ||
+            _yieldSource == address(0) ||
+            _counterparty == address(0)
+        ) revert InvalidAddress();
         feeRecipient = msg.sender;
         yieldSource = _yieldSource;
         counterparty = _counterparty;
@@ -145,7 +183,9 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (_autocompounder != address(0)) {
             autocompounder = IAerodromeAutocompounder(_autocompounder);
             // Seed route allowlists from the configured autocompounder
-            allowedRouteFactory[IAerodromeAutocompounder(_autocompounder).factory()] = true;
+            allowedRouteFactory[
+                IAerodromeAutocompounder(_autocompounder).factory()
+            ] = true;
             allowedRouteToken[_asset] = true;
             allowedRouteToken[_yieldSource] = true;
         }
@@ -172,14 +212,20 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     }
 
     /// @notice Adds or removes a token from the harvest route allowlist.
-    function setAllowedRouteToken(address token, bool allowed) external onlyOwner {
+    function setAllowedRouteToken(
+        address token,
+        bool allowed
+    ) external onlyOwner {
         if (token == address(0)) revert InvalidAddress();
         allowedRouteToken[token] = allowed;
         emit RouteTokenAllowlisted(token, allowed);
     }
 
     /// @notice Adds or removes a factory from the harvest route allowlist.
-    function setAllowedRouteFactory(address factory_, bool allowed) external onlyOwner {
+    function setAllowedRouteFactory(
+        address factory_,
+        bool allowed
+    ) external onlyOwner {
         if (factory_ == address(0)) revert InvalidAddress();
         allowedRouteFactory[factory_] = allowed;
         emit RouteFactoryAllowlisted(factory_, allowed);
@@ -219,20 +265,24 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      *         is incompatible with standard EIP-712 recovery. Use ownerAttestProcessor.
      */
     function attestProcessor(address, bytes32, bytes32, bytes32) external pure {
-        revert("Permissionless attestation disabled for MVP. Use ownerAttestProcessor.");
+        revert(
+            "Permissionless attestation disabled for MVP. Use ownerAttestProcessor."
+        );
     }
 
     /** @dev See {IERC4626-totalAssets}. */
-    function totalAssets() public view virtual override returns (uint256) {
-        uint256 keeperBal = IERC20(asset()).balanceOf(address(this));
-        uint256 strategyBal = address(autocompounder) != address(0) 
-            ? autocompounder.getDeployedValueInUSDC() 
-            : 0;
-        return keeperBal + strategyBal;
-    }
+    // function totalAssets() public view virtual override returns (uint256) {
+    //     uint256 keeperBal = IERC20(asset()).balanceOf(address(this));
+    //     uint256 strategyBal = address(autocompounder) != address(0)
+    //         ? autocompounder.getDeployedValueInUSDC()
+    //         : 0;
+    //     return keeperBal + strategyBal;
+    // }
 
     /** @dev See {IERC4626-maxDeposit}. */
-    function maxDeposit(address) public view virtual override returns (uint256) {
+    function maxDeposit(
+        address
+    ) public view virtual override returns (uint256) {
         if (paused()) return 0;
         uint256 total = totalAssets();
         if (total >= maxTotalAssets) return 0;
@@ -262,7 +312,8 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     function applyUpdate(bytes32 key) external onlyOwner {
         PendingAddress memory pending = pendingUpdates[key];
         if (pending.effectiveTime == 0) revert NoUpdatePending();
-        if (block.timestamp < pending.effectiveTime) revert TimelockNotExpired();
+        if (block.timestamp < pending.effectiveTime)
+            revert TimelockNotExpired();
 
         if (key == "yieldSource") yieldSource = pending.value;
         else if (key == "counterparty") counterparty = pending.value;
@@ -270,8 +321,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         else if (key == "processor") {
             attestedProcessors[pending.value] = true;
             emit ProcessorAttested(pending.value, bytes32(0));
-        }
-        else revert("Invalid Key");
+        } else revert("Invalid Key");
 
         delete pendingUpdates[key];
         emit UpdateApplied(key, pending.value);
@@ -303,16 +353,24 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (user == address(0)) revert InvalidAddress();
         _useNonce(user, nonce);
 
-        bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(this), user, pnlDelta, nonce));
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                block.chainid,
+                address(this),
+                user,
+                pnlDelta,
+                nonce
+            )
+        );
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         address recovered = ECDSA.recover(ethHash, signature);
 
         if (!attestedProcessors[recovered]) revert ProcessorNotAttested();
-        if (userProcessors[user] != recovered) revert ProcessorNotAssignedToUser();
+        if (userProcessors[user] != recovered)
+            revert ProcessorNotAssignedToUser();
 
         emit TradeExecuted(user, pnlDelta, nonce, digest);
     }
-
 
     /**
      * @notice Triggers a harvest+compound cycle. Only callable by an attested Acurast processor.
@@ -348,16 +406,25 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (usedHarvestNonces[nonce]) revert NonceAlreadyUsed();
         usedHarvestNonces[nonce] = true;
 
-        require(deadline <= block.timestamp + MAX_DEADLINE_WINDOW, "Deadline too far in future");
+        require(
+            deadline <= block.timestamp + MAX_DEADLINE_WINDOW,
+            "Deadline too far in future"
+        );
         require(block.timestamp <= deadline, "Stale quote");
         require(routes.length > 0, "Empty routes");
-        if (block.timestamp < lastHarvest + MIN_HARVEST_INTERVAL) revert HarvestTooFrequent();
+        if (block.timestamp < lastHarvest + MIN_HARVEST_INTERVAL)
+            revert HarvestTooFrequent();
 
         // Validate harvest routes against the configured strategy
         _validateHarvestRoutes(targetPool, routes);
 
         // Execute harvest — lastHarvest is set AFTER compound succeeds
-        autocompounder.harvestAndCompound(minLpOut, amountToSwap, deadline, routes);
+        autocompounder.harvestAndCompound(
+            minLpOut,
+            amountToSwap,
+            deadline,
+            routes
+        );
         lastHarvest = block.timestamp;
 
         uint256 profitCredited = 0;
@@ -366,13 +433,15 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (pending >= minHarvestProfitUsdc) {
             uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
             autocompounder.pullProfit(pending);
-            uint256 actualProfit = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
+            uint256 actualProfit = IERC20(asset()).balanceOf(address(this)) -
+                balanceBefore;
 
             if (actualProfit == 0) revert NoProfitReceived();
             profitCredited = actualProfit;
 
             // Performance fee: mint shares to feeRecipient backed by the fee portion
-            uint256 perfFee = (profitCredited * PERFORMANCE_FEE_BPS) / BPS_DENOMINATOR;
+            uint256 perfFee = (profitCredited * PERFORMANCE_FEE_BPS) /
+                BPS_DENOMINATOR;
             if (perfFee > 0) {
                 uint256 feeShares = previewDeposit(perfFee);
                 _mint(feeRecipient, feeShares);
@@ -390,11 +459,11 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      * @param amountToSwap Exact USDC to swap to the other pool token (TEE-calculated).
      * @param minLpOut     Minimum LP tokens to receive. MUST be non-zero on mainnet.
      */
-    function deployToPool(uint256 amount, uint256 amountToSwap, uint256 minLpOut)
-        external
-        nonReentrant
-        onlyOwner
-    {
+    function deployToPool(
+        uint256 amount,
+        uint256 amountToSwap,
+        uint256 minLpOut
+    ) external nonReentrant onlyOwner {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
         if (amount == 0) revert AmountZero();
         if (minLpOut == 0) revert AmountZero();
@@ -408,14 +477,18 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     /**
      * @notice Unwinds LP tokens from the autocompounder back to USDC to service withdrawals.
      */
-    function withdrawFromPool(uint256 lpAmount) external nonReentrant onlyOwner {
+    function withdrawFromPool(
+        uint256 lpAmount
+    ) external nonReentrant onlyOwner {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
         autocompounder.unwindLp(lpAmount);
     }
 
     function setAutocompounder(address newAutocompounder) external onlyOwner {
         if (newAutocompounder == address(0)) revert InvalidAddress();
-        IAerodromeAutocompounder ac = IAerodromeAutocompounder(newAutocompounder);
+        IAerodromeAutocompounder ac = IAerodromeAutocompounder(
+            newAutocompounder
+        );
         // Validate the new autocompounder matches this vault's asset and yield source
         if (ac.asset() != asset()) revert InvalidAddress();
         if (ac.rewardToken() != yieldSource) revert InvalidAddress();
@@ -463,46 +536,48 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     /**
      * @notice Enforce pause and flash loan block protection on standard ERC-4626 deposit/withdraw.
      */
-    function deposit(uint256 assets, address receiver)
-        public
-        override
-        whenNotPaused
-        returns (uint256)
-    {
-        if (totalAssets() + assets > maxTotalAssets) revert DepositCapExceeded();
+    function deposit(
+        uint256 assets,
+        address receiver
+    ) public override whenNotPaused returns (uint256) {
+        if (totalAssets() + assets > maxTotalAssets)
+            revert DepositCapExceeded();
         lastDepositBlock[receiver] = block.number;
         return super.deposit(assets, receiver);
     }
 
-    function mint(uint256 shares, address receiver)
-        public
-        override
-        whenNotPaused
-        returns (uint256)
-    {
+    function mint(
+        uint256 shares,
+        address receiver
+    ) public override whenNotPaused returns (uint256) {
         uint256 assets = previewMint(shares);
-        if (totalAssets() + assets > maxTotalAssets) revert DepositCapExceeded();
+        if (totalAssets() + assets > maxTotalAssets)
+            revert DepositCapExceeded();
         lastDepositBlock[receiver] = block.number;
         return super.mint(shares, receiver);
     }
 
-    function withdraw(uint256 assets, address receiver, address owner_)
-        public
-        override
-        whenNotPaused
-        returns (uint256)
-    {
-        require(block.number > lastDepositBlock[owner_], "Same block redemption not allowed");
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner_
+    ) public override whenNotPaused returns (uint256) {
+        require(
+            block.number > lastDepositBlock[owner_],
+            "Same block redemption not allowed"
+        );
         return super.withdraw(assets, receiver, owner_);
     }
 
-    function redeem(uint256 shares, address receiver, address owner_)
-        public
-        override
-        whenNotPaused
-        returns (uint256)
-    {
-        require(block.number > lastDepositBlock[owner_], "Same block redemption not allowed");
+    function redeem(
+        uint256 shares,
+        address receiver,
+        address owner_
+    ) public override whenNotPaused returns (uint256) {
+        require(
+            block.number > lastDepositBlock[owner_],
+            "Same block redemption not allowed"
+        );
         return super.redeem(shares, receiver, owner_);
     }
 
@@ -526,7 +601,9 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     /**
      * @notice Batch attest multiple Acurast processors in a single Safe transaction.
      */
-    function ownerAttestProcessors(address[] calldata processors) external onlyOwner {
+    function ownerAttestProcessors(
+        address[] calldata processors
+    ) external onlyOwner {
         for (uint256 i = 0; i < processors.length; i++) {
             if (processors[i] == address(0)) revert InvalidAddress();
             attestedProcessors[processors[i]] = true;
@@ -543,7 +620,9 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     /**
      * @notice Batch revoke multiple Acurast processors in a single Safe transaction.
      */
-    function ownerRevokeProcessors(address[] calldata processors) external onlyOwner {
+    function ownerRevokeProcessors(
+        address[] calldata processors
+    ) external onlyOwner {
         for (uint256 i = 0; i < processors.length; i++) {
             if (processors[i] == address(0)) revert InvalidAddress();
             attestedProcessors[processors[i]] = false;
@@ -556,7 +635,10 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      *         Enforces: correct pool, correct start/end tokens, route continuity,
      *         allowlisted factory, and allowlisted tokens.
      */
-    function _validateHarvestRoutes(address targetPool, Route[] calldata routes) internal view {
+    function _validateHarvestRoutes(
+        address targetPool,
+        Route[] calldata routes
+    ) internal view {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
 
         // Pool must match the configured Aerodrome strategy pool
@@ -571,14 +653,16 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
 
         for (uint256 i = 0; i < routes.length; i++) {
             // Each factory must be allowlisted
-            if (!allowedRouteFactory[routes[i].factory]) revert InvalidRouteFactory();
+            if (!allowedRouteFactory[routes[i].factory])
+                revert InvalidRouteFactory();
 
             // Each token in the route must be allowlisted
             if (!allowedRouteToken[routes[i].from]) revert InvalidRouteToken();
             if (!allowedRouteToken[routes[i].to]) revert InvalidRouteToken();
 
             // Continuity: each route hop must start where the previous ended
-            if (i > 0 && routes[i].from != routes[i - 1].to) revert InvalidRouteContinuity();
+            if (i > 0 && routes[i].from != routes[i - 1].to)
+                revert InvalidRouteContinuity();
         }
     }
 }

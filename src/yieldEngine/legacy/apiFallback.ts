@@ -1,4 +1,8 @@
-import { getRealtimeAprConsensus } from "../../realtimeApr.js";
+import {
+  getRealtimeAprConsensus,
+  getRealtimeAprFromSingleSource,
+  type SingleAprSourceName,
+} from "../../realtimeApr.js";
 import { findPoolByTokens } from "../ingestion/defiLlamaYields.js";
 import type { DataSourceTag, RobustYieldEstimate } from "../types.js";
 import { totalAprToApy } from "../compute/apy.js";
@@ -65,6 +69,39 @@ export async function apiFallbackTotalApr(
   }
 
   return null;
+}
+
+export async function apiSingleSourceApr(
+  poolAddress: string,
+  freshnessWindowSec: number,
+  minConfidence: number,
+  apyCompoundPeriodsPerYear: number,
+  source: SingleAprSourceName
+): Promise<{ estimate: RobustYieldEstimate; tags: DataSourceTag[] } | null> {
+  const consensus = await getRealtimeAprFromSingleSource(
+    source,
+    poolAddress,
+    freshnessWindowSec,
+    minConfidence
+  );
+
+  if (consensus.apr === null || consensus.apr <= 0) {
+    return null;
+  }
+
+  const tags = [source === "dexScreener" ? "api:dexscreener" : "api:gecko"] as DataSourceTag[];
+  return {
+    estimate: buildFallbackEstimate(
+      consensus.apr,
+      0,
+      0,
+      consensus.confidence * 0.85,
+      consensus.usable,
+      apyCompoundPeriodsPerYear,
+      tags
+    ),
+    tags,
+  };
 }
 
 /** Split API total into fee/reward for display only (unknown split). */

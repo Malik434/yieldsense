@@ -12,7 +12,7 @@ import {
 import { createBundlerClient, toCoinbaseSmartAccount } from "viem/account-abstraction";
 import { base } from "viem/chains";
 import type { TypedDataDefinition } from "viem";
-import type { LocalAccount } from "viem/accounts";
+import { privateKeyToAccount, type LocalAccount } from "viem/accounts";
 import { getAcurastStd, parseSecp256k1SignOutput, type AcurastStd } from "./acurastHardware.js";
 
 const EXECUTE_HARVEST_ABI = [
@@ -72,6 +72,18 @@ export function getPaymasterRpcUrl(): string | undefined {
   );
 }
 
+export function getPaymasterOwnerPrivateKey(): Hex | undefined {
+  const raw =
+    process.env.PAYMASTER_OWNER_PRIVATE_KEY?.trim() ||
+    (globalThis as any).__ENV__?.PAYMASTER_OWNER_PRIVATE_KEY;
+  if (!raw) return undefined;
+  return (raw.startsWith("0x") ? raw : `0x${raw}`) as Hex;
+}
+
+export function getPaymasterOwnerMode(): "stable_private_key" | "acurast_hardware_eoa" {
+  return getPaymasterOwnerPrivateKey() ? "stable_private_key" : "acurast_hardware_eoa";
+}
+
 export function createAcurastOwnerAccount(std: AcurastStd = getAcurastStd()!): LocalAccount<"acurast"> {
   if (!std) throw new Error("Acurast _STD_ is required for paymaster smart-account signing.");
 
@@ -96,6 +108,14 @@ export function createAcurastOwnerAccount(std: AcurastStd = getAcurastStd()!): L
   };
 }
 
+export function createPaymasterOwnerAccount(std?: AcurastStd): LocalAccount {
+  const stablePrivateKey = getPaymasterOwnerPrivateKey();
+  if (stablePrivateKey) {
+    return privateKeyToAccount(stablePrivateKey);
+  }
+  return createAcurastOwnerAccount(std);
+}
+
 export async function getAcurastPaymasterSmartAccountAddress(params: {
   rpcUrl: string;
   std?: AcurastStd;
@@ -106,7 +126,7 @@ export async function getAcurastPaymasterSmartAccountAddress(params: {
   });
   const account = await toCoinbaseSmartAccount({
     client: publicClient,
-    owners: [createAcurastOwnerAccount(params.std)],
+    owners: [createPaymasterOwnerAccount(params.std)],
     version: "1.1",
   });
   return account.address;
@@ -140,7 +160,7 @@ export async function submitHarvestWithBasePaymaster(params: {
   });
   const account = await toCoinbaseSmartAccount({
     client: publicClient,
-    owners: [createAcurastOwnerAccount(params.std)],
+    owners: [createPaymasterOwnerAccount(params.std)],
     version: "1.1",
   });
   const bundlerClient = createBundlerClient({
