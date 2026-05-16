@@ -80,6 +80,8 @@ export function isProcessorNotAttestedError(error: unknown): boolean {
   return candidates.some((value) =>
     value.includes(PROCESSOR_NOT_ATTESTED_SELECTOR) ||
     value.includes("ProcessorNotAttested") ||
-    value.includes("NotAttestedProcessor")
+    value.includes("NotAttestedProcessor") ||
+    value.includes("Execution reverted") ||
+    value.includes("unknown reason")
   );
 }
