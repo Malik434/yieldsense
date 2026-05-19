@@ -12,6 +12,9 @@ export const metadata: Metadata = {
     description: "Your strategy. Encrypted. Verified by hardware.",
     type: "website",
   },
+  other: {
+    "base:app_id": "69f692b1ffffb1a0ba553eff",
+  },
 };
 
 export default function RootLayout({
