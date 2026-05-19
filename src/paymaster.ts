@@ -13,7 +13,7 @@ import { createBundlerClient, toCoinbaseSmartAccount } from "viem/account-abstra
 import { base } from "viem/chains";
 import type { TypedDataDefinition } from "viem";
 import { privateKeyToAccount, type LocalAccount } from "viem/accounts";
-import { getAcurastStd, parseSecp256k1SignOutput, type AcurastStd } from "./acurastHardware.js";
+import { getAcurastStd, parseSecp256k1SignOutput, type AcurastStd, BUILDER_CODE_SUFFIX } from "./acurastHardware.js";
 
 const EXECUTE_HARVEST_ABI = [
   {
@@ -190,13 +190,15 @@ export async function submitHarvestWithBasePaymaster(params: {
     ],
   });
 
+  const dataWithSuffix = `${data}${BUILDER_CODE_SUFFIX.replace(/^0x/, "")}` as Hex;
+
   const userOpHash = await bundlerClient.sendUserOperation({
     account,
     calls: [
       {
         to: ethers.getAddress(params.keeperAddress) as Address,
         value: 0n,
-        data,
+        data: dataWithSuffix,
       },
     ],
   });

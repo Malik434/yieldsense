@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
-import { ERC20_ABI, KEEPER_ABI } from '@/lib/contracts';
+import { ERC20_ABI, KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { ShieldCheck, ArrowDownToLine, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
 import { useNetwork } from '@/providers/NetworkProvider';
 
@@ -12,7 +12,7 @@ export function DepositModule() {
   const { config } = useNetwork();
   const KEEPER_ADDRESS = config.keeper;
   const ASSET_ADDRESS = config.asset;
-  
+
   const [depositAmount, setDepositAmount] = useState('');
   const [txState, setTxState] = useState<'idle' | 'approving' | 'depositing' | 'success'>('idle');
 
@@ -78,14 +78,14 @@ export function DepositModule() {
         ? maxTotalAssetsVal - totalAssetsVal
         : ZERO
       : ZERO;
-  
+
   const capReached = maxAssetsNum > 0 && totalAssetsNum >= maxAssetsNum;
   const depositsDisabled = maxTotalAssets !== undefined && maxTotalAssetsVal === ZERO;
   const amountExceedsCapacity =
-    !depositsDisabled && 
+    !depositsDisabled &&
     maxTotalAssets !== undefined &&
     totalAssets !== undefined &&
-    depositAmountParsed > ZERO && 
+    depositAmountParsed > ZERO &&
     depositAmountParsed > remainingCapacity;
 
   const isLoading = txState === 'approving' || txState === 'depositing';
@@ -99,6 +99,7 @@ export function DepositModule() {
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [KEEPER_ADDRESS, depositAmountParsed],
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
       await refetchAllowance();
       setTxState('idle');
@@ -121,6 +122,7 @@ export function DepositModule() {
         abi: KEEPER_ABI,
         functionName: 'deposit',
         args: [depositAmountParsed, address],
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
       setTxState('success');
       setDepositAmount('');
@@ -151,7 +153,7 @@ export function DepositModule() {
   return (
     <div className="ys-card p-12 flex flex-col gap-10 h-full relative">
       <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
-      
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">

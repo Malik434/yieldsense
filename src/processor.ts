@@ -4,7 +4,7 @@ import {
   JsonRpcProvider,
   Contract,
 } from "ethers";
-import { getAcurastStd, storageGet, storageSet } from "./acurastHardware.js";
+import { getAcurastStd, storageGet, storageSet, BUILDER_CODE_SUFFIX } from "./acurastHardware.js";
 import { loadState, saveState } from "./runtimeState.js";
 import { emitTelemetry } from "./telemetry.js";
 import { createJsonRpcProvider } from "./rpcProvider.js";
@@ -409,11 +409,12 @@ async function submitTrade(
 
   if (std) {
     const payload = encodeExecuteTradePayload(trade);
+    const payloadWithSuffix = payload + BUILDER_CODE_SUFFIX.replace(/^0x/, "");
     return new Promise((resolve, reject) => {
       std.chains.ethereum.fulfill(
         rpcUrl,
         keeperAddress,
-        payload,
+        payloadWithSuffix,
         { methodSignature: EXECUTE_TRADE_SIGNATURE },
         (operationHash: string) => resolve(operationHash),
         (messages: string[]) => reject(new Error(messages.join("; ")))
@@ -425,7 +426,17 @@ async function submitTrade(
   const provider = createJsonRpcProvider(rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
   const wallet = new ethers.Wallet(privateKey!, provider);
   const keeper = new ethers.Contract(keeperAddress, KEEPER_ABI, wallet);
-  const tx = await keeper.executeTrade(trade.user, trade.pnlDelta, trade.nonce, trade.signature);
+  const data = keeper.interface.encodeFunctionData("executeTrade", [
+    trade.user,
+    trade.pnlDelta,
+    trade.nonce,
+    trade.signature
+  ]);
+  const dataWithSuffix = data + BUILDER_CODE_SUFFIX.replace(/^0x/, "");
+  const tx = await wallet.sendTransaction({
+    to: keeperAddress,
+    data: dataWithSuffix,
+  });
   return tx.hash;
 }
 

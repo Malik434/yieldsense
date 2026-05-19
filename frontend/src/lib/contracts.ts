@@ -61,6 +61,8 @@ export const AUTOCOMPOUNDER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).autoco
 
 export const OPERATOR_ADDRESS = "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
 
+export const BUILDER_CODE_SUFFIX = "0x62635f6a3633763738616b0b0080218021802180218021802180218021" as const;
+
 export const ERC20_ABI = [
   {
     "constant": true,

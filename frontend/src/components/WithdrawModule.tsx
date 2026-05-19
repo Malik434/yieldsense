@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits } from 'viem';
 import { AlertTriangle, CheckCircle2, Info, Loader2, LogOut, Shield } from 'lucide-react';
-import { KEEPER_ABI } from '@/lib/contracts';
+import { KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
 
 export function WithdrawModule() {
@@ -69,6 +69,7 @@ export function WithdrawModule() {
         abi: KEEPER_ABI,
         functionName: 'withdraw',
         args: [withdrawableRaw, address as `0x${string}`, address as `0x${string}`],
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
       setSuccess(true);
       setConfirming(false);

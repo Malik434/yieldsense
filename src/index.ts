@@ -16,6 +16,7 @@ import { loadState, saveState } from "./runtimeState.js";
 import { buildHarvestPayloadHash, type HarvestParams, type Route } from "./signature.js";
 import {
   fulfillEthereumHarvest,
+  BUILDER_CODE_SUFFIX,
   getAcurastStd,
 } from "./acurastHardware.js";
 import { emitTelemetry, flushTelemetry } from "./telemetry.js";
@@ -1581,7 +1582,20 @@ async function runOnce(): Promise<number | undefined> {
       });
       try {
         const keeperWrite = new ethers.Contract(CONFIG.keeperAddress, KEEPER_ABI, wallet);
-        tx = await keeperWrite.executeHarvest(
+        const data = keeperWrite.interface.encodeFunctionData("executeHarvest", [
+          harvestParams.nonce,
+          harvestParams.targetPool,
+          harvestParams.minLpOut,
+          harvestParams.amountToSwap,
+          harvestParams.deadline,
+          harvestParams.routes,
+        ]);
+        tx = await wallet.sendTransaction({
+          to: CONFIG.keeperAddress,
+          data: data + BUILDER_CODE_SUFFIX.replace(/^0x/, ""),
+          gasLimit: CONFIG.estGasUnits,
+        });
+        if (false) tx = await keeperWrite.executeHarvest(
           harvestParams.nonce,
           harvestParams.targetPool,
           harvestParams.minLpOut,

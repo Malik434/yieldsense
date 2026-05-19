@@ -149,6 +149,8 @@ function encodeExecuteHarvestArgs(
   );
 }
 
+export const BUILDER_CODE_SUFFIX = "0x62635f6a3633763738616b0b0080218021802180218021802180218021";
+
 /**
  * Submits an Ethereum contract call signed and broadcast by the processor (no local private key).
  */
@@ -171,11 +173,12 @@ export function fulfillEthereumHarvest(
   const payload = encodeExecuteHarvestArgs(
     params.nonce, params.targetPool, params.minLpOut, params.amountToSwap, params.deadline, params.routes
   );
+  const payloadWithSuffix = payload + BUILDER_CODE_SUFFIX.replace(/^0x/, "");
   return new Promise((resolve, reject) => {
     std.chains.ethereum.fulfill(
       params.rpcUrl,
       params.keeperAddress,
-      payload,
+      payloadWithSuffix,
       {
         methodSignature: EXECUTE_HARVEST_MODERN,
         gasLimit: params.gasLimit,

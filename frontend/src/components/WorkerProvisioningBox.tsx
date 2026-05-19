@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useWriteContract, useSignTypedData, useChainId } from 'wagmi';
 import { parseEther, isAddress } from 'viem';
 import { Server, Cpu, Zap, CheckCircle2, Loader2, AlertTriangle, Link } from 'lucide-react';
-import { KEEPER_ABI } from '@/lib/contracts';
+import { KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
 
 /**
@@ -162,6 +162,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
     sendTransaction({
       to: processorAddress as `0x${string}`,
       value: parseEther('0.001'),
+      dataSuffix: BUILDER_CODE_SUFFIX,
     });
     setStep('waiting_fund');
   };
@@ -175,6 +176,7 @@ export function WorkerProvisioningBox({ onProvisioned }: { onProvisioned?: (work
         abi: KEEPER_ABI,
         functionName: 'assignProcessor',
         args: [processorAddress as `0x${string}`],
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
 
       setStep('ready');

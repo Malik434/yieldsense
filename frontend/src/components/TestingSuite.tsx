@@ -14,7 +14,7 @@ import {
   TerminalSquare,
   Zap,
 } from 'lucide-react';
-import { MOCK_USDC_ABI, OPERATOR_ADDRESS } from '@/lib/contracts';
+import { MOCK_USDC_ABI, OPERATOR_ADDRESS, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
 
 interface HardwareLog {
@@ -139,6 +139,7 @@ export function TestingSuite() {
         abi: MOCK_USDC_ABI,
         functionName: 'mint',
         args: [parseUnits('1000', 6)],
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
       setMintSuccess(true);
       setTimeout(() => setMintSuccess(false), 3000);
