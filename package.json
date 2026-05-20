@@ -12,6 +12,7 @@
     "start": "webpack-dev-server --mode development",
     "test:pools": "tsx src/poolSmoke.ts",
     "test:mainnet-processor": "node scripts/smokeMainnetProcessor.cjs",
+    "test:acurast-mobile": "node scripts/smokeAcurastMobile.cjs",
     "dev": "node --env-file=.env dist/index.bundle.cjs",
     "dev:processor": "node --env-file=.env dist/processor.bundle.cjs",
     "rpc:relay": "node scripts/rpcRelay.cjs",
