@@ -204,8 +204,11 @@ async function runSmokeForRpc(rpcUrl) {
     KEEPER_READ_TIMEOUT_MS: process.env.KEEPER_READ_TIMEOUT_MS || "8000",
     FEE_DATA_TIMEOUT_MS: process.env.FEE_DATA_TIMEOUT_MS || "8000",
     EST_GAS_UNITS: process.env.SMOKE_EST_GAS_UNITS || "1200000",
-    ACURAST_FAST_SUBMIT: process.env.SMOKE_ACURAST_FAST_SUBMIT || "false",
-    WAIT_FOR_HARVEST_RECEIPT: process.env.SMOKE_WAIT_FOR_HARVEST_RECEIPT || "true",
+    ACURAST_FAST_SUBMIT: process.env.SMOKE_ACURAST_FAST_SUBMIT || "true",
+    ACURAST_FAST_YIELD_MODE: process.env.SMOKE_ACURAST_FAST_YIELD_MODE || "api",
+    ACURAST_USE_FALLBACK_FEES: process.env.SMOKE_ACURAST_USE_FALLBACK_FEES || "true",
+    WAIT_FOR_HARVEST_RECEIPT: process.env.SMOKE_WAIT_FOR_HARVEST_RECEIPT || "false",
+    ENFORCE_PROFITABILITY: process.env.SMOKE_ENFORCE_PROFITABILITY || "false",
   };
 
   const worker = await runStep("Harvest worker local Acurast execution", "npx", ["tsx", "scripts/localAcurastJob.ts"], workerEnv);

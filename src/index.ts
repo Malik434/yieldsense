@@ -82,6 +82,7 @@ const CONFIG = {
   estGasUnits: BigInt(process.env.EST_GAS_UNITS ?? "1200000"),
   minRewardUsd: Number(process.env.MIN_NET_REWARD_USD ?? 1),
   maxGasUsd: Number(process.env.MAX_GAS_USD ?? 30),
+  enforceProfitability: process.env.ENFORCE_PROFITABILITY !== "false",
   cooldownSec: Number(process.env.COOLDOWN_SEC ?? 300),
   maxApiFailureStreak: Number(process.env.MAX_API_FAILURE_STREAK ?? 3),
   minAprConfidence: Number(process.env.MIN_APR_CONFIDENCE ?? 0.55),
@@ -135,8 +136,12 @@ const CONFIG = {
   dryRun: process.env.DRY_RUN === "true",
   runCooldownGuard: process.env.RUN_COOLDOWN_GUARD !== "false",
   minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 60_000),
+  frontendUrl: process.env.FRONTEND_URL?.trim() || "",
+  remoteCooldownGuard: process.env.REMOTE_COOLDOWN_GUARD !== "false",
+  cooldownRemoteTimeoutMs: Number(process.env.COOLDOWN_REMOTE_TIMEOUT_MS ?? 3_500),
   enableGridKeeper: process.env.ENABLE_GRID_KEEPER === "true",
   gasSponsorMode: (process.env.GAS_SPONSOR_MODE ?? "native").toLowerCase(),
+  paymasterGasCostUsd: Number(process.env.PAYMASTER_GAS_COST_USD ?? 0.015),
   paymasterDiscoveryOnly: process.env.PAYMASTER_DISCOVERY_ONLY === "true",
   startupRpcProbe: process.env.STARTUP_RPC_PROBE === "true",
   yieldEstimateTimeoutMs: Number(process.env.YIELD_ESTIMATE_TIMEOUT_MS ?? 45_000),
@@ -145,6 +150,7 @@ const CONFIG = {
   executionBudgetMs: Number(process.env.PROCESSOR_EXECUTION_BUDGET_MS ?? 50_000),
   executionShutdownGraceMs: Number(process.env.PROCESSOR_SHUTDOWN_GRACE_MS ?? 8_000),
   acurastFastSubmit: process.env.ACURAST_FAST_SUBMIT !== "false",
+  acurastChainDiagnostics: process.env.ACURAST_CHAIN_DIAGNOSTICS === "true",
   acurastFastYieldMode: normaliseFastYieldMode(process.env.ACURAST_FAST_YIELD_MODE),
   acurastFastYieldSource: normaliseFastYieldSource(process.env.ACURAST_FAST_YIELD_SOURCE),
   acurastFastYieldTimeoutMs: Number(process.env.ACURAST_FAST_YIELD_TIMEOUT_MS ?? process.env.APR_API_TIMEOUT_MS ?? 3_500),
@@ -185,6 +191,101 @@ function nextSupervisorDelayMs(state: Awaited<ReturnType<typeof loadState>>): nu
     minRunIntervalMs: CONFIG.minRunIntervalMs,
     suggestedNextCheckMs: state.suggestedNextCheckMs,
   });
+}
+
+type CooldownState = Pick<
+  Awaited<ReturnType<typeof loadState>>,
+  "lastRunAt" | "suggestedNextCheckMs"
+>;
+
+function finiteNumber(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTimestampSec(value: unknown): number | null {
+  const parsed = finiteNumber(value);
+  if (parsed == null || parsed <= 0) return null;
+  return parsed > 10_000_000_000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+}
+
+function latestLogTimestampSec(logs: unknown): number | null {
+  if (!Array.isArray(logs)) return null;
+  let latest: number | null = null;
+  for (const log of logs) {
+    const timestamp = normalizeTimestampSec((log as { timestamp?: unknown } | null)?.timestamp);
+    if (timestamp != null && (latest == null || timestamp > latest)) {
+      latest = timestamp;
+    }
+  }
+  return latest;
+}
+
+async function fetchRemoteCooldownState(
+  userAddress: string | undefined,
+  chainId: number
+): Promise<CooldownState | null> {
+  if (!CONFIG.remoteCooldownGuard || !CONFIG.frontendUrl || !userAddress) return null;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
+  try {
+    const url = new URL("/api/state", CONFIG.frontendUrl);
+    url.searchParams.set("userAddress", userAddress);
+    url.searchParams.set("chainId", String(chainId));
+
+    timeout = setTimeout(() => controller.abort(), CONFIG.cooldownRemoteTimeoutMs);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`state API returned HTTP ${response.status}`);
+    }
+
+    const body = await response.json() as Record<string, unknown>;
+    const lastRunAt = normalizeTimestampSec(body.lastRunAt) ?? latestLogTimestampSec(body.logs);
+    const suggestedNextCheckMs = finiteNumber(body.suggestedNextCheckMs);
+    if (lastRunAt == null && suggestedNextCheckMs == null) return null;
+
+    return {
+      lastRunAt,
+      suggestedNextCheckMs,
+    };
+  } catch (error) {
+    emitOperationalLog("remote_cooldown_state_failed", {
+      message: error instanceof Error ? error.message : String(error),
+      frontendHost: (() => {
+        try {
+          return new URL(CONFIG.frontendUrl).host;
+        } catch {
+          return "invalid_frontend_url";
+        }
+      })(),
+    });
+    return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function mergeCooldownState(
+  localState: Awaited<ReturnType<typeof loadState>>,
+  remoteState: CooldownState | null
+): { state: Awaited<ReturnType<typeof loadState>>; source: "local_storage" | "remote_state" } {
+  if (!remoteState?.lastRunAt || (localState.lastRunAt && localState.lastRunAt >= remoteState.lastRunAt)) {
+    return { state: localState, source: "local_storage" };
+  }
+
+  return {
+    state: {
+      ...localState,
+      lastRunAt: remoteState.lastRunAt,
+      suggestedNextCheckMs: remoteState.suggestedNextCheckMs ?? localState.suggestedNextCheckMs,
+    },
+    source: "remote_state",
+  };
 }
 
 function emitOperationalLog(
@@ -625,21 +726,35 @@ async function runOnce(): Promise<number | undefined> {
   const startedAtMs = Date.now();
   const startNow = Math.floor(Date.now() / 1000);
   const state = await loadState(CONFIG.statePath);
+  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
+  const configuredExecutionChainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : 8453;
+  const previousLastRunAt = state.lastRunAt;
+  const previousLastExecutionAt = state.lastExecutionAt;
 
   // Crash-safe cooldown guard.
   // Stamp the run immediately. If we crash 1 second from now, the next 
   // restart will see this timestamp and skip.
   const std = getAcurastStd();
-  const guardStorageKey = `worker-state:${(process.env.USER_ADDRESS ?? "default").toLowerCase()}:.yieldsense-state.json`;
+  const guardStorageKey = `worker-state:${(envUser ?? "default").toLowerCase()}:.yieldsense-state.json`;
 
   // 1. Check Cooldown
-  const recentRun = shouldSkipRecentRun(state, startNow);
+  const remoteCooldownState = await fetchRemoteCooldownState(envUser, configuredExecutionChainId);
+  const cooldown = mergeCooldownState(state, remoteCooldownState);
+  const recentRun = shouldSkipRecentRun(cooldown.state, startNow);
   if (recentRun.skip) {
     const lastSkippedAt = state.lastSkippedAt ?? 0;
     if (startNow - lastSkippedAt >= 60) {
       state.lastSkippedAt = startNow;
       state.lastDecisionReason = "cooldown_guard";
       await saveState(CONFIG.statePath, state);
+      emitOperationalLog("run_skipped_recent", {
+        elapsedMs: recentRun.elapsedMs,
+        waitMs: recentRun.waitMs,
+        intervalMs: recentRun.intervalMs,
+        cooldownSource: cooldown.source,
+        remoteLastRunAt: remoteCooldownState?.lastRunAt,
+        remoteSuggestedNextCheckMs: remoteCooldownState?.suggestedNextCheckMs,
+      });
       await emitTelemetry({
         event: "run_skipped_recent",
         timestamp: startNow,
@@ -647,11 +762,14 @@ async function runOnce(): Promise<number | undefined> {
         waitMs: recentRun.waitMs,
         intervalMs: recentRun.intervalMs,
         reason: "cooldown_guard",
+        cooldownSource: cooldown.source,
+        remoteLastRunAt: remoteCooldownState?.lastRunAt,
+        remoteSuggestedNextCheckMs: remoteCooldownState?.suggestedNextCheckMs,
         bestEffortSubmissionContinues: false,
         hasAcurastStd: Boolean(getAcurastStd()),
       });
-      return recentRun.waitMs;
     }
+    return recentRun.waitMs;
   }
 
   await emitHardwareAddressReport(startNow);
@@ -677,7 +795,6 @@ async function runOnce(): Promise<number | undefined> {
   }
 
   // 3. Log Config for TEE Diagnostics
-  const envUser = process.env.USER_ADDRESS || (globalThis as any).__ENV__?.USER_ADDRESS;
   console.log(`[CONFIG] User: ${envUser || "MISSING"}`);
   console.log(`[CONFIG] Keeper: ${CONFIG.keeperAddress}`);
   console.log(`[CONFIG] RPC: ${CONFIG.rpcUrl}`);
@@ -692,6 +809,7 @@ async function runOnce(): Promise<number | undefined> {
     forceTestHarvest: CONFIG.forceTestHarvest,
     enableGridKeeper: CONFIG.enableGridKeeper,
     gasSponsorMode: CONFIG.gasSponsorMode,
+    paymasterGasCostUsd: CONFIG.paymasterGasCostUsd,
     paymasterDiscoveryOnly: CONFIG.paymasterDiscoveryOnly,
     startupRpcProbe: CONFIG.startupRpcProbe,
     acurastFastSubmit: CONFIG.acurastFastSubmit,
@@ -699,11 +817,12 @@ async function runOnce(): Promise<number | undefined> {
     acurastFastYieldSource: CONFIG.acurastFastYieldSource,
     acurastFastYieldTimeoutMs: CONFIG.acurastFastYieldTimeoutMs,
     acurastUseFallbackFees: CONFIG.acurastUseFallbackFees,
+    acurastChainDiagnostics: CONFIG.acurastChainDiagnostics,
     waitForHarvestReceipt: CONFIG.waitForHarvestReceipt,
+    enforceProfitability: CONFIG.enforceProfitability,
     userAddress: envUser,
   }).catch(() => { });
 
-  const configuredExecutionChainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : 8453;
   const executionProvider = createJsonRpcProvider(
     CONFIG.rpcUrl,
     configuredExecutionChainId
@@ -940,8 +1059,14 @@ async function runOnce(): Promise<number | undefined> {
       );
     }
 
-    if (CONFIG.forceTestHarvest || fastSubmitMode) {
+    if (CONFIG.forceTestHarvest) {
       lastHarvest = 0n;
+    } else if (fastSubmitMode) {
+      const fastModeReferenceTime =
+        previousLastExecutionAt ??
+        previousLastRunAt ??
+        nowSec - Math.max(CONFIG.cooldownSec, 300);
+      lastHarvest = BigInt(Math.max(0, fastModeReferenceTime));
     } else {
       lastHarvest = await (async () => {
         for (let i = 0; i < 3; i++) {
@@ -1065,7 +1190,12 @@ async function runOnce(): Promise<number | undefined> {
       state.apiFailureStreak = 0;
     }
     const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? BigInt(0);
-    const gasCostUsd = Number(ethers.formatEther(gasPrice * CONFIG.estGasUnits)) * ethPrice;
+    const nativeGasCostUsd = Number(ethers.formatEther(gasPrice * CONFIG.estGasUnits)) * ethPrice;
+    const usesPaymaster = CONFIG.gasSponsorMode === "paymaster";
+    const paymasterGasCostUsd = Number.isFinite(CONFIG.paymasterGasCostUsd)
+      ? Math.max(0, CONFIG.paymasterGasCostUsd)
+      : 0.015;
+    const gasCostUsd = usesPaymaster ? paymasterGasCostUsd : nativeGasCostUsd;
     const elapsedSec = nowSec - Number(lastHarvest);
     const secondsSinceLastExecution = state.lastExecutionAt ? nowSec - state.lastExecutionAt : Number.MAX_SAFE_INTEGER;
 
@@ -1101,11 +1231,30 @@ async function runOnce(): Promise<number | undefined> {
       netRewardUsd: decision.netRewardUsd,
       grossRewardUsd: decision.grossRewardUsd,
       gasCostUsd,
+      nativeGasCostUsd,
+      paymasterGasCostUsd: usesPaymaster ? paymasterGasCostUsd : undefined,
+      gasCostSource: usesPaymaster ? "paymaster_estimate" : "native_fee_estimate",
       thresholdUsd: decision.thresholdUsd,
       reason: decision.reason,
       recommendedNextCheckMs: decision.recommendedNextCheckMs,
       bestEffortSubmissionContinues: !decision.shouldExecute,
       chainId: executionChainId,
+    });
+    emitOperationalLog("profitability_check", {
+      shouldExecute: decision.shouldExecute,
+      reason: decision.reason,
+      netRewardUsd: decision.netRewardUsd,
+      grossRewardUsd: decision.grossRewardUsd,
+      gasCostUsd,
+      nativeGasCostUsd,
+      paymasterGasCostUsd: usesPaymaster ? paymasterGasCostUsd : undefined,
+      gasCostSource: usesPaymaster ? "paymaster_estimate" : "native_fee_estimate",
+      thresholdUsd: decision.thresholdUsd,
+      apr: aprConsensus.totalApr,
+      confidence: aprConsensus.confidence,
+      enforceProfitability: CONFIG.enforceProfitability,
+      usedYieldFallback: yieldEstimateFailed,
+      usedFeeFallback: keeperOrFeeReadFailed,
     });
 
     state.previousApr = aprConsensus.totalApr;
@@ -1115,6 +1264,25 @@ async function runOnce(): Promise<number | undefined> {
 
     if (!decision.shouldExecute) {
       await saveState(CONFIG.statePath, state);
+      if (CONFIG.enforceProfitability) {
+        emitOperationalLog("harvest_skipped_profitability", {
+          reason: decision.reason,
+          netRewardUsd: decision.netRewardUsd,
+          thresholdUsd: decision.thresholdUsd,
+          recommendedNextCheckMs: decision.recommendedNextCheckMs,
+        });
+        await emitTelemetry({
+          event: "harvest_skipped_profitability",
+          timestamp: nowSec,
+          reason: decision.reason,
+          netRewardUsd: decision.netRewardUsd,
+          thresholdUsd: decision.thresholdUsd,
+          recommendedNextCheckMs: decision.recommendedNextCheckMs,
+          chainId: executionChainId,
+          userAddress: envUser,
+        });
+        return decision.recommendedNextCheckMs;
+      }
       await emitTelemetry({
         event: "harvest_gate_overridden",
         timestamp: nowSec,
@@ -1269,7 +1437,7 @@ async function runOnce(): Promise<number | undefined> {
     });
     await emitTelemetry({
       event: "harvest_submit_attempt",
-      timestamp: nowSec,
+      timestamp: Math.floor(Date.now() / 1000),
       payloadHash: harvestPayloadHash,
       keeperAddress: CONFIG.keeperAddress,
       targetPool: harvestParams.targetPool,
@@ -1287,7 +1455,9 @@ async function runOnce(): Promise<number | undefined> {
 
     if (acurastStd) {
       const hwAddress = ethers.getAddress(acurastStd.chains.ethereum.getAddress());
-      await emitProcessorChainDiagnostics(executionProvider, hwAddress, CONFIG.keeperAddress, executionChainId, envUser);
+      if (CONFIG.acurastChainDiagnostics) {
+        await emitProcessorChainDiagnostics(executionProvider, hwAddress, CONFIG.keeperAddress, executionChainId, envUser);
+      }
 
       if (CONFIG.gasSponsorMode === "paymaster") {
         const paymasterRpcUrl = getPaymasterRpcUrl();
@@ -1295,34 +1465,34 @@ async function runOnce(): Promise<number | undefined> {
           throw new Error("BASE_PAYMASTER_RPC_URL or PAYMASTER_RPC_URL is required when GAS_SPONSOR_MODE=paymaster.");
         }
 
-        const smartAccountAddress = await getAcurastPaymasterSmartAccountAddress({
-          rpcUrl: CONFIG.rpcUrl,
-          std: acurastStd,
-        });
         const paymasterContext = {
           payloadHash: harvestPayloadHash,
           keeperAddress: CONFIG.keeperAddress,
           hardwareProcessorAddress: hwAddress,
-          smartAccountAddress,
           paymasterOwnerMode: getPaymasterOwnerMode(),
           rpcUrlHost: rpcUrlHost(CONFIG.rpcUrl),
           paymasterRpcHost: rpcUrlHost(paymasterRpcUrl),
           signingMode: "coinbase_smart_account_paymaster",
         };
 
-        emitOperationalLog("paymaster_smart_account_report", {
-          ...paymasterContext,
-          note: "Attest this smartAccountAddress via ownerAttestProcessor before disabling PAYMASTER_DISCOVERY_ONLY.",
-        });
-        await emitTelemetry({
-          event: "paymaster_smart_account_report",
-          timestamp: Math.floor(Date.now() / 1000),
-          chainId: executionChainId,
-          userAddress: envUser,
-          ...paymasterContext,
-        });
-
         if (CONFIG.paymasterDiscoveryOnly) {
+          const smartAccountAddress = await getAcurastPaymasterSmartAccountAddress({
+            rpcUrl: CONFIG.rpcUrl,
+            std: acurastStd,
+          });
+          emitOperationalLog("paymaster_smart_account_report", {
+            ...paymasterContext,
+            smartAccountAddress,
+            note: "Attest this smartAccountAddress via ownerAttestProcessor before disabling PAYMASTER_DISCOVERY_ONLY.",
+          });
+          await emitTelemetry({
+            event: "paymaster_smart_account_report",
+            timestamp: Math.floor(Date.now() / 1000),
+            chainId: executionChainId,
+            userAddress: envUser,
+            ...paymasterContext,
+            smartAccountAddress,
+          });
           state.lastDecisionReason = "paymaster_discovery_only";
           state.lastRunAt = nowSec;
           state.suggestedNextCheckMs = 10 * 60 * 1000;
@@ -1355,9 +1525,11 @@ async function runOnce(): Promise<number | undefined> {
 
           txHash = sponsored.hash;
           receipt = sponsored.receipt;
+          const submittedAtSec = Math.floor(Date.now() / 1000);
 
           emitOperationalLog("paymaster_userop_confirmed", {
             ...paymasterContext,
+            smartAccountAddress: sponsored.smartAccountAddress,
             userOpHash: sponsored.userOpHash,
             txHash,
             blockNumber: Number(sponsored.receipt.blockNumber),
@@ -1368,34 +1540,40 @@ async function runOnce(): Promise<number | undefined> {
             chainId: executionChainId,
             userAddress: envUser,
             ...paymasterContext,
+            smartAccountAddress: sponsored.smartAccountAddress,
             userOpHash: sponsored.userOpHash,
             txHash,
             blockNumber: Number(sponsored.receipt.blockNumber),
+          });
+
+          emitOperationalLog("paymaster_smart_account_report", {
+            ...paymasterContext,
+            smartAccountAddress: sponsored.smartAccountAddress,
           });
 
           emitOperationalLog("harvest_submitted", {
             txHash,
             payloadHash: harvestPayloadHash,
             signingMode: "coinbase_smart_account_paymaster",
-            processorAddress: smartAccountAddress,
+            processorAddress: sponsored.smartAccountAddress,
             hardwareProcessorAddress: hwAddress,
             userOpHash: sponsored.userOpHash,
           });
 
           // Update state immediately to prevent rapid-fire retries
-          state.lastExecutionAt = nowSec;
-          state.lastRunAt = nowSec;
+          state.lastExecutionAt = submittedAtSec;
+          state.lastRunAt = submittedAtSec;
           state.lastDecisionReason = "submitted_paymaster";
           state.suggestedNextCheckMs = 45 * 60 * 1000; // 45 minute cooldown
           await saveState(CONFIG.statePath, state);
 
           await emitTelemetry({
             event: "harvest_submitted",
-            timestamp: nowSec,
+            timestamp: submittedAtSec,
             txHash,
             payloadHash: harvestPayloadHash,
             signingMode: "coinbase_smart_account_paymaster",
-            processorAddress: smartAccountAddress,
+            processorAddress: sponsored.smartAccountAddress,
             hardwareProcessorAddress: hwAddress,
             userOpHash: sponsored.userOpHash,
             ...(CONFIG.forceTestHarvest ? { forceTest: true, aprBps, rewardCents } : {}),
@@ -1468,6 +1646,7 @@ async function runOnce(): Promise<number | undefined> {
           throw broadcastError;
         }
         txHash = submitted.hash;
+        const submittedAtSec = Math.floor(Date.now() / 1000);
 
         emitOperationalLog("broadcast_result", {
           ...broadcastContext,
@@ -1490,7 +1669,7 @@ async function runOnce(): Promise<number | undefined> {
         });
         await emitTelemetry({
           event: "harvest_submitted",
-          timestamp: nowSec,
+          timestamp: submittedAtSec,
           txHash,
           payloadHash: harvestPayloadHash,
           signingMode: "acurast_fulfill_attested_sender",
@@ -1499,7 +1678,8 @@ async function runOnce(): Promise<number | undefined> {
         });
         if (!CONFIG.waitForHarvestReceipt) {
           state.lastDecisionReason = "submitted";
-          state.lastRunAt = nowSec;
+          state.lastRunAt = submittedAtSec;
+          state.lastExecutionAt = submittedAtSec;
           state.suggestedNextCheckMs = 10 * 60 * 1000;
           await saveState(CONFIG.statePath, state);
           emitOperationalLog("harvest_receipt_wait_skipped", {
@@ -1621,6 +1801,7 @@ async function runOnce(): Promise<number | undefined> {
         throw error;
       }
       txHash = tx.hash;
+      const submittedAtSec = Math.floor(Date.now() / 1000);
       emitOperationalLog("broadcast_result", {
         ...broadcastContext,
         txHash,
@@ -1640,7 +1821,7 @@ async function runOnce(): Promise<number | undefined> {
       });
       await emitTelemetry({
         event: "harvest_submitted",
-        timestamp: nowSec,
+        timestamp: submittedAtSec,
         txHash,
         payloadHash: harvestPayloadHash,
         signingMode: "local_private_key",
@@ -1648,7 +1829,8 @@ async function runOnce(): Promise<number | undefined> {
       });
       if (!CONFIG.waitForHarvestReceipt) {
         state.lastDecisionReason = "submitted";
-        state.lastRunAt = nowSec;
+        state.lastRunAt = submittedAtSec;
+        state.lastExecutionAt = submittedAtSec;
         state.suggestedNextCheckMs = 10 * 60 * 1000;
         await saveState(CONFIG.statePath, state);
         emitOperationalLog("harvest_receipt_wait_skipped", {

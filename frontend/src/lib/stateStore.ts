@@ -235,6 +235,17 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
       break;
     }
 
+    case 'harvest_skipped_profitability': {
+      patch.lastDecisionReason =
+        (event.reason as string | undefined) ?? 'harvest_skipped_profitability';
+      patch.suggestedNextCheckMs =
+        (event.recommendedNextCheckMs as number | undefined) ?? currentState.suggestedNextCheckMs;
+      patch.apiFailureStreak = 0;
+      patch.unrealizedYieldUsd =
+        (event.netRewardUsd as number | undefined) ?? currentState.unrealizedYieldUsd;
+      break;
+    }
+
     case 'grid_trade_executed':
       patch.gridTradesExecuted = (currentState.gridTradesExecuted ?? 0) + 1;
       patch.lastGridTradeAt = event.timestamp as number;
@@ -267,6 +278,17 @@ export async function applyTelemetryEvent(event: Record<string, unknown>): Promi
 
     case 'run_skipped_recent':
       patch.lastDecisionReason = 'cooldown_guard';
+      patch.suggestedNextCheckMs =
+        (event.intervalMs as number | undefined) ?? currentState.suggestedNextCheckMs;
+      break;
+
+    case 'processor_cycle_complete':
+      patch.lastDecisionReason =
+        (event.lastDecisionReason as string | undefined) ?? currentState.lastDecisionReason;
+      patch.suggestedNextCheckMs =
+        (event.nextDelayMs as number | undefined) ?? currentState.suggestedNextCheckMs;
+      patch.apiFailureStreak =
+        (event.apiFailureStreak as number | undefined) ?? currentState.apiFailureStreak;
       break;
 
     case 'processor_error':

@@ -52,6 +52,7 @@ const ESSENTIAL_EVENTS = new Set([
   "processor_boot",
   "hw_address_report",
   "harvest_submit_attempt",
+  "harvest_skipped_profitability",
   "harvest_submitted",
   "harvest_submission_failed",
   "harvest_confirmed",

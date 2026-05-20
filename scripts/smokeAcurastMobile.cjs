@@ -128,9 +128,12 @@ async function main() {
     STATE_PATH: statePath,
     LOCAL_ACURAST_STORAGE_PATH: storagePath,
     RUN_COOLDOWN_GUARD: "false",
-    GAS_SPONSOR_MODE: process.env.ACURAST_SIM_GAS_SPONSOR_MODE || "native",
-    ACURAST_FAST_SUBMIT: process.env.ACURAST_FAST_SUBMIT || "true",
-    ACURAST_FAST_YIELD_MODE: process.env.ACURAST_FAST_YIELD_MODE || "skip",
+    GAS_SPONSOR_MODE: process.env.ACURAST_SIM_GAS_SPONSOR_MODE || process.env.GAS_SPONSOR_MODE || "paymaster",
+    MIN_NET_REWARD_USD: process.env.ACURAST_SIM_MIN_NET_REWARD_USD || "1",
+    PAYMASTER_GAS_COST_USD: process.env.ACURAST_SIM_PAYMASTER_GAS_COST_USD || process.env.PAYMASTER_GAS_COST_USD || "0.015",
+    ACURAST_FAST_SUBMIT: process.env.ACURAST_SIM_FAST_SUBMIT || "true",
+    ACURAST_FAST_YIELD_MODE: process.env.ACURAST_SIM_FAST_YIELD_MODE || process.env.ACURAST_FAST_YIELD_MODE || "api",
+    ENFORCE_PROFITABILITY: process.env.ACURAST_SIM_ENFORCE_PROFITABILITY || process.env.ENFORCE_PROFITABILITY || "true",
     ACURAST_USE_FALLBACK_FEES: process.env.ACURAST_USE_FALLBACK_FEES || "true",
     WAIT_FOR_HARVEST_RECEIPT: process.env.WAIT_FOR_HARVEST_RECEIPT || "false",
     TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED || "true",
@@ -160,10 +163,18 @@ async function main() {
   requireOutput("Acurast mobile simulation", result.stdout, [
     /\[ACURAST_SIM\] Installed constrained mobile _STD_/,
     /"hasAcurastStd":true/,
-    /"event":"harvest_submit_attempt"/,
-    /"event":"harvest_submitted"/,
     /\[TERMINAL\] Cycle complete \(ok\)\. Exiting\./,
   ]);
+
+  const skippedByCooldown = /"event":"run_skipped_recent"/.test(result.stdout);
+  if (skippedByCooldown) {
+    requireOutput("Acurast mobile simulation", result.stdout, [/"cooldownSource":"(local_storage|remote_state)"/]);
+  } else {
+    requireOutput("Acurast mobile simulation", result.stdout, [
+      /"event":"profitability_check"/,
+      /"event":"(harvest_submitted|harvest_skipped_profitability)"/,
+    ]);
+  }
 
   if (result.elapsedMs > watchdogMs) {
     throw new Error(`Simulation exceeded watchdog: ${result.elapsedMs}ms > ${watchdogMs}ms.`);
