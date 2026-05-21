@@ -135,9 +135,9 @@ const CONFIG = {
    */
   dryRun: process.env.DRY_RUN === "true",
   runCooldownGuard: process.env.RUN_COOLDOWN_GUARD !== "false",
-  minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 60_000),
+  minRunIntervalMs: Number(process.env.MIN_RUN_INTERVAL_MS ?? 5 * 60_000),
   frontendUrl: process.env.FRONTEND_URL?.trim() || "",
-  remoteCooldownGuard: process.env.REMOTE_COOLDOWN_GUARD !== "false",
+  remoteCooldownGuard: process.env.REMOTE_COOLDOWN_GUARD === "true",
   cooldownRemoteTimeoutMs: Number(process.env.COOLDOWN_REMOTE_TIMEOUT_MS ?? 3_500),
   enableGridKeeper: process.env.ENABLE_GRID_KEEPER === "true",
   gasSponsorMode: (process.env.GAS_SPONSOR_MODE ?? "native").toLowerCase(),
@@ -1993,12 +1993,13 @@ async function start(): Promise<void> {
       }, "error");
     }
 
-    // Explicitly exit with 0 to prevent Acurast from immediate reboot on expected errors
+    // Let one-shot Acurast runs terminate naturally after all async work drains.
+    // This avoids any platform ambiguity around an explicit process.exit during job finalization.
     console.log(`[TERMINAL] Cycle complete (${status}). Exiting.`);
     if (FINAL_LOG_DRAIN_MS > 0) {
       await sleep(FINAL_LOG_DRAIN_MS);
     }
-    process.exit(0);
+    process.exitCode = status === "ok" ? 0 : 1;
   }
 }
 

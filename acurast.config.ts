@@ -1,7 +1,7 @@
 type AssignmentStrategy = { type: "Single" | "RoundRobin" };
 type ExecutionConfig = { type: "interval"; intervalInMs: number; numberOfExecutions: number };
 
-const PROCESSOR_INTERVAL_MS = 10 * 60_000;
+const PROCESSOR_INTERVAL_MS = 60 * 60_000;
 
 interface AcurastProjectConfig {
   projectName: string;
@@ -43,7 +43,7 @@ const config: AcurastConfig = {
       execution: {
         type: "interval",
         intervalInMs: PROCESSOR_INTERVAL_MS,
-        numberOfExecutions: 52_560,
+        numberOfExecutions: 8_760,
       },
       maxAllowedStartDelayInMs: 30_000,
       usageLimit: {
@@ -56,7 +56,6 @@ const config: AcurastConfig = {
       minProcessorReputation: 0,
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [],
-      // For strict signer pinning, whitelist Personal processor account(s).
       processorWhitelist: [],
     },
   },
