@@ -15,6 +15,7 @@ YieldSense separates data ingestion, decisioning, and signing so sensitive key m
 - **Automated RPC Failover:** Implemented a robust transport layer that automatically rotates through backup RPC endpoints when encountering 429 rate limits or timeouts.
 - **On-Chain Event Indexing:** The dashboard now fetches execution history directly from the blockchain, ensuring perfect data integrity without relying on telemetry logs for historical records.
 - **Multisig Governance:** Protocol administration and processor attestation are now secured by a Gnosis Safe multisig (0x081a...c64a).
+New update
 
 ## Prerequisites
 
