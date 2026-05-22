@@ -65,5 +65,9 @@ The protocol utilizes dual-layer security:
 2. **Deterministic Guardrails:** The TEE code enforces strict, gas-aware execution logic (circuit breakers, cooldowns) before signing any transaction.
 3. **Multisig Control:** All administrative gates are secured by a team-governed multisig wallet.
 
+## Operational Notes
+
+Run verification scripts against the intended network before changing processor, keeper, or multisig configuration.
+
 ## License
 ISC
