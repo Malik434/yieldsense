@@ -1,7 +1,8 @@
 type AssignmentStrategy = { type: "Single" | "RoundRobin" };
 type ExecutionConfig = { type: "interval"; intervalInMs: number; numberOfExecutions: number };
 
-const PROCESSOR_INTERVAL_MS = 60 * 60_000;
+const YIELD_PROCESSOR_INTERVAL_MS = 60 * 60_000;
+const GRID_PROCESSOR_INTERVAL_MS = 60_000;
 
 interface AcurastProjectConfig {
   projectName: string;
@@ -34,15 +35,39 @@ interface AcurastConfig {
  */
 const config: AcurastConfig = {
   projects: {
-    YieldSenseGridKeeper: {
-      projectName: "YieldSense",
+    YieldSenseYieldExecutor: {
+      projectName: "YieldSenseYieldExecutor",
       fileUrl: "dist/index.bundle.cjs",
       network: "mainnet",
       onlyAttestedDevices: true,
       assignmentStrategy: { type: "Single" },
       execution: {
         type: "interval",
-        intervalInMs: PROCESSOR_INTERVAL_MS,
+        intervalInMs: YIELD_PROCESSOR_INTERVAL_MS,
+        numberOfExecutions: 8_760,
+      },
+      maxAllowedStartDelayInMs: 30_000,
+      usageLimit: {
+        maxMemory: 256_000_000,
+        maxNetworkRequests: 250,
+        maxStorage: 5_000_000,
+      },
+      numberOfReplicas: 1,
+      requiredModules: [],
+      minProcessorReputation: 0,
+      maxCostPerExecution: 100_000_000_000,
+      includeEnvironmentVariables: [],
+      processorWhitelist: [],
+    },
+    YieldSenseGridExecutor: {
+      projectName: "YieldSenseGridExecutor",
+      fileUrl: "dist/processor.bundle.cjs",
+      network: "mainnet",
+      onlyAttestedDevices: true,
+      assignmentStrategy: { type: "Single" },
+      execution: {
+        type: "interval",
+        intervalInMs: GRID_PROCESSOR_INTERVAL_MS,
         numberOfExecutions: 8_760,
       },
       maxAllowedStartDelayInMs: 30_000,

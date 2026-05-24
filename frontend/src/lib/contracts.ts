@@ -1,6 +1,7 @@
 import { base, baseSepolia } from 'wagmi/chains';
 
 const MAINNET_KEEPER = '0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF';
+const MAINNET_EXECUTOR_REGISTRY = process.env.NEXT_PUBLIC_MAINNET_EXECUTOR_REGISTRY_ADDRESS || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS || '';
 const MAINNET_AUTOCOMPOUNDER = '0x8654862B4FaB12aC09843cc1b644E6dA5aa6DC4A';
 const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const MAINNET_AERO = '0x940181a94A35A4569E4529A3CDfB74e38FD98631';
@@ -10,6 +11,7 @@ const MAINNET_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const MAINNET_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
 
 const TESTNET_KEEPER = process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '';
+const TESTNET_EXECUTOR_REGISTRY = process.env.NEXT_PUBLIC_TESTNET_EXECUTOR_REGISTRY_ADDRESS || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS || '';
 const TESTNET_ASSET = process.env.NEXT_PUBLIC_TESTNET_ASSET_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 
 // Chain Configuration Mapping
@@ -19,6 +21,7 @@ export const CHAIN_CONFIG = {
     shortName: 'Mainnet',
     explorer: 'https://basescan.org',
     keeper: (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || MAINNET_KEEPER) as `0x${string}`,
+    executorRegistry: MAINNET_EXECUTOR_REGISTRY as `0x${string}`,
     asset: (process.env.NEXT_PUBLIC_MAINNET_ASSET_ADDRESS || MAINNET_USDC) as `0x${string}`,
     autocompounder: (process.env.NEXT_PUBLIC_MAINNET_AUTOCOMPOUNDER_ADDRESS || MAINNET_AUTOCOMPOUNDER) as `0x${string}`,
     pool: MAINNET_POOL as `0x${string}`,
@@ -35,6 +38,7 @@ export const CHAIN_CONFIG = {
     shortName: 'Testnet',
     explorer: 'https://sepolia.basescan.org',
     keeper: TESTNET_KEEPER as `0x${string}`,
+    executorRegistry: TESTNET_EXECUTOR_REGISTRY as `0x${string}`,
     asset: TESTNET_ASSET as `0x${string}`,
     autocompounder: (process.env.NEXT_PUBLIC_TESTNET_AUTOCOMPOUNDER_ADDRESS || '') as `0x${string}`,
     pool: (process.env.NEXT_PUBLIC_TESTNET_POOL_ADDRESS || '') as `0x${string}`,
@@ -56,6 +60,7 @@ export function getContractConfig(chainId: number | undefined) {
 
 // Keep legacy exports as fallbacks but encourage using getContractConfig
 export const KEEPER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).keeper;
+export const EXECUTOR_REGISTRY_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).executorRegistry;
 export const ASSET_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).asset;
 export const AUTOCOMPOUNDER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).autocompounder;
 
@@ -122,6 +127,13 @@ export const KEEPER_ABI = [
     "inputs": [],
     "name": "asset",
     "outputs": [{ "internalType": "address", "name": "", "type": "address" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "executorRegistry",
+    "outputs": [{ "internalType": "contract IExecutorRegistry", "name": "", "type": "address" }],
     "stateMutability": "view",
     "type": "function"
   },
@@ -242,6 +254,62 @@ export const KEEPER_ABI = [
       { "indexed": false, "internalType": "uint256", "name": "profitCredited", "type": "uint256" }
     ],
     "name": "HarvestExecuted",
+    "type": "event"
+  }
+] as const;
+
+export const EXECUTOR_REGISTRY_ABI = [
+  {
+    "inputs": [],
+    "name": "YIELD_EXECUTOR",
+    "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "GRID_EXECUTOR",
+    "outputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "processor", "type": "address" },
+      { "internalType": "bytes32", "name": "role", "type": "bytes32" }
+    ],
+    "name": "isAuthorized",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "processor", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "role", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "deploymentHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "codeHash", "type": "bytes32" }
+    ],
+    "name": "ProcessorRegistered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "processor", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "role", "type": "bytes32" }
+    ],
+    "name": "ProcessorActivated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "processor", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "role", "type": "bytes32" }
+    ],
+    "name": "ProcessorRevoked",
     "type": "event"
   }
 ] as const;

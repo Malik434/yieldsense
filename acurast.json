@@ -1,7 +1,7 @@
 {
   "projects": {
-    "YieldSense": {
-      "projectName": "YieldSense",
+    "YieldSenseYieldExecutor": {
+      "projectName": "YieldSenseYieldExecutor",
       "fileUrl": "dist/index.bundle.cjs",
       "network": "mainnet",
       "onlyAttestedDevices": true,
@@ -11,7 +11,33 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 3600000,
-        "numberOfExecutions": 200
+        "numberOfExecutions": 8760
+      },
+      "maxAllowedStartDelayInMs": 60000,
+      "usageLimit": {
+        "maxMemory": 256000000,
+        "maxNetworkRequests": 10000,
+        "maxStorage": 1000000
+      },
+      "numberOfReplicas": 1,
+      "requiredModules": [],
+      "minProcessorReputation": 0,
+      "maxCostPerExecution": 5500000000,
+      "includeEnvironmentVariables": [],
+      "processorWhitelist": []
+    },
+    "YieldSenseGridExecutor": {
+      "projectName": "YieldSenseGridExecutor",
+      "fileUrl": "dist/processor.bundle.cjs",
+      "network": "mainnet",
+      "onlyAttestedDevices": true,
+      "assignmentStrategy": {
+        "type": "Single"
+      },
+      "execution": {
+        "type": "interval",
+        "intervalInMs": 60000,
+        "numberOfExecutions": 8760
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {

@@ -53,6 +53,13 @@ interface IAerodromeAutocompounder {
     function slippageBps() external view returns (uint256);
 }
 
+interface IExecutorRegistry {
+    function isAuthorized(
+        address processor,
+        bytes32 role
+    ) external view returns (bool);
+}
+
 /**
  * @title YieldSenseKeeper
  * @notice Multi-user ERC-4626 vault with Acurast TEE-authorized trade auditing.
@@ -68,6 +75,8 @@ interface IAerodromeAutocompounder {
 contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     using SafeERC20 for IERC20;
 
+    bytes32 public constant YIELD_EXECUTOR = keccak256("YIELD_EXECUTOR");
+    bytes32 public constant GRID_EXECUTOR = keccak256("GRID_EXECUTOR");
     uint256 public constant PERFORMANCE_FEE_BPS = 1000; // 10%
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant TIMELOCK_DELAY = 2 days;
@@ -84,6 +93,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     address public counterparty;
 
     IAerodromeAutocompounder public autocompounder;
+    IExecutorRegistry public executorRegistry;
     uint256 public minHarvestProfitUsdc = 1e6;
 
     /// @notice On-chain deposit cap. Defaults to 0 (deposits disabled) until explicitly set.
@@ -137,6 +147,10 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     event RouteTokenAllowlisted(address indexed token, bool allowed);
     event RouteFactoryAllowlisted(address indexed factory, bool allowed);
     event ProcessorRevoked(address indexed processor);
+    event ExecutorRegistryUpdated(
+        address indexed oldRegistry,
+        address indexed newRegistry
+    );
 
     error Unauthorized();
     error InvalidAddress();
@@ -148,6 +162,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     error NoUpdatePending();
     error ProcessorNotAttested();
     error ProcessorNotAssignedToUser();
+    error UnauthorizedExecutor();
     error HarvestTooFrequent();
     error NoProfitReceived();
     error DepositCapExceeded();
@@ -163,7 +178,8 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         address _asset,
         address _yieldSource,
         address _counterparty,
-        address _autocompounder
+        address _autocompounder,
+        address _executorRegistry
     )
         ERC4626(IERC20(_asset))
         ERC20("YieldSense Vault", "ysUSDC")
@@ -172,11 +188,13 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (
             _asset == address(0) ||
             _yieldSource == address(0) ||
-            _counterparty == address(0)
+            _counterparty == address(0) ||
+            _executorRegistry == address(0)
         ) revert InvalidAddress();
         feeRecipient = msg.sender;
         yieldSource = _yieldSource;
         counterparty = _counterparty;
+        executorRegistry = IExecutorRegistry(_executorRegistry);
         // maxTotalAssets starts at 0 — deposits are DISABLED until the Safe
         // explicitly calls setMaxTotalAssets() after accepting ownership.
         maxTotalAssets = 0;
@@ -234,15 +252,14 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     // ─── USER PROCESSOR MAPPING ───────────────────────────────────────────────
 
     /**
-     * @notice Binds the caller to a specific Acurast processor.
-     * @dev The processor must already be attested before a user can assign it.
-     *      This binding is enforced in executeTrade: only the assigned processor's
-     *      signed payloads are accepted for a given user.
+     * @notice Legacy compatibility hook for older frontend flows.
+     * @dev Production execution no longer depends on per-user processor binding.
+     *      Grid processor authorization is validated through executorRegistry.
      * @param processor The secp256k1 Ethereum address of the Acurast processor.
      */
     function assignProcessor(address processor) external {
         if (processor == address(0)) revert InvalidAddress();
-        if (!attestedProcessors[processor]) revert ProcessorNotAttested();
+        if (!_isGridExecutor(processor)) revert UnauthorizedExecutor();
         userProcessors[msg.sender] = processor;
         emit ProcessorAssigned(msg.sender, processor);
     }
@@ -254,6 +271,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
      * @dev    DISABLED for MVP. Re-enabled in v2 once Acurast confirms cert format.
      *         Do NOT call setAttestationRoot on mainnet until the cert-to-address
      *         binding is verified against Acurast's published certificate structure.
+     *         Processor authorization is currently managed by ExecutorRegistry.
      */
     function setAttestationRoot(bytes32, bytes32) external pure {
         revert("P256 attestation root disabled for MVP");
@@ -262,11 +280,12 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     /**
      * @notice Permissionless P-256 TEE attestation.
      * @dev    DISABLED for MVP. Acurast's signing domain (acusig+SCRIPT_HASH+message)
-     *         is incompatible with standard EIP-712 recovery. Use ownerAttestProcessor.
+     *         is incompatible with standard EIP-712 recovery. Use ExecutorRegistry
+     *         registration for processor authorization.
      */
     function attestProcessor(address, bytes32, bytes32, bytes32) external pure {
         revert(
-            "Permissionless attestation disabled for MVP. Use ownerAttestProcessor."
+            "Permissionless attestation disabled for MVP. Use ExecutorRegistry."
         );
     }
 
@@ -318,10 +337,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         if (key == "yieldSource") yieldSource = pending.value;
         else if (key == "counterparty") counterparty = pending.value;
         else if (key == "feeRecipient") feeRecipient = pending.value;
-        else if (key == "processor") {
-            attestedProcessors[pending.value] = true;
-            emit ProcessorAttested(pending.value, bytes32(0));
-        } else revert("Invalid Key");
+        else revert("Invalid Key");
 
         delete pendingUpdates[key];
         emit UpdateApplied(key, pending.value);
@@ -365,19 +381,18 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         address recovered = ECDSA.recover(ethHash, signature);
 
-        if (!attestedProcessors[recovered]) revert ProcessorNotAttested();
-        if (userProcessors[user] != recovered)
-            revert ProcessorNotAssignedToUser();
+        if (!_isGridExecutor(recovered)) revert UnauthorizedExecutor();
 
         emit TradeExecuted(user, pnlDelta, nonce, digest);
     }
 
     /**
-     * @notice Triggers a harvest+compound cycle. Only callable by an attested Acurast processor.
+     * @notice Triggers a harvest+compound cycle. Only callable by a registered yield executor.
      *
-     * Auth model: msg.sender must be in attestedProcessors. The Acurast TEE submits
-     * this transaction directly via _STD_.chains.ethereum.fulfill(), so msg.sender
-     * is the processor's on-chain Ethereum address for that deployment.
+     * Auth model: msg.sender must be authorized as YIELD_EXECUTOR in ExecutorRegistry.
+     * The Acurast TEE submits this transaction directly via
+     * _STD_.chains.ethereum.fulfill(), so msg.sender is the processor's on-chain
+     * Ethereum address for that deployment.
      *
      * The EIP-712 signature flow has been removed. Acurast's signing domain
      * ("acusig" + SCRIPT_HASH + message) is incompatible with EIP-712 recovery.
@@ -397,8 +412,10 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         uint256 deadline,
         Route[] calldata routes
     ) external nonReentrant whenNotPaused {
-        // Auth: only attested Acurast processors may call this
-        if (!attestedProcessors[msg.sender]) revert ProcessorNotAttested();
+        // Auth: only yield-executor processors registered in the ExecutorRegistry
+        // may call this. Acurast deployment addresses are intentionally not
+        // stored directly in this vault's execution checks.
+        if (!_isYieldExecutor(msg.sender)) revert UnauthorizedExecutor();
 
         // Guard: autocompounder must be configured
         if (address(autocompounder) == address(0)) revert InvalidAddress();
@@ -498,6 +515,13 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         allowedRouteToken[asset()] = true;
         allowedRouteToken[yieldSource] = true;
         emit AutocompounderSet(newAutocompounder);
+    }
+
+    function setExecutorRegistry(address newRegistry) external onlyOwner {
+        if (newRegistry == address(0)) revert InvalidAddress();
+        address oldRegistry = address(executorRegistry);
+        executorRegistry = IExecutorRegistry(newRegistry);
+        emit ExecutorRegistryUpdated(oldRegistry, newRegistry);
     }
 
     function setMinHarvestProfitUsdc(uint256 minUsdc) external onlyOwner {
@@ -628,6 +652,14 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
             attestedProcessors[processors[i]] = false;
             emit ProcessorRevoked(processors[i]);
         }
+    }
+
+    function _isYieldExecutor(address processor) internal view returns (bool) {
+        return executorRegistry.isAuthorized(processor, YIELD_EXECUTOR);
+    }
+
+    function _isGridExecutor(address processor) internal view returns (bool) {
+        return executorRegistry.isAuthorized(processor, GRID_EXECUTOR);
     }
 
     /**

@@ -1,59 +1,57 @@
+"use strict";
+
 const hre = require("hardhat");
 
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
-  console.log("Deploying contracts with the account:", deployer.address);
+  console.log("Deploying mock stack with:", deployer.address);
 
-  // 1. Deploy MockUSDC with 6 decimals (matching real USDC)
   const MockUSDC = await hre.ethers.getContractFactory("MockUSDC");
-  const mockToken = await MockUSDC.deploy(6, { gasLimit: 3000000 });
+  const mockToken = await MockUSDC.deploy(6, { gasLimit: 3_000_000 });
   await mockToken.waitForDeployment();
   const mockAddress = await mockToken.getAddress();
-  console.log("✅ MockUSDC deployed to:", mockAddress);
+  await (await mockToken.mint(hre.ethers.parseUnits("100000", 6))).wait();
+  console.log("MockUSDC:", mockAddress);
 
-  // 2. Deploy YieldSenseKeeper
-  // acurastSigner = deployer, since the Hardhat account IS the ACURAST_WORKER_KEY
-  const acurastSigner = deployer.address;
-  const yieldSource = deployer.address;
-  const counterparty = deployer.address;
-  
-  const YieldSenseKeeper = await hre.ethers.getContractFactory("YieldSenseKeeper");
-  const keeper = await YieldSenseKeeper.deploy(mockAddress, yieldSource, counterparty, { gasLimit: 5000000 });
+  const MockAutocompounder = await hre.ethers.getContractFactory("MockAutocompounder");
+  const mockComp = await MockAutocompounder.deploy(mockAddress, { gasLimit: 2_000_000 });
+  await mockComp.waitForDeployment();
+  const mockCompAddress = await mockComp.getAddress();
+  console.log("MockAutocompounder:", mockCompAddress);
+
+  const Registry = await hre.ethers.getContractFactory("ExecutorRegistry");
+  const registry = await Registry.deploy(deployer.address, { gasLimit: 1_500_000 });
+  await registry.waitForDeployment();
+  const registryAddress = await registry.getAddress();
+  console.log("ExecutorRegistry:", registryAddress);
+
+  const Keeper = await hre.ethers.getContractFactory("YieldSenseKeeper");
+  const keeper = await Keeper.deploy(
+    mockAddress,
+    deployer.address,
+    deployer.address,
+    mockCompAddress,
+    registryAddress,
+    { gasLimit: 5_000_000 }
+  );
   await keeper.waitForDeployment();
   const keeperAddress = await keeper.getAddress();
-  
-  console.log("✅ YieldSenseKeeper deployed to:", keeperAddress);
+  console.log("YieldSenseKeeper:", keeperAddress);
 
-  // 3. Approve Keeper to pull funds from Yield Source (Deployer) for Grid Trades
-  console.log("Approving Keeper to spend MockUSDC from deployer...");
-  const tx1 = await mockToken.approve(keeperAddress, hre.ethers.MaxUint256, { gasLimit: 100000 });
-  await tx1.wait();
-  console.log("✅ Keeper approved for MockUSDC transfers.");
+  await (await mockComp.setKeeper(keeperAddress, { gasLimit: 100_000 })).wait();
 
-  // 4. Attest the deployer as a trusted TEE processor (for testnet bootstrapping)
-  console.log("Attesting deployer as trusted TEE processor...");
-  const tx2 = await keeper.ownerAttestProcessor(deployer.address, { gasLimit: 100000 });
-  await tx2.wait();
-  console.log("✅ Deployer attested as trusted processor.");
+  const yieldRole = await registry.YIELD_EXECUTOR();
+  const gridRole = await registry.GRID_EXECUTOR();
+  await (await registry.registerProcessor(deployer.address, yieldRole, hre.ethers.ZeroHash, hre.ethers.ZeroHash, { gasLimit: 160_000 })).wait();
+  await (await registry.registerProcessor(deployer.address, gridRole, hre.ethers.ZeroHash, hre.ethers.ZeroHash, { gasLimit: 160_000 })).wait();
 
-  // 5. Set a dummy P-256 attestation root key (for testnet demo)
-  // In production, this would be the Acurast network attestation root or Google Titan M root CA
-  const dummyQx = "0x" + "a".repeat(64); // Placeholder P-256 x-coordinate
-  const dummyQy = "0x" + "b".repeat(64); // Placeholder P-256 y-coordinate
-  console.log("Setting P-256 attestation root key...");
-  const tx3 = await keeper.setAttestationRoot(dummyQx, dummyQy, { gasLimit: 100000 });
-  await tx3.wait();
-  console.log("✅ P-256 attestation root key set.");
+  await (await mockToken.approve(keeperAddress, hre.ethers.MaxUint256, { gasLimit: 100_000 })).wait();
 
-  console.log("\n=========================================");
-  console.log("🚀 COPY THESE INTO: frontend/.env.local");
-  console.log("=========================================");
+  console.log("\nCopy these into frontend/.env.local:");
   console.log(`NEXT_PUBLIC_KEEPER_ADDRESS=${keeperAddress}`);
+  console.log(`NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS=${registryAddress}`);
   console.log(`NEXT_PUBLIC_ASSET_ADDRESS=${mockAddress}`);
-  console.log("\n--- P-256 TEE Attestation Status ---");
-  console.log(`Attestation Root Qx: ${dummyQx}`);
-  console.log(`Attestation Root Qy: ${dummyQy}`);
-  console.log(`Attested Processors: [${deployer.address}]`);
+  console.log(`NEXT_PUBLIC_AUTOCOMPOUNDER_ADDRESS=${mockCompAddress}`);
 }
 
 main().catch((error) => {
