@@ -51,6 +51,7 @@ interface IAerodromeAutocompounder {
     function router() external view returns (address);
     function maxTotalAssets() external view returns (uint256);
     function slippageBps() external view returns (uint256);
+    function stakedLpBalance() external view returns (uint256);
 }
 
 interface IExecutorRegistry {
@@ -143,6 +144,11 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     event ProcessorAssigned(address indexed user, address indexed processor);
     event AutocompounderSet(address indexed autocompounder);
     event ProfitCredited(uint256 amount);
+    event LiquidityUnwoundForWithdrawal(
+        uint256 requestedAssets,
+        uint256 lpUnwound,
+        uint256 assetsRecovered
+    );
     event MaxTotalAssetsUpdated(uint256 oldCap, uint256 newCap);
     event RouteTokenAllowlisted(address indexed token, bool allowed);
     event RouteFactoryAllowlisted(address indexed factory, bool allowed);
@@ -173,6 +179,13 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     error InvalidRouteContinuity();
     error InvalidRouteFactory();
     error InvalidRouteToken();
+
+    modifier onlyOwnerOrYieldExecutor() {
+        if (msg.sender != owner() && !_isYieldExecutor(msg.sender)) {
+            revert UnauthorizedExecutor();
+        }
+        _;
+    }
 
     constructor(
         address _asset,
@@ -480,7 +493,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
         uint256 amount,
         uint256 amountToSwap,
         uint256 minLpOut
-    ) external nonReentrant onlyOwner {
+    ) external nonReentrant whenNotPaused onlyOwnerOrYieldExecutor {
         if (address(autocompounder) == address(0)) revert InvalidAddress();
         if (amount == 0) revert AmountZero();
         if (minLpOut == 0) revert AmountZero();
@@ -545,16 +558,13 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
     }
 
     function maxWithdraw(address owner) public view override returns (uint256) {
-        uint256 totalAvailable = super.maxWithdraw(owner);
-        uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
-        return totalAvailable < idleAssets ? totalAvailable : idleAssets;
+        if (paused()) return 0;
+        return super.maxWithdraw(owner);
     }
 
     function maxRedeem(address owner) public view override returns (uint256) {
-        uint256 shares = super.maxRedeem(owner);
-        uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
-        uint256 idleShares = previewDeposit(idleAssets);
-        return shares < idleShares ? shares : idleShares;
+        if (paused()) return 0;
+        return super.maxRedeem(owner);
     }
 
     /**
@@ -590,6 +600,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
             block.number > lastDepositBlock[owner_],
             "Same block redemption not allowed"
         );
+        _ensureWithdrawalLiquidity(assets);
         return super.withdraw(assets, receiver, owner_);
     }
 
@@ -602,6 +613,7 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
             block.number > lastDepositBlock[owner_],
             "Same block redemption not allowed"
         );
+        _ensureWithdrawalLiquidity(previewRedeem(shares));
         return super.redeem(shares, receiver, owner_);
     }
 
@@ -660,6 +672,38 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
 
     function _isGridExecutor(address processor) internal view returns (bool) {
         return executorRegistry.isAuthorized(processor, GRID_EXECUTOR);
+    }
+
+    function _ensureWithdrawalLiquidity(uint256 assets) internal {
+        uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
+        if (idleAssets >= assets) return;
+
+        if (address(autocompounder) == address(0)) revert InsufficientBalance();
+
+        uint256 shortfall = assets - idleAssets;
+        uint256 deployedValue = autocompounder.getDeployedValueInUSDC();
+        uint256 stakedLp = autocompounder.stakedLpBalance();
+
+        if (deployedValue == 0 || stakedLp == 0) revert InsufficientBalance();
+
+        uint256 lpToUnwind = (shortfall * stakedLp + deployedValue - 1) /
+            deployedValue;
+        if (lpToUnwind > stakedLp) lpToUnwind = stakedLp;
+
+        uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
+        autocompounder.unwindLp(lpToUnwind);
+        uint256 recovered = IERC20(asset()).balanceOf(address(this)) -
+            balanceBefore;
+
+        if (IERC20(asset()).balanceOf(address(this)) < assets) {
+            revert InsufficientBalance();
+        }
+
+        emit LiquidityUnwoundForWithdrawal(
+            assets,
+            lpToUnwind,
+            recovered
+        );
     }
 
     /**

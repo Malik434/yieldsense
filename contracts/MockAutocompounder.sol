@@ -112,7 +112,9 @@ contract MockAutocompounder is Ownable {
     }
 
     function pendingRewards() external pure returns (uint256) { return 0; }
-    function stakedLpBalance() external pure returns (uint256) { return 0; }
+    function stakedLpBalance() external view returns (uint256) {
+        return asset.balanceOf(address(this));
+    }
 
     /// @notice Seed the mock with USDC to simulate earned rewards.
     function seed(uint256 amount) external {
