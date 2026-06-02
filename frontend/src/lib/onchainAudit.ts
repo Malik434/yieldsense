@@ -60,6 +60,22 @@ export type OnchainAudit = {
   timeline: AuditTimelineEvent[];
 };
 
+function emptyAudit(userAddress: Address, chainId: number, keeper: Address, autocompounder: Address): OnchainAudit {
+  return {
+    userAddress,
+    chainId,
+    keeper,
+    autocompounder,
+    principalUsd: 0,
+    totalProfitCreditedUsd: 0,
+    userProfitCreditedUsd: 0,
+    userShares: '0',
+    totalShares: '0',
+    harvests: [],
+    timeline: [],
+  };
+}
+
 function isAddress(value: string): value is Address {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
 }
@@ -80,7 +96,17 @@ function logKey(log: Pick<Log, 'transactionHash' | 'logIndex'>): string {
 export async function loadOnchainAudit(userAddress: string, chainId: number): Promise<OnchainAudit | null> {
   if (!isAddress(userAddress)) return null;
   const cacheKey = `onchain-audit:${userAddress.toLowerCase()}:${chainId}`;
-  return withCache(cacheKey, () => _fetchOnchainAudit(userAddress, chainId), 3 * 60 * 1_000);
+  return withCache(cacheKey, async () => {
+    try {
+      return await _fetchOnchainAudit(userAddress, chainId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[onchainAudit] Returning empty audit after provider failure: ${message}`);
+      const config = getContractConfig(chainId);
+      if (!isAddress(config.keeper) || !isAddress(config.autocompounder)) return null;
+      return emptyAudit(userAddress, chainId, config.keeper, config.autocompounder);
+    }
+  }, 3 * 60 * 1_000);
 }
 
 async function _fetchOnchainAudit(userAddress: string, chainId: number): Promise<OnchainAudit | null> {
@@ -91,6 +117,14 @@ async function _fetchOnchainAudit(userAddress: string, chainId: number): Promise
 
   const client = createPublicClient({ transport: http(config.rpc) });
   const fromBlock = config.deploymentBlock ?? BigInt(0);
+
+  // Public Base RPC rate-limits large event scans aggressively. On mainnet,
+  // avoid the seven-way audit scan unless an operator explicitly enables it
+  // or provides an indexer-style endpoint. The UI can still render live vault
+  // balances and a flat chart fallback from direct contract reads.
+  if (chainId === 8453 && process.env.ALLOW_ONCHAIN_AUDIT_RPC_FALLBACK !== 'true') {
+    return emptyAudit(userAddress, chainId, config.keeper, config.autocompounder);
+  }
 
   // Cast to any[] — getLogsPaginated returns generic Log[], but we know the
   // shape from the event ABI. Using any here avoids ~30 TS errors on .args.
@@ -240,5 +274,4 @@ async function _fetchOnchainAudit(userAddress: string, chainId: number): Promise
     timeline: enrichedTimeline,
   };
 }
-
 

@@ -133,13 +133,20 @@ async function fetchOnchainAudit(
 ): Promise<OnchainAuditResponse | null> {
   if (!portfolioAddress) return null;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
   try {
-    const res = await fetch(`/api/onchain-audit?userAddress=${portfolioAddress}&chainId=${chainId}`);
+    const res = await fetch(`/api/onchain-audit?userAddress=${portfolioAddress}&chainId=${chainId}`, {
+      signal: controller.signal,
+    });
     if (!res.ok) return null;
     return await res.json();
   } catch (error) {
     console.warn('[PnlChart] Falling back without on-chain audit history:', error);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -164,8 +164,8 @@ export function ConfidentialStrategyBox() {
               <SlidersHorizontal size={20} className="text-[#00FFA3]" />
             </div>
             <div>
-              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Confidential Logic</p>
-              <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Strategy Parameters</h3>
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Legacy Simulation</p>
+              <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Confidential Parameters</h3>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -250,9 +250,9 @@ export function ConfidentialStrategyBox() {
 
           {/* Rebalance Interval */}
           <div className="flex flex-col gap-3">
-            <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
-              Execution Heartbeat
-            </label>
+              <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
+                Simulation Heartbeat
+              </label>
             <div className="flex gap-2">
               {['1', '4', '8', '24'].map((v) => (
                 <button

@@ -10,6 +10,7 @@ import { KEEPER_ABI, OPERATOR_ADDRESS } from "@/lib/contracts";
 import { Header } from "@/components/Header";
 import { DepositModule } from "@/components/DepositModule";
 import { ConfidentialStrategyBox } from "@/components/ConfidentialStrategyBox";
+import { GridTradingDashboard } from "@/components/GridTradingDashboard";
 import { PnlChart } from "@/components/PnlChart";
 import { TransactionHistory } from "@/components/TransactionHistory";
 import { WithdrawModule } from "@/components/WithdrawModule";
@@ -290,6 +291,15 @@ export default function CommandCenter() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-10 mb-16 sm:mb-24 animate-fade-in">
           <DepositModule />
           <ConfidentialStrategyBox />
+        </div>
+
+        <SectionHeading
+          id="grid-trading"
+          label="Grid Trading"
+          sublabel="Confidential live execution & gas-aware settlement"
+        />
+        <div className="mb-16 sm:mb-24 animate-fade-in">
+          <GridTradingDashboard />
         </div>
 
         <SectionHeading

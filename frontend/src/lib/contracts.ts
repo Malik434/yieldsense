@@ -9,10 +9,16 @@ const MAINNET_POOL = '0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d';
 const MAINNET_GAUGE = '0x4F09bAb2f0E15e2A078A227FE1537665F55b8360';
 const MAINNET_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const MAINNET_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
+const MAINNET_GRID_VAULT = process.env.NEXT_PUBLIC_MAINNET_GRID_VAULT_ADDRESS || process.env.NEXT_PUBLIC_GRID_VAULT_ADDRESS || '';
+const MAINNET_GRID_STRATEGY_MANAGER = process.env.NEXT_PUBLIC_MAINNET_GRID_STRATEGY_MANAGER_ADDRESS || process.env.NEXT_PUBLIC_GRID_STRATEGY_MANAGER_ADDRESS || '';
+const MAINNET_GRID_EXECUTION_ROUTER = process.env.NEXT_PUBLIC_MAINNET_GRID_EXECUTION_ROUTER_ADDRESS || process.env.NEXT_PUBLIC_GRID_EXECUTION_ROUTER_ADDRESS || '';
 
 const TESTNET_KEEPER = process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '';
 const TESTNET_EXECUTOR_REGISTRY = process.env.NEXT_PUBLIC_TESTNET_EXECUTOR_REGISTRY_ADDRESS || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS || '';
 const TESTNET_ASSET = process.env.NEXT_PUBLIC_TESTNET_ASSET_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const TESTNET_GRID_VAULT = process.env.NEXT_PUBLIC_TESTNET_GRID_VAULT_ADDRESS || process.env.NEXT_PUBLIC_GRID_VAULT_ADDRESS || '';
+const TESTNET_GRID_STRATEGY_MANAGER = process.env.NEXT_PUBLIC_TESTNET_GRID_STRATEGY_MANAGER_ADDRESS || process.env.NEXT_PUBLIC_GRID_STRATEGY_MANAGER_ADDRESS || '';
+const TESTNET_GRID_EXECUTION_ROUTER = process.env.NEXT_PUBLIC_TESTNET_GRID_EXECUTION_ROUTER_ADDRESS || process.env.NEXT_PUBLIC_GRID_EXECUTION_ROUTER_ADDRESS || '';
 
 // Chain Configuration Mapping
 export const CHAIN_CONFIG = {
@@ -29,6 +35,9 @@ export const CHAIN_CONFIG = {
     rewardToken: MAINNET_AERO as `0x${string}`,
     router: MAINNET_ROUTER as `0x${string}`,
     factory: MAINNET_FACTORY as `0x${string}`,
+    gridVault: MAINNET_GRID_VAULT as `0x${string}`,
+    gridStrategyManager: MAINNET_GRID_STRATEGY_MANAGER as `0x${string}`,
+    gridExecutionRouter: MAINNET_GRID_EXECUTION_ROUTER as `0x${string}`,
     rpc: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org',
     deploymentBlock: BigInt('45858549'),
     isProduction: true,
@@ -46,6 +55,9 @@ export const CHAIN_CONFIG = {
     rewardToken: (process.env.NEXT_PUBLIC_TESTNET_REWARD_TOKEN_ADDRESS || '') as `0x${string}`,
     router: (process.env.NEXT_PUBLIC_TESTNET_ROUTER_ADDRESS || '') as `0x${string}`,
     factory: (process.env.NEXT_PUBLIC_TESTNET_FACTORY_ADDRESS || '') as `0x${string}`,
+    gridVault: TESTNET_GRID_VAULT as `0x${string}`,
+    gridStrategyManager: TESTNET_GRID_STRATEGY_MANAGER as `0x${string}`,
+    gridExecutionRouter: TESTNET_GRID_EXECUTION_ROUTER as `0x${string}`,
     rpc: process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org',
     deploymentBlock: BigInt(process.env.NEXT_PUBLIC_TESTNET_DEPLOYMENT_BLOCK || '0'),
     isProduction: false,
@@ -63,6 +75,9 @@ export const KEEPER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).keeper;
 export const EXECUTOR_REGISTRY_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).executorRegistry;
 export const ASSET_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).asset;
 export const AUTOCOMPOUNDER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).autocompounder;
+export const GRID_VAULT_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).gridVault;
+export const GRID_STRATEGY_MANAGER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).gridStrategyManager;
+export const GRID_EXECUTION_ROUTER_ADDRESS = getContractConfig(DEFAULT_CHAIN_ID).gridExecutionRouter;
 
 export const OPERATOR_ADDRESS = "0x1B77DAd014Cc99d877fE8CF5152773432d39d7bA";
 
@@ -366,5 +381,157 @@ export const MOCK_USDC_ABI = [
     "outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
     "stateMutability": "view",
     "type": "function"
+  }
+] as const;
+
+export const GRID_VAULT_ABI = [
+  {
+    "inputs": [
+      { "internalType": "address", "name": "token", "type": "address" },
+      { "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ],
+    "name": "deposit",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "token", "type": "address" },
+      { "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ],
+    "name": "withdraw",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "", "type": "address" },
+      { "internalType": "address", "name": "", "type": "address" }
+    ],
+    "name": "availableBalance",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "", "type": "bytes32" },
+      { "internalType": "address", "name": "", "type": "address" }
+    ],
+    "name": "lockedStrategyBalance",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pausedAll",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
+  }
+] as const;
+
+export const GRID_STRATEGY_MANAGER_ABI = [
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "pairId", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "encryptedPayloadHash", "type": "bytes32" }
+    ],
+    "name": "createStrategy",
+    "outputs": [{ "internalType": "bytes32", "name": "strategyId", "type": "bytes32" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "strategyId", "type": "bytes32" },
+      { "internalType": "uint256", "name": "tradingAmountQuote", "type": "uint256" },
+      { "internalType": "uint256", "name": "gasReserveQuote", "type": "uint256" }
+    ],
+    "name": "allocateCapital",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "bytes32", "name": "strategyId", "type": "bytes32" }],
+    "name": "enableStrategy",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "bytes32", "name": "strategyId", "type": "bytes32" }],
+    "name": "pauseStrategy",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "strategyId", "type": "bytes32" },
+      { "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ],
+    "name": "addGasReserve",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "bytes32", "name": "strategyId", "type": "bytes32" }],
+    "name": "getStrategy",
+    "outputs": [
+      {
+        "components": [
+          { "internalType": "bytes32", "name": "id", "type": "bytes32" },
+          { "internalType": "address", "name": "owner", "type": "address" },
+          { "internalType": "bytes32", "name": "pairId", "type": "bytes32" },
+          { "internalType": "address", "name": "baseToken", "type": "address" },
+          { "internalType": "address", "name": "quoteToken", "type": "address" },
+          { "internalType": "uint256", "name": "allocatedQuote", "type": "uint256" },
+          { "internalType": "uint256", "name": "quoteBalance", "type": "uint256" },
+          { "internalType": "uint256", "name": "baseBalance", "type": "uint256" },
+          { "internalType": "uint256", "name": "avgEntryPrice", "type": "uint256" },
+          { "internalType": "int256", "name": "realizedPnlQuote", "type": "int256" },
+          { "internalType": "uint256", "name": "feesPaidQuote", "type": "uint256" },
+          { "internalType": "uint256", "name": "gasReserveQuote", "type": "uint256" },
+          { "internalType": "uint256", "name": "gasSpentQuote", "type": "uint256" },
+          { "internalType": "uint256", "name": "maxGasCostQuotePerTrade", "type": "uint256" },
+          { "internalType": "uint64", "name": "lastExecutionAt", "type": "uint64" },
+          { "internalType": "int32", "name": "currentGridLevel", "type": "int32" },
+          { "internalType": "uint32", "name": "strategyVersion", "type": "uint32" },
+          { "internalType": "bytes32", "name": "encryptedPayloadHash", "type": "bytes32" },
+          { "internalType": "enum GridStrategyManager.StrategyStatus", "name": "status", "type": "uint8" },
+          { "internalType": "uint64", "name": "createdAt", "type": "uint64" },
+          { "internalType": "uint64", "name": "updatedAt", "type": "uint64" }
+        ],
+        "internalType": "struct GridStrategyManager.GridStrategy",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pausedAll",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "bytes32", "name": "strategyId", "type": "bytes32" },
+      { "indexed": true, "internalType": "address", "name": "owner", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "pairId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "encryptedPayloadHash", "type": "bytes32" }
+    ],
+    "name": "StrategyCreated",
+    "type": "event"
   }
 ] as const;
