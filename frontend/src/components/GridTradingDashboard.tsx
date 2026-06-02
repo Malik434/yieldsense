@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Check,
   CheckCircle2,
+  ChevronDown,
   CirclePause,
   Gauge,
   KeyRound,
@@ -29,6 +31,7 @@ import type {
   GridAttestationVerification,
   HexAddress,
 } from '@/lib/gridTypes';
+import type { GridPairConfig } from '@/lib/gridStore';
 
 type StrategyForm = {
   lowerPrice: string;
@@ -110,14 +113,23 @@ export function GridTradingDashboard() {
   const [attestation, setAttestation] = useState<GridAttestationEvidence | null>(null);
   const [attestationStatus, setAttestationStatus] = useState<GridAttestationVerification | null>(null);
   const [queueJobs, setQueueJobs] = useState<ExecutionJob[]>([]);
+  const [pairs, setPairs] = useState<GridPairConfig[]>([]);
+  const [selectedPairId, setSelectedPairId] = useState('');
+  const [pairMenuOpen, setPairMenuOpen] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
   const [error, setError] = useState('');
+  const pairMenuRef = useRef<HTMLDivElement | null>(null);
 
   const gridVault = config.gridVault;
   const strategyManager = config.gridStrategyManager;
-  const quoteToken = config.asset;
-  const baseToken = config.rewardToken;
-  const pairId = useMemo(() => keccak256(stringToBytes('AERO-USDC')), []);
+  const selectedPair = useMemo(
+    () => pairs.find((pair) => pair.pairId === selectedPairId) ?? pairs[0],
+    [pairs, selectedPairId],
+  );
+  const quoteToken = selectedPair?.quoteToken || config.asset;
+  const quoteSymbol = selectedPair?.quoteSymbol || 'USDC';
+  const baseSymbol = selectedPair?.baseSymbol || 'Base';
+  const pairId = selectedPair?.pairId || keccak256(stringToBytes('AERO-USDC'));
   const contractsReady = isConfigured(gridVault) && isConfigured(strategyManager) && isConfigured(quoteToken);
 
   const { data: quoteDecimalsRaw } = useReadContract({
@@ -227,6 +239,32 @@ export function GridTradingDashboard() {
     }
   }, [strategyId]);
 
+  const fetchPairs = useCallback(async () => {
+    const res = await fetch(`/api/grid/pairs?chainId=${chainId}`);
+    if (!res.ok) return;
+    const body = await res.json();
+    const nextPairs = Array.isArray(body.pairs) ? body.pairs : [];
+    setPairs(nextPairs);
+    setSelectedPairId((current) => current || nextPairs[0]?.pairId || '');
+  }, [chainId]);
+
+  useEffect(() => {
+    fetchPairs();
+  }, [fetchPairs]);
+
+  useEffect(() => {
+    if (!pairMenuOpen) return undefined;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!pairMenuRef.current?.contains(event.target as Node)) {
+        setPairMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [pairMenuOpen]);
+
   useEffect(() => {
     const stored = address ? localStorage.getItem(`ys_grid_strategy_${address}_${chainId}`) : null;
     if (stored) setStrategyId(stored);
@@ -259,7 +297,7 @@ export function GridTradingDashboard() {
   };
 
   const handleApprove = () =>
-    runTx('Approving USDC', async () => {
+    runTx(`Approving ${quoteSymbol}`, async () => {
       if (!contractsReady) throw new Error('Grid contracts are not configured.');
       const amount = parseUnits(depositAmount || '0', quoteDecimals);
       await writeContractAsync({
@@ -271,7 +309,7 @@ export function GridTradingDashboard() {
     });
 
   const handleDeposit = () =>
-    runTx('Depositing USDC', async () => {
+    runTx(`Depositing ${quoteSymbol}`, async () => {
       if (!contractsReady) throw new Error('Grid contracts are not configured.');
       const amount = parseUnits(depositAmount || '0', quoteDecimals);
       await writeContractAsync({
@@ -292,7 +330,7 @@ export function GridTradingDashboard() {
         address: strategyManager,
         abi: GRID_STRATEGY_MANAGER_ABI,
         functionName: 'createStrategy',
-        args: [pairId, payloadHash],
+        args: [pairId as `0x${string}`, payloadHash],
       });
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -307,6 +345,23 @@ export function GridTradingDashboard() {
             const createdId = decoded.args.strategyId as string;
             setStrategyId(createdId);
             localStorage.setItem(`ys_grid_strategy_${address}_${chainId}`, createdId);
+            await fetch('/api/grid/strategies', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                strategyId: createdId,
+                owner: address,
+                chainId,
+                pairId,
+                status: 'draft',
+                lowerPrice: Number(form.lowerPrice),
+                upperPrice: Number(form.upperPrice),
+                gridCount: Number(form.gridCount),
+                tradeSizeQuote: form.tradeSizeQuote,
+                maxSlippageBps: Number(form.maxSlippageBps),
+                executionIntervalSec: Number(form.executionIntervalSec),
+              }),
+            });
             return;
           }
         } catch {}
@@ -327,6 +382,11 @@ export function GridTradingDashboard() {
           parseUnits(gasReserveAmount || '0', quoteDecimals),
         ],
       });
+      await fetch('/api/grid/strategies', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId, status: 'funded' }),
+      });
     });
 
   const handleEnable = () =>
@@ -338,6 +398,11 @@ export function GridTradingDashboard() {
         functionName: 'enableStrategy',
         args: [strategyId as `0x${string}`],
       });
+      await fetch('/api/grid/strategies', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId, status: 'active' }),
+      });
     });
 
   const handlePause = () =>
@@ -348,6 +413,11 @@ export function GridTradingDashboard() {
         abi: GRID_STRATEGY_MANAGER_ABI,
         functionName: 'pauseStrategy',
         args: [strategyId as `0x${string}`],
+      });
+      await fetch('/api/grid/strategies', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId, status: 'paused' }),
       });
     });
 
@@ -366,7 +436,7 @@ export function GridTradingDashboard() {
           </div>
           <div>
             <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Live Grid Engine</p>
-            <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">AERO/USDC Grid Trading</h3>
+            <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">{selectedPair?.label || 'Grid'} Trading</h3>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-[#8B949E] uppercase tracking-[0.16em]">
               Deposit grid capital, seal strategy parameters, allocate gas reserve, and enable the shared Acurast executor.
             </p>
@@ -375,11 +445,11 @@ export function GridTradingDashboard() {
 
         <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-4 lg:min-w-[520px]">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-[#484F58]">Wallet USDC</p>
+            <p className="text-[#484F58]">Wallet {quoteSymbol}</p>
             <p className="mt-2 text-[#F5F7FA]">{Number(tokenBalance).toFixed(2)}</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-[#484F58]">Grid Free</p>
+            <p className="text-[#484F58]">Free {quoteSymbol}</p>
             <p className="mt-2 text-[#F5F7FA]">{Number(availableBalance).toFixed(2)}</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -415,14 +485,116 @@ export function GridTradingDashboard() {
             <Wallet size={17} className="text-[#C2E812]" />
             <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Capital</h4>
           </div>
-          <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Deposit USDC</label>
-          <input
-            value={depositAmount}
-            onChange={(event) => setDepositAmount(event.target.value)}
-            className="ys-input mt-3 w-full"
-            type="number"
-            min="0"
-          />
+          <div className="space-y-4">
+            <label className="flex flex-col gap-2">
+              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Pair</span>
+              <div ref={pairMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setPairMenuOpen((open) => !open)}
+                  className={`flex h-12 w-full items-center justify-between rounded-xl border px-4 text-left transition-all ${
+                    pairMenuOpen
+                      ? 'border-[#C2E812]/50 bg-[#C2E812]/[0.04] shadow-[0_0_0_1px_rgba(194,232,18,0.12)]'
+                      : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.06]'
+                  }`}
+                  aria-expanded={pairMenuOpen}
+                  aria-haspopup="listbox"
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[#C2E812]/15 bg-[#C2E812]/10 text-[10px] font-mono font-bold text-[#C2E812]">
+                      {baseSymbol.slice(0, 3)}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
+                        {selectedPair?.label || 'Select Pair'}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                        {baseSymbol} / {quoteSymbol}
+                      </span>
+                    </span>
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    className={`shrink-0 text-[#8B949E] transition-transform ${pairMenuOpen ? 'rotate-180 text-[#C2E812]' : ''}`}
+                  />
+                </button>
+
+                {pairMenuOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#070B0E] p-2 shadow-2xl shadow-black/40 ring-1 ring-[#C2E812]/10"
+                  >
+                    {pairs.length === 0 ? (
+                      <div className="rounded-lg px-3 py-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                        No pairs configured
+                      </div>
+                    ) : (
+                      pairs.map((pair) => {
+                        const active = pair.pairId === selectedPair?.pairId;
+                        return (
+                          <button
+                            key={pair.pairId}
+                            type="button"
+                            role="option"
+                            aria-selected={active}
+                            onClick={() => {
+                              setSelectedPairId(pair.pairId);
+                              setPairMenuOpen(false);
+                            }}
+                            className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left transition-all ${
+                              active
+                                ? 'border border-[#C2E812]/20 bg-[#C2E812]/10 text-[#F5F7FA]'
+                                : 'border border-transparent text-[#8B949E] hover:border-white/10 hover:bg-white/[0.05] hover:text-[#F5F7FA]'
+                            }`}
+                          >
+                            <span className="min-w-0">
+                              <span className="block text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
+                              <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                                {pair.baseSymbol} base / {pair.quoteSymbol} quote
+                              </span>
+                            </span>
+                            {active && <Check size={15} className="shrink-0 text-[#C2E812]" />}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </label>
+
+            <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3">
+              <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
+                <div>
+                  <p className="text-[#484F58]">Base</p>
+                  <p className="mt-1 text-[#F5F7FA]">{baseSymbol}</p>
+                </div>
+                <div>
+                  <p className="text-[#484F58]">Quote</p>
+                  <p className="mt-1 text-[#F5F7FA]">{quoteSymbol}</p>
+                </div>
+              </div>
+              <p className="mt-3 truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                Price pool <span className="text-[#8B949E]">{short(selectedPair?.poolAddress)}</span>
+              </p>
+            </div>
+
+            <label className="flex flex-col gap-2">
+              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Deposit Amount</span>
+              <div className="relative">
+                <input
+                  value={depositAmount}
+                  onChange={(event) => setDepositAmount(event.target.value)}
+                  className="ys-input w-full pr-20"
+                  type="number"
+                  min="0"
+                />
+                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+                  {quoteSymbol}
+                </span>
+              </div>
+            </label>
+          </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <button className="ys-btn-secondary h-12" disabled={!contractsReady || Boolean(busyLabel) || !needsApproval} onClick={handleApprove}>
               {needsApproval ? 'Approve' : 'Approved'}
@@ -467,7 +639,7 @@ export function GridTradingDashboard() {
             </div>
             <div>
               <p className="text-[#484F58]">Base</p>
-              <p className="mt-2 text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.baseBalance, 18)).toFixed(4) : '0.0000'}</p>
+              <p className="mt-2 text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.baseBalance, selectedPair?.baseDecimals || 18)).toFixed(4) : '0.0000'}</p>
             </div>
             <div>
               <p className="text-[#484F58]">Gas Reserve</p>
@@ -489,7 +661,7 @@ export function GridTradingDashboard() {
               ['lowerPrice', 'Lower'],
               ['upperPrice', 'Upper'],
               ['gridCount', 'Grids'],
-              ['tradeSizeQuote', 'Trade USDC'],
+              ['tradeSizeQuote', `Trade ${quoteSymbol}`],
               ['stopLossPrice', 'Stop Loss'],
               ['takeProfitPrice', 'Take Profit'],
               ['executionIntervalSec', 'Interval Sec'],

@@ -49,8 +49,9 @@ export function WithdrawModule() {
   const { writeContractAsync } = useWriteContract();
 
   const withdrawableRaw = maxWithdrawRaw ? (maxWithdrawRaw as bigint) : BigInt(0);
+  const redeemableSharesRaw = userSharesRaw ? (userSharesRaw as bigint) : BigInt(0);
   const withdrawable = parseFloat(formatUnits(withdrawableRaw, 6));
-  const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
+  const userShares = parseFloat(formatUnits(redeemableSharesRaw, 6));
   const totalShares = totalSharesRaw ? parseFloat(formatUnits(totalSharesRaw as bigint, 6)) : 0;
   const totalAssets = totalAssetsRaw ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6)) : 0;
   const shareFraction = totalShares > 0 && userShares > 0 ? Math.min(userShares / totalShares, 1) : 0;
@@ -67,8 +68,8 @@ export function WithdrawModule() {
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
-        functionName: 'withdraw',
-        args: [withdrawableRaw, address as `0x${string}`, address as `0x${string}`],
+        functionName: 'redeem',
+        args: [redeemableSharesRaw, address as `0x${string}`, address as `0x${string}`],
         dataSuffix: BUILDER_CODE_SUFFIX,
       });
       setSuccess(true);
@@ -170,10 +171,10 @@ export function WithdrawModule() {
           <div className="flex flex-col gap-3">
             <button
               onClick={handleWithdraw}
-              disabled={withdrawable === 0 || withdrawing}
+              disabled={redeemableSharesRaw === BigInt(0) || withdrawing}
               className={`
                 ys-btn-primary w-full h-16 text-sm relative group overflow-hidden
-                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : withdrawable === 0 ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
+                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : redeemableSharesRaw === BigInt(0) ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
               `}
             >
               <div className="relative flex items-center justify-center gap-3">

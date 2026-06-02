@@ -60,3 +60,19 @@ each Ownable2Step contract, then accept ownership from the Safe.
 
 No processor, strategy, or user migration is required when ownership moves to a
 Safe.
+
+## Pair and Yield Pool Configuration
+
+The grid frontend discovers pairs from `/api/grid/pairs`.
+
+- `AERO/USDC` is enabled by default.
+- `ETH/USDC` is enabled by default and uses WETH as the base token.
+- `ACU/USDC` is shown only when `NEXT_PUBLIC_ACU_TOKEN_ADDRESS` and
+  `NEXT_PUBLIC_ACU_USDC_POOL_ADDRESS` are set.
+
+For complete mainnet deployment, `scripts/deployCompleteMainnet.cjs` configures
+`AERO/USDC` and `ETH/USDC` on-chain. It configures `ACU/USDC` only when
+`ACU_ADDRESS` is set.
+
+The yield vault uses the original Aerodrome AERO/USDC V2-style pool and gauge
+configured in the deployment scripts.

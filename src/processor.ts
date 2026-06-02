@@ -8,6 +8,14 @@ import { getAcurastStd, storageGet, storageSet, BUILDER_CODE_SUFFIX } from "./ac
 import { loadState, saveState } from "./runtimeState.js";
 import { emitTelemetry } from "./telemetry.js";
 import { createJsonRpcProvider } from "./rpcProvider.js";
+import {
+  assertFreshChainState,
+  buildExecutionIdempotencyKey,
+  classifyReceiptStatus,
+  deriveIntervalWindow,
+  type ChainStateSnapshot,
+  type GridSide,
+} from "./gridExecutionSafety.js";
 
 interface HardwareLog {
   timestamp: number;
@@ -50,6 +58,23 @@ type GridTradePayload = {
   signature: string;
 };
 
+type LiveGridStrategyConfig = {
+  strategyId: string;
+  pairId: string;
+  poolAddress?: string;
+  dexRouter: string;
+  factory: string;
+  stable?: boolean;
+  lowerPrice: number;
+  upperPrice: number;
+  gridCount: number;
+  tradeSizeQuote: string;
+  maxSlippageBps: number;
+  executionIntervalSec: number;
+  quoteDecimals?: number;
+  baseDecimals?: number;
+};
+
 type ProcessorStage =
   | "start"
   | "network_ready"
@@ -68,6 +93,18 @@ const KEEPER_ABI = [
   "function executeTrade(address user,int256 pnlDelta,uint256 nonce,bytes signature) external",
 ];
 const EXECUTE_TRADE_SIGNATURE = "executeTrade(address,int256,uint256,bytes)";
+
+const GRID_STRATEGY_MANAGER_ABI = [
+  "function getStrategy(bytes32 strategyId) view returns (tuple(bytes32 id,address owner,bytes32 pairId,address baseToken,address quoteToken,uint256 allocatedQuote,uint256 quoteBalance,uint256 baseBalance,uint256 avgEntryPrice,int256 realizedPnlQuote,uint256 feesPaidQuote,uint256 gasReserveQuote,uint256 gasSpentQuote,uint256 maxGasCostQuotePerTrade,uint64 lastExecutionAt,int32 currentGridLevel,uint32 strategyVersion,bytes32 encryptedPayloadHash,uint8 status,uint64 createdAt,uint64 updatedAt))",
+  "function getChainStateSnapshot(bytes32 strategyId) view returns (tuple(uint32 strategyVersion,int32 currentGridLevel,uint64 lastExecutionAt,uint256 quoteBalance,uint256 baseBalance))",
+];
+
+const GRID_EXECUTION_ROUTER_ABI = [
+  "function executeAerodromeBuy(bytes32 strategyId,bytes32 pairId,bytes32 executionId,address dexRouter,tuple(uint32 strategyVersion,int32 currentGridLevel,uint64 lastExecutionAt,uint256 quoteBalance,uint256 baseBalance) snapshot,uint256 quoteAmount,uint256 minBaseOut,uint256 avgEntryPrice,uint256 dexFeeQuote,uint256 gasCostQuote,int32 nextGridLevel,uint256 deadline,tuple(address from,address to,bool stable,address factory)[] routes) external",
+  "function executeAerodromeSell(bytes32 strategyId,bytes32 pairId,bytes32 executionId,address dexRouter,tuple(uint32 strategyVersion,int32 currentGridLevel,uint64 lastExecutionAt,uint256 quoteBalance,uint256 baseBalance) snapshot,uint256 baseAmount,uint256 minQuoteOut,int256 realizedPnlQuote,uint256 dexFeeQuote,uint256 gasCostQuote,int32 nextGridLevel,uint256 deadline,tuple(address from,address to,bool stable,address factory)[] routes) external",
+  "function markExecutionReverted(bytes32 strategyId,bytes32 executionId,string reason) external",
+  "function markStrategyGasPaused(bytes32 strategyId) external",
+];
 
 const POLL_INTERVAL_MS = 60_000;
 const BPS_DENOMINATOR = 10_000;
@@ -440,9 +477,284 @@ async function submitTrade(
   return tx.hash;
 }
 
+function toSnapshotTuple(snapshot: any): [number, number, number, bigint, bigint] {
+  return [
+    Number(snapshot.strategyVersion),
+    Number(snapshot.currentGridLevel),
+    Number(snapshot.lastExecutionAt),
+    BigInt(snapshot.quoteBalance),
+    BigInt(snapshot.baseBalance),
+  ];
+}
+
+function toChainStateSnapshot(snapshot: any): ChainStateSnapshot {
+  return {
+    strategyVersion: Number(snapshot.strategyVersion),
+    currentGridLevel: Number(snapshot.currentGridLevel),
+    lastExecutionAt: String(snapshot.lastExecutionAt),
+    quoteBalance: String(snapshot.quoteBalance),
+    baseBalance: String(snapshot.baseBalance),
+  };
+}
+
+function calculateGridLevel(config: LiveGridStrategyConfig, price: number): number {
+  if (config.gridCount <= 0 || config.upperPrice <= config.lowerPrice) return 0;
+  if (price <= config.lowerPrice) return 0;
+  if (price >= config.upperPrice) return config.gridCount;
+  const spacing = (config.upperPrice - config.lowerPrice) / config.gridCount;
+  return Math.max(0, Math.min(config.gridCount, Math.floor((price - config.lowerPrice) / spacing)));
+}
+
+function buildSingleAerodromeRoute(from: string, to: string, config: LiveGridStrategyConfig) {
+  return [{ from, to, stable: Boolean(config.stable), factory: config.factory }];
+}
+
+function minOutForSlippage(amount: bigint, maxSlippageBps: number): bigint {
+  const bps = BigInt(Math.max(0, Math.min(10_000, Math.floor(maxSlippageBps))));
+  return (amount * (10_000n - bps)) / 10_000n;
+}
+
+async function postQueueJob(frontendUrl: string, body: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`${frontendUrl}/api/grid/execution-queue`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`queue POST failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function patchQueueJob(frontendUrl: string, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${frontendUrl}/api/grid/execution-queue`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`queue PATCH failed: ${res.status} ${await res.text()}`);
+}
+
+async function loadLiveGridStrategies(frontendUrl: string): Promise<LiveGridStrategyConfig[]> {
+  const configured = parseJsonEnv<LiveGridStrategyConfig[]>("GRID_LIVE_STRATEGIES_JSON", []);
+  if (configured.length > 0) return configured;
+
+  const chainId = Number(process.env.CHAIN_ID ?? 8453);
+  const res = await fetch(`${frontendUrl}/api/grid/strategies?status=active&chainId=${chainId}&mode=processor`);
+  if (!res.ok) throw new Error(`strategy discovery failed: ${res.status} ${await res.text()}`);
+  const body = await res.json();
+  return Array.isArray(body.strategies) ? body.strategies : [];
+}
+
+async function submitLiveGridExecution(args: {
+  rpcUrl: string;
+  routerAddress: string;
+  manager: Contract;
+  config: LiveGridStrategyConfig;
+  side: GridSide;
+  executionId: string;
+  snapshot: any;
+  currentPrice: number;
+  nextGridLevel: number;
+  privateKey?: string;
+}): Promise<{ txHash: string; status: "confirmed" | "reverted" | "submitted"; gasUsed?: string }> {
+  const strategy = await args.manager.getStrategy(args.config.strategyId);
+  const quoteDecimals = args.config.quoteDecimals ?? 6;
+  const baseDecimals = args.config.baseDecimals ?? 18;
+  const deadline = Math.floor(Date.now() / 1000) + 90;
+  const gasCostQuote = BigInt(process.env.GRID_GAS_COST_QUOTE ?? "0");
+  const dexFeeQuote = BigInt(process.env.GRID_DEX_FEE_QUOTE ?? "0");
+  const iface = new ethers.Interface(GRID_EXECUTION_ROUTER_ABI);
+  const std = getAcurastStd();
+
+  let data: string;
+  let methodSignature: string;
+  if (args.side === "buy") {
+    const quoteAmount = ethers.parseUnits(args.config.tradeSizeQuote, quoteDecimals);
+    const expectedBase = args.currentPrice > 0
+      ? ethers.parseUnits((Number(args.config.tradeSizeQuote) / args.currentPrice).toFixed(Math.min(baseDecimals, 12)), baseDecimals)
+      : 0n;
+    const minBaseOut = minOutForSlippage(expectedBase, args.config.maxSlippageBps);
+    const avgEntryPrice = ethers.parseUnits(args.currentPrice.toFixed(Math.min(quoteDecimals, 6)), quoteDecimals);
+    methodSignature = "executeAerodromeBuy(bytes32,bytes32,bytes32,address,(uint32,int32,uint64,uint256,uint256),uint256,uint256,uint256,uint256,uint256,int32,uint256,(address,address,bool,address)[])";
+    data = iface.encodeFunctionData("executeAerodromeBuy", [
+      args.config.strategyId,
+      args.config.pairId,
+      args.executionId,
+      args.config.dexRouter,
+      toSnapshotTuple(args.snapshot),
+      quoteAmount,
+      minBaseOut,
+      avgEntryPrice,
+      dexFeeQuote,
+      gasCostQuote,
+      args.nextGridLevel,
+      deadline,
+      buildSingleAerodromeRoute(strategy.quoteToken, strategy.baseToken, args.config),
+    ]);
+  } else {
+    const baseAmount = ethers.parseUnits(
+      (Number(args.config.tradeSizeQuote) / Math.max(args.currentPrice, 0.0000001)).toFixed(Math.min(baseDecimals, 12)),
+      baseDecimals
+    );
+    const expectedQuote = ethers.parseUnits(args.config.tradeSizeQuote, quoteDecimals);
+    const minQuoteOut = minOutForSlippage(expectedQuote, args.config.maxSlippageBps);
+    const realizedPnlQuote = BigInt(process.env.GRID_REALIZED_PNL_QUOTE ?? "0");
+    methodSignature = "executeAerodromeSell(bytes32,bytes32,bytes32,address,(uint32,int32,uint64,uint256,uint256),uint256,uint256,int256,uint256,uint256,int32,uint256,(address,address,bool,address)[])";
+    data = iface.encodeFunctionData("executeAerodromeSell", [
+      args.config.strategyId,
+      args.config.pairId,
+      args.executionId,
+      args.config.dexRouter,
+      toSnapshotTuple(args.snapshot),
+      baseAmount,
+      minQuoteOut,
+      realizedPnlQuote,
+      dexFeeQuote,
+      gasCostQuote,
+      args.nextGridLevel,
+      deadline,
+      buildSingleAerodromeRoute(strategy.baseToken, strategy.quoteToken, args.config),
+    ]);
+  }
+
+  const dataWithSuffix = data + BUILDER_CODE_SUFFIX.replace(/^0x/, "");
+  if (std) {
+    const operationHash = await new Promise<string>((resolve, reject) => {
+      std.chains.ethereum.fulfill(
+        args.rpcUrl,
+        args.routerAddress,
+        dataWithSuffix,
+        { methodSignature },
+        (hash: string) => resolve(hash),
+        (messages: string[]) => reject(new Error(messages.join("; ")))
+      );
+    });
+    return { txHash: operationHash, status: "submitted" };
+  }
+
+  if (!args.privateKey) throw new Error("ACURAST_WORKER_KEY is required for local live grid execution");
+  const provider = createJsonRpcProvider(args.rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
+  const wallet = new ethers.Wallet(args.privateKey, provider);
+  const tx = await wallet.sendTransaction({ to: args.routerAddress, data: dataWithSuffix });
+  const receipt = await tx.wait();
+  return {
+    txHash: tx.hash,
+    status: classifyReceiptStatus({ status: receipt?.status }),
+    gasUsed: receipt?.gasUsed?.toString(),
+  };
+}
+
+async function monitorAndExecuteLiveGrid(): Promise<void> {
+  const rpcUrl = process.env.RPC_URL ?? "https://mainnet.base.org";
+  const dataRpcUrl = process.env.DATA_RPC_URL ?? rpcUrl;
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
+  const managerAddress = process.env.GRID_STRATEGY_MANAGER_ADDRESS ?? "";
+  const routerAddress = process.env.GRID_EXECUTION_ROUTER_ADDRESS ?? "";
+  const strategies = await loadLiveGridStrategies(frontendUrl);
+
+  if (!managerAddress || !routerAddress || strategies.length === 0) {
+    await emitTelemetry({
+      event: "grid_live_check_skipped",
+      timestamp: nowSeconds(),
+      reason: !managerAddress || !routerAddress ? "missing_grid_contract_addresses" : "no_active_grid_strategies",
+    });
+    return;
+  }
+
+  const provider = createJsonRpcProvider(rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
+  const dataProvider = createJsonRpcProvider(dataRpcUrl, Number(process.env.CHAIN_ID ?? 8453));
+  const manager = new ethers.Contract(managerAddress, GRID_STRATEGY_MANAGER_ABI, provider);
+  const privateKey = process.env.ACURAST_WORKER_KEY;
+
+  for (const config of strategies) {
+    const strategy = await manager.getStrategy(config.strategyId);
+    if (Number(strategy.status) !== 2) continue;
+
+    const poolAddress = config.poolAddress ?? process.env.GRID_POOL_ADDRESS ?? process.env.POOL_ADDRESS ?? "";
+    if (!poolAddress) continue;
+
+    const snapshot = await manager.getChainStateSnapshot(config.strategyId);
+    const currentPrice = await fetchPoolPrice(dataProvider, poolAddress);
+    const nextGridLevel = calculateGridLevel(config, currentPrice);
+    const currentGridLevel = Number(snapshot.currentGridLevel);
+    if (nextGridLevel === currentGridLevel) continue;
+
+    const side: GridSide = nextGridLevel < currentGridLevel ? "buy" : "sell";
+    const intervalWindow = deriveIntervalWindow(Date.now(), config.executionIntervalSec);
+    const idempotencyKey = buildExecutionIdempotencyKey({
+      strategyId: config.strategyId,
+      strategyVersion: Number(snapshot.strategyVersion),
+      pairId: config.pairId,
+      gridLevel: nextGridLevel,
+      side,
+      intervalWindow,
+    });
+    const executionId = ethers.keccak256(ethers.toUtf8Bytes(idempotencyKey));
+
+    const queue = await postQueueJob(frontendUrl, {
+      strategyId: config.strategyId,
+      pairId: config.pairId,
+      side,
+      gridLevel: nextGridLevel,
+      idempotencyKey,
+      chainStateSnapshot: toChainStateSnapshot(snapshot),
+    });
+    const job = queue.job;
+    if (!job || queue.duplicate) continue;
+    await patchQueueJob(frontendUrl, { id: job.id, status: "claimed" });
+
+    try {
+      const freshSnapshot = await manager.getChainStateSnapshot(config.strategyId);
+      assertFreshChainState(toChainStateSnapshot(snapshot), toChainStateSnapshot(freshSnapshot));
+      await patchQueueJob(frontendUrl, { id: job.id, status: "submitted" });
+      const result = await submitLiveGridExecution({
+        rpcUrl,
+        routerAddress,
+        manager,
+        config,
+        side,
+        executionId,
+        snapshot: freshSnapshot,
+        currentPrice,
+        nextGridLevel,
+        privateKey,
+      });
+      await patchQueueJob(frontendUrl, { id: job.id, status: result.status, txHash: result.txHash, gasUsed: result.gasUsed });
+      await emitTelemetry({
+        event: "grid_live_trade_executed",
+        timestamp: nowSeconds(),
+        strategyId: config.strategyId,
+        side,
+        gridLevel: nextGridLevel,
+        currentPrice,
+        txHash: result.txHash,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stale = message.includes("Stale grid execution job");
+      await patchQueueJob(frontendUrl, {
+        id: job.id,
+        status: stale ? "stale" : "failed",
+        staleReason: stale ? message : undefined,
+        error: stale ? undefined : message,
+      });
+      await emitTelemetry({
+        event: stale ? "grid_live_trade_stale" : "grid_live_trade_failed",
+        timestamp: nowSeconds(),
+        strategyId: config.strategyId,
+        message,
+      });
+    }
+  }
+}
+
 // ─── Main grid loop ───────────────────────────────────────────────────────────
 
 export async function monitorAndExecuteGrid(): Promise<void> {
+  if (process.env.ENABLE_LIVE_GRID_EXECUTOR === "true") {
+    await monitorAndExecuteLiveGrid();
+    return;
+  }
+
   const getEnv = (name: string, fallback: string): string => {
     const baked = (globalThis as any).__ENV__?.[name];
     const env = process.env[name];
@@ -639,7 +951,7 @@ async function startLoop(): Promise<void> {
   const userAddress = process.env.USER_ADDRESS ?? "";
   const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
 
-  if (!process.env.KEEPER_ADDRESS) {
+  if (!process.env.KEEPER_ADDRESS && process.env.ENABLE_LIVE_GRID_EXECUTOR !== "true") {
     console.error("[processor] KEEPER_ADDRESS is required — exiting");
     process.exitCode = 1;
     return;
