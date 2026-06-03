@@ -67,8 +67,12 @@ type LiveGridStrategyConfig = {
   stable?: boolean;
   lowerPrice: number;
   upperPrice: number;
+  gridMode?: "arithmetic" | "geometric";
   gridCount: number;
   tradeSizeQuote: string;
+  triggerPrice?: number | null;
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
   maxSlippageBps: number;
   executionIntervalSec: number;
   quoteDecimals?: number;
@@ -501,8 +505,23 @@ function calculateGridLevel(config: LiveGridStrategyConfig, price: number): numb
   if (config.gridCount <= 0 || config.upperPrice <= config.lowerPrice) return 0;
   if (price <= config.lowerPrice) return 0;
   if (price >= config.upperPrice) return config.gridCount;
+
+  if (config.gridMode === "geometric") {
+    const ratio = config.upperPrice / config.lowerPrice;
+    if (ratio <= 1) return 0;
+    const level = Math.floor((Math.log(price / config.lowerPrice) / Math.log(ratio)) * config.gridCount);
+    return Math.max(0, Math.min(config.gridCount, level));
+  }
+
   const spacing = (config.upperPrice - config.lowerPrice) / config.gridCount;
   return Math.max(0, Math.min(config.gridCount, Math.floor((price - config.lowerPrice) / spacing)));
+}
+
+function shouldEvaluateLiveGrid(config: LiveGridStrategyConfig, price: number): boolean {
+  if (config.triggerPrice && config.triggerPrice > 0 && price < config.triggerPrice) return false;
+  if (config.stopLossPrice && config.stopLossPrice > 0 && price <= config.stopLossPrice) return false;
+  if (config.takeProfitPrice && config.takeProfitPrice > 0 && price >= config.takeProfitPrice) return false;
+  return true;
 }
 
 function buildSingleAerodromeRoute(from: string, to: string, config: LiveGridStrategyConfig) {
@@ -674,6 +693,7 @@ async function monitorAndExecuteLiveGrid(): Promise<void> {
 
     const snapshot = await manager.getChainStateSnapshot(config.strategyId);
     const currentPrice = await fetchPoolPrice(dataProvider, poolAddress);
+    if (!shouldEvaluateLiveGrid(config, currentPrice)) continue;
     const nextGridLevel = calculateGridLevel(config, currentPrice);
     const currentGridLevel = Number(snapshot.currentGridLevel);
     if (nextGridLevel === currentGridLevel) continue;

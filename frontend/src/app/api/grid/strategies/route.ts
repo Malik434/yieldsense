@@ -6,6 +6,16 @@ function validStatus(status: unknown): status is StoredGridStrategy['status'] {
   return typeof status === 'string' && ['draft', 'funded', 'active', 'paused', 'gas_paused', 'archived', 'closed'].includes(status);
 }
 
+function validGridMode(mode: unknown): mode is StoredGridStrategy['gridMode'] {
+  return mode === 'arithmetic' || mode === 'geometric';
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const owner = searchParams.get('owner')?.toLowerCase();
@@ -55,8 +65,12 @@ export async function POST(request: NextRequest) {
     status: strategy.status,
     lowerPrice: Number(strategy.lowerPrice),
     upperPrice: Number(strategy.upperPrice),
+    gridMode: validGridMode(strategy.gridMode) ? strategy.gridMode : 'arithmetic',
     gridCount: Number(strategy.gridCount),
     tradeSizeQuote: String(strategy.tradeSizeQuote || '0'),
+    triggerPrice: optionalNumber(strategy.triggerPrice),
+    stopLossPrice: optionalNumber(strategy.stopLossPrice),
+    takeProfitPrice: optionalNumber(strategy.takeProfitPrice),
     maxSlippageBps: Number(strategy.maxSlippageBps || 100),
     executionIntervalSec: Number(strategy.executionIntervalSec || 3600),
     createdAt: existing?.createdAt || now,

@@ -25,8 +25,12 @@ export type StoredGridStrategy = {
   status: 'draft' | 'funded' | 'active' | 'paused' | 'gas_paused' | 'archived' | 'closed';
   lowerPrice: number;
   upperPrice: number;
+  gridMode: 'arithmetic' | 'geometric';
   gridCount: number;
   tradeSizeQuote: string;
+  triggerPrice?: number | null;
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
   maxSlippageBps: number;
   executionIntervalSec: number;
   createdAt: string;
@@ -155,8 +159,12 @@ export function toLiveGridConfig(strategy: StoredGridStrategy, pair: GridPairCon
     stable: pair.stable,
     lowerPrice: strategy.lowerPrice,
     upperPrice: strategy.upperPrice,
+    gridMode: strategy.gridMode,
     gridCount: strategy.gridCount,
     tradeSizeQuote: strategy.tradeSizeQuote,
+    triggerPrice: strategy.triggerPrice ?? null,
+    stopLossPrice: strategy.stopLossPrice ?? null,
+    takeProfitPrice: strategy.takeProfitPrice ?? null,
     maxSlippageBps: strategy.maxSlippageBps,
     executionIntervalSec: strategy.executionIntervalSec,
     quoteDecimals: pair.quoteDecimals,

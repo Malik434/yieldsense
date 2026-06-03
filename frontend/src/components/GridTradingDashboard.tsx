@@ -36,8 +36,10 @@ import type { GridPairConfig } from '@/lib/gridStore';
 type StrategyForm = {
   lowerPrice: string;
   upperPrice: string;
+  gridMode: 'arithmetic' | 'geometric';
   gridCount: string;
   tradeSizeQuote: string;
+  triggerPrice: string;
   stopLossPrice: string;
   takeProfitPrice: string;
   executionIntervalSec: string;
@@ -57,8 +59,10 @@ type ProcessorRegistryResponse = {
 const DEFAULT_FORM: StrategyForm = {
   lowerPrice: '0.80',
   upperPrice: '1.20',
+  gridMode: 'arithmetic',
   gridCount: '10',
   tradeSizeQuote: '2',
+  triggerPrice: '',
   stopLossPrice: '',
   takeProfitPrice: '',
   executionIntervalSec: '300',
@@ -89,8 +93,10 @@ function createPayloadHash(form: StrategyForm, pairId: string, owner: string, ch
     pairId,
     lowerPrice: form.lowerPrice,
     upperPrice: form.upperPrice,
+    gridMode: form.gridMode,
     gridCount: Number(form.gridCount),
     tradeSizeQuote: form.tradeSizeQuote,
+    triggerPrice: form.triggerPrice || null,
     stopLossPrice: form.stopLossPrice || null,
     takeProfitPrice: form.takeProfitPrice || null,
     executionIntervalSec: Number(form.executionIntervalSec),
@@ -356,8 +362,12 @@ export function GridTradingDashboard() {
                 status: 'draft',
                 lowerPrice: Number(form.lowerPrice),
                 upperPrice: Number(form.upperPrice),
+                gridMode: form.gridMode,
                 gridCount: Number(form.gridCount),
                 tradeSizeQuote: form.tradeSizeQuote,
+                triggerPrice: form.triggerPrice || null,
+                stopLossPrice: form.stopLossPrice || null,
+                takeProfitPrice: form.takeProfitPrice || null,
                 maxSlippageBps: Number(form.maxSlippageBps),
                 executionIntervalSec: Number(form.executionIntervalSec),
               }),
@@ -656,17 +666,21 @@ export function GridTradingDashboard() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Strategy Parameters</h4>
+          <p className="mb-5 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+            Price limits are {baseSymbol} price quoted in {quoteSymbol}.
+          </p>
           <div className="grid grid-cols-2 gap-4">
             {([
-              ['lowerPrice', 'Lower'],
-              ['upperPrice', 'Upper'],
+              ['lowerPrice', `Lower ${quoteSymbol}`],
+              ['upperPrice', `Upper ${quoteSymbol}`],
               ['gridCount', 'Grids'],
               ['tradeSizeQuote', `Trade ${quoteSymbol}`],
+              ['triggerPrice', `Trigger ${quoteSymbol}`],
               ['stopLossPrice', 'Stop Loss'],
               ['takeProfitPrice', 'Take Profit'],
               ['executionIntervalSec', 'Interval Sec'],
               ['maxSlippageBps', 'Slippage Bps'],
-            ] as Array<[keyof StrategyForm, string]>).map(([key, label]) => (
+            ] as Array<[Exclude<keyof StrategyForm, 'gridMode'>, string]>).map(([key, label]) => (
               <label key={key} className="flex flex-col gap-2">
                 <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</span>
                 <input
@@ -677,6 +691,25 @@ export function GridTradingDashboard() {
                 />
               </label>
             ))}
+          </div>
+          <div className="mt-5">
+            <p className="mb-3 text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Grid Mode</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(['arithmetic', 'geometric'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, gridMode: mode }))}
+                  className={`h-10 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${
+                    form.gridMode === mode
+                      ? 'bg-[#C2E812] text-[#030605]'
+                      : 'border border-white/10 bg-white/5 text-[#8B949E] hover:text-[#F5F7FA]'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="mt-5">
             <p className="mb-3 text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Execution Interval</p>
