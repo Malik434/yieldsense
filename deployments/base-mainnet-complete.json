@@ -1,0 +1,38 @@
+{
+  "network": "baseMainnet",
+  "chainId": 8453,
+  "deployer": "0x1Aa137C177a58D98d24d143b3533043b419479DD",
+  "owner": "0x1Aa137C177a58D98d24d143b3533043b419479DD",
+  "executorRegistry": "0x4cE8fdE17A555E19d1aD32BF78baC1733CDA4A17",
+  "yieldSenseKeeper": "0x4196E60730d616e939021F4ad8389AB7Ab595091",
+  "aerodromeAutocompounder": "0xf1CD91df320b0291a3EF89B838e5Bf2c51e8b228",
+  "gridVault": "0x03A4513DB4AB6394f97Aff2196dD44332E271A1f",
+  "gridStrategyManager": "0x87faE8215c5984B207A24077fAF6039c93fb4E8b",
+  "gridExecutionRouter": "0x809f89bFAD1D2c6b9fB79e4CB19b009163b16E5c",
+  "gridPairs": [
+    {
+      "label": "AERO/USDC",
+      "pairId": "0x8d3022a7bbe83e590f531b0e41bcd973a74e105ad648fc1a95addefbfbbdf7d6",
+      "baseToken": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+      "quoteToken": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    },
+    {
+      "label": "ETH/USDC",
+      "pairId": "0xd7c55e13a482c46ef0f9a2319e6a727f48a445851591103a2ffc2e2acb9b61e9",
+      "baseToken": "0x4200000000000000000000000000000000000006",
+      "quoteToken": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    }
+  ],
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "aero": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "acu": null,
+  "router": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
+  "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+  "pool": "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d",
+  "gauge": "0x4F09bAb2f0E15e2A078A227FE1537665F55b8360",
+  "gridEthUsdcPricePool": "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
+  "deploymentBlock": 46903370,
+  "gitCommit": "0b28b83",
+  "timestamp": "2026-06-04T18:01:27.829Z"
+}
