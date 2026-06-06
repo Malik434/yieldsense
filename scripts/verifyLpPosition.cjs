@@ -9,6 +9,7 @@
  * Optional env overrides:
  *   KEEPER_ADDRESS
  *   AUTOCOMPOUNDER_ADDRESS
+ *   VERIFY_USER_ADDRESS
  *   USER_ADDRESS
  */
 
@@ -18,7 +19,10 @@ const fs = require("fs");
 const path = require("path");
 const { ethers } = require("ethers");
 
-const MANIFEST_PATH = path.join(__dirname, "..", "deployments", "base-mainnet.json");
+const COMPLETE_MANIFEST_PATH = path.join(__dirname, "..", "deployments", "base-mainnet-complete.json");
+const LEGACY_MANIFEST_PATH = path.join(__dirname, "..", "deployments", "base-mainnet.json");
+const MANIFEST_PATH = process.env.DEPLOYMENT_MANIFEST ||
+  (fs.existsSync(COMPLETE_MANIFEST_PATH) ? COMPLETE_MANIFEST_PATH : LEGACY_MANIFEST_PATH);
 const ENV_PATH = path.join(__dirname, "..", ".env");
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -145,14 +149,13 @@ async function main() {
     "KEEPER_ADDRESS",
     process.env.KEEPER_ADDRESS || manifest.yieldSenseKeeper
   );
-  const autocompounderAddress = requireAddress(
-    "AUTOCOMPOUNDER_ADDRESS",
-    process.env.AUTOCOMPOUNDER_ADDRESS || manifest.aerodromeAutocompounder
-  );
-  const userAddress = process.env.USER_ADDRESS ? ethers.getAddress(process.env.USER_ADDRESS) : null;
+  const userAddress = process.env.VERIFY_USER_ADDRESS
+    ? ethers.getAddress(process.env.VERIFY_USER_ADDRESS)
+    : process.env.USER_ADDRESS
+      ? ethers.getAddress(process.env.USER_ADDRESS)
+      : null;
 
   const keeper = new ethers.Contract(keeperAddress, KEEPER_ABI, provider);
-  const autocompounder = new ethers.Contract(autocompounderAddress, AUTOCOMPOUNDER_ABI, provider);
 
   console.log("");
   console.log("Collecting keeper/autocompounder reads");
@@ -164,6 +167,14 @@ async function main() {
   const totalShares = await read("keeper.totalSupply()", keeper.totalSupply());
   const lastHarvest = await read("keeper.lastHarvest()", keeper.lastHarvest());
   const minHarvestProfit = await read("keeper.minHarvestProfitUsdc()", keeper.minHarvestProfitUsdc());
+  const configuredAutocompounder = process.env.AUTOCOMPOUNDER_ADDRESS || manifest.aerodromeAutocompounder;
+  const autocompounderAddress = ethers.getAddress(keeperAutocompounder);
+  if (configuredAutocompounder && configuredAutocompounder.toLowerCase() !== keeperAutocompounder.toLowerCase()) {
+    console.log(
+      `WARN: configured autocompounder ${configuredAutocompounder} differs from keeper.autocompounder(); using keeper value ${autocompounderAddress}`
+    );
+  }
+  const autocompounder = new ethers.Contract(autocompounderAddress, AUTOCOMPOUNDER_ABI, provider);
   const acKeeper = await read("autocompounder.keeper()", autocompounder.keeper());
   const poolAddress = await read("autocompounder.pool()", autocompounder.pool());
   const gaugeAddress = await read("autocompounder.gauge()", autocompounder.gauge());

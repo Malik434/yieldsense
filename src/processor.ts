@@ -787,7 +787,7 @@ export async function monitorAndExecuteGrid(): Promise<void> {
     "GRID_POOL_ADDRESS",
     getEnv("POOL_ADDRESS", "0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d")
   );
-  const keeperAddress = getEnv("KEEPER_ADDRESS", "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
+  const keeperAddress = getEnv("KEEPER_ADDRESS", "0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792");
   const userAddress = getEnv("USER_ADDRESS", "");
 
   try {

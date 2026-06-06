@@ -613,8 +613,26 @@ contract YieldSenseKeeper is ERC4626, ReentrancyGuard, Ownable2Step, Pausable {
             block.number > lastDepositBlock[owner_],
             "Same block redemption not allowed"
         );
-        _ensureWithdrawalLiquidity(previewRedeem(shares), false);
-        return super.redeem(shares, receiver, owner_);
+        if (shares == 0) revert AmountZero();
+
+        uint256 expectedAssets = previewRedeem(shares);
+        _ensureWithdrawalLiquidity(expectedAssets, false);
+
+        uint256 liquidAssets = IERC20(asset()).balanceOf(address(this));
+        uint256 assets = liquidAssets < expectedAssets
+            ? liquidAssets
+            : expectedAssets;
+        if (assets == 0) revert InsufficientBalance();
+
+        if (msg.sender != owner_) {
+            _spendAllowance(owner_, msg.sender, shares);
+        }
+
+        _burn(owner_, shares);
+        IERC20(asset()).safeTransfer(receiver, assets);
+
+        emit Withdraw(msg.sender, receiver, owner_, assets, shares);
+        return assets;
     }
 
     // ─── INTERNAL ─────────────────────────────────────────────────────────────

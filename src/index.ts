@@ -68,7 +68,7 @@ const CONFIG = {
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
     // Testnet fallback: keeper uses ExecutorRegistry role checks for processor authorization.
-    return addr ? getAddress(addr) : getAddress("0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
+    return addr ? getAddress(addr) : getAddress("0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792");
   })(),
   executorRegistryAddress: process.env.EXECUTOR_REGISTRY_ADDRESS?.trim() || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS?.trim() || "",
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */

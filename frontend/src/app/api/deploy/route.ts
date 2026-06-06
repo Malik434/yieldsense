@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     // ── Build per-user bundle ───────────────────────────────────────────────
     
     const keeperAddress = isMainnet 
-      ? (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.KEEPER_ADDRESS || '0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF')
+      ? (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.KEEPER_ADDRESS || '0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792')
       : (process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '');
 
     const rpcUrl = isMainnet
