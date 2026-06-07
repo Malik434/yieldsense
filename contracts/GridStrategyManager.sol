@@ -98,6 +98,7 @@ contract GridStrategyManager is Ownable, ReentrancyGuard {
     event GasReserveAdded(bytes32 indexed strategyId, uint256 amount);
     event GasReserveSpent(bytes32 indexed strategyId, uint256 amount, bytes32 indexed executionId);
     event StrategyGasPaused(bytes32 indexed strategyId);
+    event StrategyClosed(bytes32 indexed strategyId, uint256 quoteReleased, uint256 baseReleased, uint256 gasReleased);
     event PauseAllUpdated(bool paused);
     event ExecutionRouterUpdated(address indexed router);
 
@@ -260,6 +261,36 @@ contract GridStrategyManager is Ownable, ReentrancyGuard {
         strategy.status = StrategyStatus.Archived;
         strategy.updatedAt = uint64(block.timestamp);
         emit StrategyStatusUpdated(strategyId, StrategyStatus.Archived);
+    }
+
+    function closeStrategy(bytes32 strategyId) external nonReentrant onlyStrategyOwner(strategyId) {
+        GridStrategy storage strategy = _existingStrategy(strategyId);
+        if (strategy.status == StrategyStatus.Active) revert InvalidStatus();
+        if (strategy.status == StrategyStatus.Closed) revert InvalidStatus();
+
+        uint256 quoteReleased = strategy.quoteBalance;
+        uint256 baseReleased = strategy.baseBalance;
+        uint256 gasReleased = strategy.gasReserveQuote;
+
+        if (quoteReleased > 0) {
+            strategy.quoteBalance = 0;
+            vault.releaseCapital(strategyId, msg.sender, strategy.quoteToken, quoteReleased);
+        }
+        if (baseReleased > 0) {
+            strategy.baseBalance = 0;
+            vault.releaseCapital(strategyId, msg.sender, strategy.baseToken, baseReleased);
+        }
+        if (gasReleased > 0) {
+            strategy.gasReserveQuote = 0;
+            vault.releaseCapital(strategyId, msg.sender, strategy.quoteToken, gasReleased);
+        }
+
+        strategy.status = StrategyStatus.Closed;
+        strategy.strategyVersion += 1;
+        strategy.updatedAt = uint64(block.timestamp);
+
+        emit StrategyClosed(strategyId, quoteReleased, baseReleased, gasReleased);
+        emit StrategyStatusUpdated(strategyId, StrategyStatus.Closed);
     }
 
     function updatePayload(bytes32 strategyId, bytes32 encryptedPayloadHash) external whenSystemActive onlyStrategyOwner(strategyId) {

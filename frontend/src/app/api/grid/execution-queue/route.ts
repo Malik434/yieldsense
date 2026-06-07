@@ -61,7 +61,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { strategyId, pairId, side, gridLevel, idempotencyKey, chainStateSnapshot } = body as Partial<ExecutionJob>;
+  const {
+    strategyId,
+    pairId,
+    side,
+    gridLevel,
+    idempotencyKey,
+    chainStateSnapshot,
+    status,
+  } = body as Partial<ExecutionJob>;
 
   if (!strategyId || !pairId || (side !== 'buy' && side !== 'sell') || typeof gridLevel !== 'number') {
     return NextResponse.json({ error: 'Missing required execution job fields' }, { status: 400 });
@@ -73,6 +81,9 @@ export async function POST(request: NextRequest) {
 
   if (!isSnapshot(chainStateSnapshot)) {
     return NextResponse.json({ error: 'Missing valid chainStateSnapshot' }, { status: 400 });
+  }
+  if (status && !allowedStatuses.has(status)) {
+    return NextResponse.json({ error: 'Invalid job status' }, { status: 400 });
   }
 
   const existingId = store.idempotency.get(idempotencyKey);
@@ -89,10 +100,22 @@ export async function POST(request: NextRequest) {
     gridLevel,
     idempotencyKey,
     chainStateSnapshot,
-    status: 'pending',
-    attempts: 0,
+    status: status || 'pending',
+    attempts: status ? 1 : 0,
     createdAt: now,
   };
+  if (status === 'claimed') job.claimedAt = now;
+  if (status === 'submitted') job.submittedAt = now;
+  if (status === 'confirmed') {
+    job.claimedAt = now;
+    job.submittedAt = now;
+    job.confirmedAt = now;
+  }
+  if (typeof body.txHash === 'string') job.txHash = body.txHash as ExecutionJob['txHash'];
+  if (typeof body.gasUsed === 'string') job.gasUsed = body.gasUsed;
+  if (typeof body.gasCostQuote === 'string') job.gasCostQuote = body.gasCostQuote;
+  if (typeof body.revertReason === 'string') job.revertReason = body.revertReason;
+  if (typeof body.error === 'string') job.error = body.error;
 
   store.jobs.set(job.id, job);
   store.idempotency.set(idempotencyKey, job.id);

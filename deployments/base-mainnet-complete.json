@@ -7,8 +7,8 @@
   "yieldSenseKeeper": "0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792",
   "aerodromeAutocompounder": "0xf1CD91df320b0291a3EF89B838e5Bf2c51e8b228",
   "gridVault": "0x03A4513DB4AB6394f97Aff2196dD44332E271A1f",
-  "gridStrategyManager": "0x87faE8215c5984B207A24077fAF6039c93fb4E8b",
-  "gridExecutionRouter": "0x809f89bFAD1D2c6b9fB79e4CB19b009163b16E5c",
+  "gridStrategyManager": "0x1a45f1b2669E07DBA019a674cc05a66f2Ab59347",
+  "gridExecutionRouter": "0xda21B94c4F155d96cbEd8a07480ED57447a33ec9",
   "gridPairs": [
     {
       "label": "AERO/USDC",
@@ -37,5 +37,9 @@
   "timestamp": "2026-06-04T18:01:27.829Z",
   "previousYieldSenseKeeper": "0x4196E60730d616e939021F4ad8389AB7Ab595091",
   "keeperRedeployedAt": "2026-06-05T05:35:47.699Z",
-  "keeperRedeploymentBlock": 46924200
+  "keeperRedeploymentBlock": 46924200,
+  "previousGridStrategyManager": "0x87faE8215c5984B207A24077fAF6039c93fb4E8b",
+  "previousGridExecutionRouter": "0x809f89bFAD1D2c6b9fB79e4CB19b009163b16E5c",
+  "gridUpgradedAt": "2026-06-06T18:13:15.268Z",
+  "gridUpgradeBlock": 46990124
 }

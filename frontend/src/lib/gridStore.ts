@@ -14,6 +14,9 @@ export type GridPairConfig = {
   stable: boolean;
   baseDecimals: number;
   quoteDecimals: number;
+  minGasReserveQuote: string;
+  maxGasCostQuotePerTrade: string;
+  minExecutionInterval: number;
   enabled: boolean;
 };
 
@@ -84,6 +87,9 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
         stable: false,
         baseDecimals: 18,
         quoteDecimals: 6,
+        minGasReserveQuote: '1',
+        maxGasCostQuotePerTrade: '2',
+        minExecutionInterval: 60,
         enabled: true,
       },
     ];
@@ -103,6 +109,9 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       stable: false,
       baseDecimals: 18,
       quoteDecimals: 6,
+      minGasReserveQuote: process.env.NEXT_PUBLIC_GRID_MIN_GAS_RESERVE_USDC || '1',
+      maxGasCostQuotePerTrade: process.env.NEXT_PUBLIC_GRID_MAX_GAS_COST_USDC || '2',
+      minExecutionInterval: Number(process.env.NEXT_PUBLIC_GRID_MIN_EXECUTION_INTERVAL_SEC || '60'),
       enabled: true,
     },
     {
@@ -122,6 +131,9 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       stable: false,
       baseDecimals: 18,
       quoteDecimals: 6,
+      minGasReserveQuote: process.env.NEXT_PUBLIC_GRID_MIN_GAS_RESERVE_USDC || '1',
+      maxGasCostQuotePerTrade: process.env.NEXT_PUBLIC_GRID_MAX_GAS_COST_USDC || '2',
+      minExecutionInterval: Number(process.env.NEXT_PUBLIC_GRID_MIN_EXECUTION_INTERVAL_SEC || '60'),
       enabled: true,
     },
   ];
@@ -142,6 +154,9 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       stable: process.env.NEXT_PUBLIC_ACU_USDC_STABLE === 'true',
       baseDecimals: Number(process.env.NEXT_PUBLIC_ACU_DECIMALS || '18'),
       quoteDecimals: 6,
+      minGasReserveQuote: process.env.NEXT_PUBLIC_GRID_MIN_GAS_RESERVE_USDC || '1',
+      maxGasCostQuotePerTrade: process.env.NEXT_PUBLIC_GRID_MAX_GAS_COST_USDC || '2',
+      minExecutionInterval: Number(process.env.NEXT_PUBLIC_GRID_MIN_EXECUTION_INTERVAL_SEC || '60'),
       enabled: true,
     });
   }

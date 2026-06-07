@@ -482,6 +482,34 @@ export const GRID_STRATEGY_MANAGER_ABI = [
     "type": "function"
   },
   {
+    "inputs": [{ "internalType": "bytes32", "name": "strategyId", "type": "bytes32" }],
+    "name": "closeStrategy",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "bytes32", "name": "", "type": "bytes32" }],
+    "name": "pairConfig",
+    "outputs": [
+      { "internalType": "address", "name": "baseToken", "type": "address" },
+      { "internalType": "address", "name": "quoteToken", "type": "address" },
+      { "internalType": "bool", "name": "enabled", "type": "bool" },
+      { "internalType": "uint256", "name": "minGasReserveQuote", "type": "uint256" },
+      { "internalType": "uint256", "name": "maxGasCostQuotePerTrade", "type": "uint256" },
+      { "internalType": "uint64", "name": "minExecutionInterval", "type": "uint64" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "testingGasSubsidyMode",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       { "internalType": "bytes32", "name": "strategyId", "type": "bytes32" },
       { "internalType": "uint256", "name": "amount", "type": "uint256" }

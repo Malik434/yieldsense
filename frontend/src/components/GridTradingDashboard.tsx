@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  ArrowDownToLine,
   Check,
   CheckCircle2,
   ChevronDown,
   CirclePause,
+  CircleX,
   Gauge,
   KeyRound,
   Loader2,
@@ -76,6 +78,10 @@ const EXECUTION_INTERVALS = [
   { label: '15M', seconds: '900' },
   { label: '1H', seconds: '3600' },
 ];
+const DEFAULT_IMPORTED_STRATEGY_ID =
+  process.env.NEXT_PUBLIC_GRID_STRATEGY_ID ||
+  process.env.NEXT_PUBLIC_SMOKE_GRID_STRATEGY_ID ||
+  '';
 
 function isConfigured(value: string | undefined): value is HexAddress {
   return Boolean(value && isAddress(value));
@@ -84,6 +90,10 @@ function isConfigured(value: string | undefined): value is HexAddress {
 function short(value?: string) {
   if (!value) return 'Not set';
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function isStrategyId(value: string) {
+  return /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
 function createPayloadHash(form: StrategyForm, pairId: string, owner: string, chainId: number) {
@@ -105,6 +115,14 @@ function createPayloadHash(form: StrategyForm, pairId: string, owner: string, ch
   return keccak256(stringToBytes(normalized));
 }
 
+function tryParseAmount(value: string, decimals: number) {
+  try {
+    return parseUnits(value || '0', decimals);
+  } catch {
+    return null;
+  }
+}
+
 export function GridTradingDashboard() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
@@ -112,10 +130,13 @@ export function GridTradingDashboard() {
   const { writeContractAsync } = useWriteContract();
 
   const [depositAmount, setDepositAmount] = useState('20');
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawTokenSide, setWithdrawTokenSide] = useState<'quote' | 'base'>('quote');
   const [allocationAmount, setAllocationAmount] = useState('10');
   const [gasReserveAmount, setGasReserveAmount] = useState('2');
   const [form, setForm] = useState<StrategyForm>(DEFAULT_FORM);
   const [strategyId, setStrategyId] = useState<string>('');
+  const [importStrategyId, setImportStrategyId] = useState('');
   const [attestation, setAttestation] = useState<GridAttestationEvidence | null>(null);
   const [attestationStatus, setAttestationStatus] = useState<GridAttestationVerification | null>(null);
   const [queueJobs, setQueueJobs] = useState<ExecutionJob[]>([]);
@@ -133,8 +154,10 @@ export function GridTradingDashboard() {
     [pairs, selectedPairId],
   );
   const quoteToken = selectedPair?.quoteToken || config.asset;
+  const baseToken = selectedPair?.baseToken;
   const quoteSymbol = selectedPair?.quoteSymbol || 'USDC';
   const baseSymbol = selectedPair?.baseSymbol || 'Base';
+  const baseDecimals = selectedPair?.baseDecimals || 18;
   const pairId = selectedPair?.pairId || keccak256(stringToBytes('AERO-USDC'));
   const contractsReady = isConfigured(gridVault) && isConfigured(strategyManager) && isConfigured(quoteToken);
 
@@ -171,6 +194,14 @@ export function GridTradingDashboard() {
     query: { enabled: Boolean(address && isConfigured(gridVault) && isConfigured(quoteToken)) },
   });
 
+  const { data: availableBaseRaw, refetch: refetchBaseAvailable } = useReadContract({
+    address: gridVault,
+    abi: GRID_VAULT_ABI,
+    functionName: 'availableBalance',
+    args: address && isConfigured(baseToken) ? [address, baseToken] : undefined,
+    query: { enabled: Boolean(address && isConfigured(gridVault) && isConfigured(baseToken)) },
+  });
+
   const { data: strategyRaw, refetch: refetchStrategy } = useReadContract({
     address: strategyManager,
     abi: GRID_STRATEGY_MANAGER_ABI,
@@ -179,19 +210,50 @@ export function GridTradingDashboard() {
     query: { enabled: Boolean(strategyId && isConfigured(strategyManager)) },
   });
 
+  const { data: pairConfigRaw, refetch: refetchPairConfig } = useReadContract({
+    address: strategyManager,
+    abi: GRID_STRATEGY_MANAGER_ABI,
+    functionName: 'pairConfig',
+    args: pairId ? [pairId as `0x${string}`] : undefined,
+    query: { enabled: Boolean(pairId && isConfigured(strategyManager)) },
+  });
+
+  const { data: testingGasSubsidyModeRaw, refetch: refetchTestingGasSubsidyMode } = useReadContract({
+    address: strategyManager,
+    abi: GRID_STRATEGY_MANAGER_ABI,
+    functionName: 'testingGasSubsidyMode',
+    query: { enabled: isConfigured(strategyManager) },
+  });
+
   const strategy = strategyRaw as any;
+  const pairConfig = pairConfigRaw as any;
+  const pairConfigEnabled = pairConfig?.enabled ?? pairConfig?.[2];
+  const onchainPairEnabled = pairConfig ? Boolean(pairConfigEnabled) : selectedPair?.enabled !== false;
+  const testingGasSubsidyMode = Boolean(testingGasSubsidyModeRaw);
   const currentStatus = strategy ? STATUS_LABELS[Number(strategy.status)] ?? 'Unknown' : 'No Strategy';
-  const canEnable =
-    contractsReady &&
-    Boolean(strategyId) &&
-    currentStatus !== 'Active' &&
-    currentStatus !== 'GasPaused' &&
-    Number(allocationAmount) > 0 &&
-    (attestationStatus?.verified || !attestation);
+  const strategyOwner = strategy?.owner as string | undefined;
+  const isCurrentStrategyOwner =
+    Boolean(strategyOwner && address && strategyOwner.toLowerCase() === address.toLowerCase());
 
   const refreshBalances = useCallback(async () => {
-    await Promise.all([refetchTokenBalance(), refetchAllowance(), refetchAvailable(), refetchStrategy()]);
-  }, [refetchAllowance, refetchAvailable, refetchStrategy, refetchTokenBalance]);
+    await Promise.all([
+      refetchTokenBalance(),
+      refetchAllowance(),
+      refetchAvailable(),
+      refetchBaseAvailable(),
+      refetchStrategy(),
+      refetchPairConfig(),
+      refetchTestingGasSubsidyMode(),
+    ]);
+  }, [
+    refetchAllowance,
+    refetchAvailable,
+    refetchBaseAvailable,
+    refetchPairConfig,
+    refetchStrategy,
+    refetchTestingGasSubsidyMode,
+    refetchTokenBalance,
+  ]);
 
   const fetchAttestation = useCallback(async () => {
     if (!config.executorRegistry) return;
@@ -273,8 +335,21 @@ export function GridTradingDashboard() {
 
   useEffect(() => {
     const stored = address ? localStorage.getItem(`ys_grid_strategy_${address}_${chainId}`) : null;
-    if (stored) setStrategyId(stored);
+    const fallback = stored || DEFAULT_IMPORTED_STRATEGY_ID;
+    if (fallback && isStrategyId(fallback)) {
+      setStrategyId(fallback);
+      setImportStrategyId(fallback);
+    }
   }, [address, chainId]);
+
+  useEffect(() => {
+    const strategyPairId = strategy?.pairId as string | undefined;
+    if (!strategyPairId || pairs.length === 0) return;
+    const pairExists = pairs.some((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase());
+    if (pairExists && selectedPairId.toLowerCase() !== strategyPairId.toLowerCase()) {
+      setSelectedPairId(strategyPairId);
+    }
+  }, [pairs, selectedPairId, strategy?.pairId]);
 
   useEffect(() => {
     fetchAttestation();
@@ -302,6 +377,17 @@ export function GridTradingDashboard() {
     }
   };
 
+  const handleLoadStrategy = () => {
+    setError('');
+    const nextId = importStrategyId.trim();
+    if (!isStrategyId(nextId)) {
+      setError('Enter a valid 32-byte strategy id.');
+      return;
+    }
+    setStrategyId(nextId);
+    if (address) localStorage.setItem(`ys_grid_strategy_${address}_${chainId}`, nextId);
+  };
+
   const handleApprove = () =>
     runTx(`Approving ${quoteSymbol}`, async () => {
       if (!contractsReady) throw new Error('Grid contracts are not configured.');
@@ -324,6 +410,24 @@ export function GridTradingDashboard() {
         functionName: 'deposit',
         args: [quoteToken, amount],
       });
+    });
+
+  const handleWithdraw = () =>
+    runTx(`Withdrawing ${withdrawTokenSide === 'quote' ? quoteSymbol : baseSymbol}`, async () => {
+      if (!contractsReady) throw new Error('Grid contracts are not configured.');
+      if (withdrawError) throw new Error(withdrawError);
+      const token = withdrawTokenSide === 'quote' ? quoteToken : baseToken;
+      const decimals = withdrawTokenSide === 'quote' ? quoteDecimals : baseDecimals;
+      if (!isConfigured(token)) throw new Error('Selected withdrawal token is not configured.');
+      const amount = parseUnits(withdrawAmount || '0', decimals);
+      if (amount <= BigInt(0)) throw new Error('Enter a withdrawal amount greater than zero.');
+      await writeContractAsync({
+        address: gridVault,
+        abi: GRID_VAULT_ABI,
+        functionName: 'withdraw',
+        args: [token, amount],
+      });
+      setWithdrawAmount('');
     });
 
   const handleCreateStrategy = () =>
@@ -382,6 +486,7 @@ export function GridTradingDashboard() {
   const handleAllocate = () =>
     runTx('Allocating capital', async () => {
       if (!strategyId || !contractsReady) throw new Error('Create a strategy before allocation.');
+      if (allocateError) throw new Error(allocateError);
       await writeContractAsync({
         address: strategyManager,
         abi: GRID_STRATEGY_MANAGER_ABI,
@@ -402,6 +507,7 @@ export function GridTradingDashboard() {
   const handleEnable = () =>
     runTx('Enabling grid trading', async () => {
       if (!strategyId || !contractsReady) throw new Error('Create and allocate a strategy first.');
+      if (enableError) throw new Error(enableError);
       await writeContractAsync({
         address: strategyManager,
         abi: GRID_STRATEGY_MANAGER_ABI,
@@ -418,6 +524,7 @@ export function GridTradingDashboard() {
   const handlePause = () =>
     runTx('Pausing grid trading', async () => {
       if (!strategyId || !contractsReady) throw new Error('No strategy selected.');
+      if (pauseError) throw new Error(pauseError);
       await writeContractAsync({
         address: strategyManager,
         abi: GRID_STRATEGY_MANAGER_ABI,
@@ -431,11 +538,112 @@ export function GridTradingDashboard() {
       });
     });
 
+  const handleClose = () =>
+    runTx('Closing strategy', async () => {
+      if (!strategyId || !contractsReady) throw new Error('No strategy selected.');
+      if (closeError) throw new Error(closeError);
+      await writeContractAsync({
+        address: strategyManager,
+        abi: GRID_STRATEGY_MANAGER_ABI,
+        functionName: 'closeStrategy',
+        args: [strategyId as `0x${string}`],
+      });
+      await fetch('/api/grid/strategies', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyId, status: 'closed' }),
+      });
+    });
+
   const allowance = Number(formatUnits((allowanceRaw as bigint | undefined) ?? BigInt(0), quoteDecimals));
   const depositValue = Number(depositAmount || 0);
   const needsApproval = allowance < depositValue;
   const tokenBalance = formatUnits((tokenBalanceRaw as bigint | undefined) ?? BigInt(0), quoteDecimals);
   const availableBalance = formatUnits((availableRaw as bigint | undefined) ?? BigInt(0), quoteDecimals);
+  const availableBaseBalance = formatUnits((availableBaseRaw as bigint | undefined) ?? BigInt(0), baseDecimals);
+  const allocationRaw = tryParseAmount(allocationAmount, quoteDecimals);
+  const gasReserveRaw = tryParseAmount(gasReserveAmount, quoteDecimals);
+  const withdrawAmountRaw = tryParseAmount(withdrawAmount, withdrawTokenSide === 'quote' ? quoteDecimals : baseDecimals);
+  const freeQuoteRaw = (availableRaw as bigint | undefined) ?? BigInt(0);
+  const freeBaseRaw = (availableBaseRaw as bigint | undefined) ?? BigInt(0);
+  const selectedFreeWithdrawRaw = withdrawTokenSide === 'quote' ? freeQuoteRaw : freeBaseRaw;
+  const pairMinGasReserveRaw =
+    (pairConfig?.minGasReserveQuote as bigint | undefined) ??
+    (pairConfig?.[3] as bigint | undefined) ??
+    tryParseAmount(selectedPair?.minGasReserveQuote || '0', quoteDecimals) ??
+    BigInt(0);
+  const withdrawSymbol = withdrawTokenSide === 'quote' ? quoteSymbol : baseSymbol;
+  const withdrawAvailable = withdrawTokenSide === 'quote' ? availableBalance : availableBaseBalance;
+  const totalAllocationRaw =
+    allocationRaw !== null && gasReserveRaw !== null ? allocationRaw + gasReserveRaw : null;
+  const strategyGasReserveRaw = (strategy?.gasReserveQuote as bigint | undefined) ?? BigInt(0);
+  const nextGasReserveRaw =
+    gasReserveRaw !== null && (currentStatus === 'Draft' || currentStatus === 'Funded')
+      ? strategyGasReserveRaw + gasReserveRaw
+      : strategyGasReserveRaw;
+  const hasSufficientGasReserve = testingGasSubsidyMode || nextGasReserveRaw >= pairMinGasReserveRaw;
+  const lifecycleOwnerError =
+    strategy && !isCurrentStrategyOwner
+      ? `This strategy belongs to ${short(strategyOwner)}. Connect that wallet before changing it.`
+      : '';
+  const allocateError =
+    !strategyId
+      ? 'Create or load a strategy first.'
+      : lifecycleOwnerError ||
+        (!onchainPairEnabled ? 'This trading pair is disabled.' : '') ||
+        (currentStatus !== 'Draft' && currentStatus !== 'Funded' ? 'Allocation is only available for Draft or Funded strategies.' : '') ||
+        (allocationRaw === null || gasReserveRaw === null ? 'Enter valid capital and gas reserve amounts.' : '') ||
+        (allocationRaw !== null && allocationRaw <= BigInt(0) ? 'Trading capital must be greater than zero.' : '') ||
+        (totalAllocationRaw !== null && totalAllocationRaw > freeQuoteRaw
+          ? `Free ${quoteSymbol} is too low. Available ${Number(availableBalance).toFixed(2)}, needed ${Number(formatUnits(totalAllocationRaw, quoteDecimals)).toFixed(2)}.`
+          : '');
+  const enableError =
+    !strategyId
+      ? 'Create or load a strategy first.'
+      : lifecycleOwnerError ||
+        (!onchainPairEnabled ? 'This trading pair is disabled.' : '') ||
+        (currentStatus !== 'Funded' && currentStatus !== 'Paused' ? 'Enable requires a Funded or Paused strategy.' : '') ||
+        (!hasSufficientGasReserve
+          ? `Gas reserve must be at least ${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol}.`
+          : '') ||
+        (attestation && !attestationStatus?.verified ? 'Attestation must pass before enabling confidential mode.' : '');
+  const pauseError =
+    !strategyId
+      ? 'Create or load a strategy first.'
+      : lifecycleOwnerError ||
+        (currentStatus !== 'Active' && currentStatus !== 'GasPaused' ? 'Only Active or GasPaused strategies can be paused.' : '');
+  const closeError =
+    !strategyId
+      ? 'Create or load a strategy first.'
+      : lifecycleOwnerError ||
+        (currentStatus === 'Active' ? 'Pause the strategy before closing it.' : '') ||
+        (currentStatus === 'Closed' ? 'Strategy is already closed.' : '');
+  const withdrawError =
+    withdrawAmountRaw === null
+      ? 'Enter a valid withdrawal amount.'
+      : withdrawAmountRaw <= BigInt(0)
+        ? 'Enter a withdrawal amount greater than zero.'
+        : withdrawAmountRaw > selectedFreeWithdrawRaw
+          ? `Maximum withdrawal is ${Number(withdrawAvailable).toFixed(withdrawTokenSide === 'quote' ? 2 : 4)} ${withdrawSymbol}.`
+          : '';
+  const canAllocate = contractsReady && !allocateError;
+  const canEnable = contractsReady && !enableError;
+  const canPause = contractsReady && !pauseError;
+  const canClose = contractsReady && !closeError;
+  const canWithdraw =
+    contractsReady &&
+    !withdrawError &&
+    withdrawAmountRaw !== null &&
+    withdrawAmountRaw <= selectedFreeWithdrawRaw;
+  const lifecycleHint =
+    lifecycleOwnerError ||
+    (!strategyId
+      ? 'Create or load a strategy first.'
+      : currentStatus === 'Active'
+        ? 'Active strategy loaded. Pause it before closing or reallocating capital.'
+        : currentStatus === 'Closed'
+          ? 'This strategy is closed. Free released funds can be withdrawn from the Capital panel.'
+          : allocateError || enableError || pauseError || closeError);
 
   return (
     <div className="ys-card p-5 sm:p-8 flex flex-col gap-8">
@@ -578,10 +786,12 @@ export function GridTradingDashboard() {
                 <div>
                   <p className="text-[#484F58]">Base</p>
                   <p className="mt-1 text-[#F5F7FA]">{baseSymbol}</p>
+                  <p className="mt-1 text-[#484F58]">Free {Number(availableBaseBalance).toFixed(4)}</p>
                 </div>
                 <div>
                   <p className="text-[#484F58]">Quote</p>
                   <p className="mt-1 text-[#F5F7FA]">{quoteSymbol}</p>
+                  <p className="mt-1 text-[#484F58]">Free {Number(availableBalance).toFixed(2)}</p>
                 </div>
               </div>
               <p className="mt-3 truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
@@ -612,6 +822,57 @@ export function GridTradingDashboard() {
             <button className="ys-btn-primary h-12" disabled={!contractsReady || Boolean(busyLabel) || needsApproval} onClick={handleDeposit}>
               Deposit
             </button>
+          </div>
+          <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">Withdraw Free Vault Balance</p>
+              <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+                {Number(withdrawAvailable).toFixed(withdrawTokenSide === 'quote' ? 2 : 4)} {withdrawSymbol}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['quote', 'base'] as const).map((side) => {
+                const active = withdrawTokenSide === side;
+                const symbol = side === 'quote' ? quoteSymbol : baseSymbol;
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    onClick={() => setWithdrawTokenSide(side)}
+                    className={`h-10 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${
+                      active
+                        ? 'bg-[#C2E812] text-[#030605]'
+                        : 'border border-white/10 bg-white/5 text-[#8B949E] hover:text-[#F5F7FA]'
+                    }`}
+                  >
+                    {symbol}
+                  </button>
+                );
+              })}
+            </div>
+            <label className="mt-4 flex flex-col gap-2">
+              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Withdraw Amount</span>
+              <div className="relative">
+                <input
+                  value={withdrawAmount}
+                  onChange={(event) => setWithdrawAmount(event.target.value)}
+                  className="ys-input w-full pr-20"
+                  type="number"
+                  min="0"
+                />
+                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+                  {withdrawSymbol}
+                </span>
+              </div>
+            </label>
+            <button className="ys-btn-secondary mt-3 h-12 w-full" disabled={Boolean(busyLabel) || !canWithdraw} onClick={handleWithdraw}>
+              <ArrowDownToLine size={15} /> Withdraw
+            </button>
+            {withdrawError && withdrawAmount ? (
+              <p className="mt-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#FF4466]">
+                {withdrawError}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -658,6 +919,14 @@ export function GridTradingDashboard() {
             <div>
               <p className="text-[#484F58]">Gas Spent</p>
               <p className="mt-2 text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.gasSpentQuote, quoteDecimals)).toFixed(2) : '0.00'}</p>
+            </div>
+            <div>
+              <p className="text-[#484F58]">Grid Level</p>
+              <p className="mt-2 text-[#F5F7FA]">{strategy ? String(strategy.currentGridLevel) : '0'}</p>
+            </div>
+            <div>
+              <p className="text-[#484F58]">Last Exec</p>
+              <p className="mt-2 text-[#F5F7FA]">{strategy?.lastExecutionAt ? new Date(Number(strategy.lastExecutionAt) * 1000).toLocaleTimeString() : 'None'}</p>
             </div>
           </div>
         </div>
@@ -737,6 +1006,20 @@ export function GridTradingDashboard() {
 
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Allocation & Lifecycle</h4>
+          <div className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <label className="flex flex-col gap-2">
+              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Load On-chain Strategy</span>
+              <input
+                value={importStrategyId}
+                onChange={(event) => setImportStrategyId(event.target.value)}
+                className="ys-input w-full font-mono text-xs"
+                placeholder="0x..."
+              />
+            </label>
+            <button className="ys-btn-secondary mt-3 h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
+              Load Strategy ID
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Capital</span>
@@ -747,15 +1030,35 @@ export function GridTradingDashboard() {
               <input value={gasReserveAmount} onChange={(event) => setGasReserveAmount(event.target.value)} className="ys-input w-full" type="number" />
             </label>
           </div>
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <button className="ys-btn-secondary h-12" disabled={!strategyId || Boolean(busyLabel)} onClick={handleAllocate}>
+          {lifecycleHint && (
+            <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.04] p-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-200">
+              {lifecycleHint}
+            </div>
+          )}
+          <div className="mt-4 grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <p className="text-[#484F58]">Max Allocate</p>
+              <p className="mt-1 text-[#F5F7FA]">{Number(availableBalance).toFixed(2)} {quoteSymbol}</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <p className="text-[#484F58]">Min Gas Reserve</p>
+              <p className="mt-1 text-[#F5F7FA]">
+                {testingGasSubsidyMode ? 'Subsidized' : `${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol}`}
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canAllocate} onClick={handleAllocate}>
               Allocate
             </button>
-            <button className="ys-btn-primary h-12" disabled={!canEnable || Boolean(busyLabel)} onClick={handleEnable}>
+            <button className="ys-btn-primary h-12" disabled={Boolean(busyLabel) || !canEnable} onClick={handleEnable}>
               <Play size={15} /> Enable
             </button>
-            <button className="ys-btn-secondary h-12" disabled={!strategyId || currentStatus !== 'Active' || Boolean(busyLabel)} onClick={handlePause}>
+            <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canPause} onClick={handlePause}>
               <CirclePause size={15} /> Pause
+            </button>
+            <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canClose} onClick={handleClose}>
+              <CircleX size={15} /> Close
             </button>
           </div>
 
@@ -771,11 +1074,23 @@ export function GridTradingDashboard() {
                 <p className="text-xs font-mono text-[#484F58]">No execution jobs for this strategy yet.</p>
               ) : (
                 queueJobs.slice(0, 5).map((job) => (
-                  <div key={job.id} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
-                    <span className="text-[#8B949E]">{job.side} L{job.gridLevel}</span>
-                    <span className={job.status === 'confirmed' ? 'text-[#00FFA3]' : job.status === 'reverted' || job.status === 'stale' ? 'text-[#FF4466]' : 'text-[#C2E812]'}>
-                      {job.status}
-                    </span>
+                  <div key={job.id} className="rounded-lg bg-white/[0.03] px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[#8B949E]">{job.side} L{job.gridLevel}</span>
+                      <span className={job.status === 'confirmed' ? 'text-[#00FFA3]' : job.status === 'reverted' || job.status === 'stale' ? 'text-[#FF4466]' : 'text-[#C2E812]'}>
+                        {job.status}
+                      </span>
+                    </div>
+                    {job.txHash && (
+                      <a
+                        href={`${config.explorer}/tx/${job.txHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block truncate text-[#484F58] transition-colors hover:text-[#C2E812]"
+                      >
+                        {short(job.txHash)}
+                      </a>
+                    )}
                   </div>
                 ))
               )}
