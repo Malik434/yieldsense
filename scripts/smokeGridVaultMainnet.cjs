@@ -601,7 +601,7 @@ async function main() {
 
       console.log("\nLive Aerodrome grid smoke complete.");
       console.log(
-        "NOTE: strategy capital remains locked because the deployed manager has no close/release function yet.",
+        "NOTE: strategy inventory remains allocated until you execute the opposite side or pause and close the strategy.",
       );
     } finally {
       if (gasModeState?.changedByScript) {

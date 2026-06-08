@@ -9,7 +9,6 @@ import { useNetwork } from "@/providers/NetworkProvider";
 import { KEEPER_ABI, OPERATOR_ADDRESS } from "@/lib/contracts";
 import { Header } from "@/components/Header";
 import { DepositModule } from "@/components/DepositModule";
-import { ConfidentialStrategyBox } from "@/components/ConfidentialStrategyBox";
 import { GridTradingDashboard } from "@/components/GridTradingDashboard";
 import { PnlChart } from "@/components/PnlChart";
 import { TransactionHistory } from "@/components/TransactionHistory";
@@ -56,14 +55,22 @@ function SectionHeading({
   id,
   label,
   sublabel,
+  align = "left",
 }: {
   id: string;
   label: string;
   sublabel: string;
+  align?: "left" | "center";
 }) {
   return (
-    <div id={id} className="mb-8 pt-16 group sm:mb-12 sm:pt-24">
+    <div
+      id={id}
+      className={`mb-6 pt-12 group sm:mb-8 sm:pt-16 ${
+        align === "center" ? "mx-auto max-w-3xl text-center" : ""
+      }`}
+    >
       <div className="flex items-center gap-4 mb-4">
+        {align === "center" && <div className="h-px flex-1 bg-white/[0.05]" />}
         <h2 className="text-2xl sm:text-3xl font-heading font-bold tracking-tighter text-[#F5F7FA]">
           {label}
         </h2>
@@ -286,11 +293,11 @@ export default function CommandCenter() {
         <SectionHeading
           id="command-center"
           label="Vault Allocation"
-          sublabel="Principal control & parameterization"
+          sublabel="Yield vault principal control"
+          align="center"
         />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-10 mb-16 sm:mb-24 animate-fade-in">
+        <div className="mx-auto max-w-xl mb-12 sm:mb-16 animate-fade-in">
           <DepositModule />
-          <ConfidentialStrategyBox />
         </div>
 
         <SectionHeading

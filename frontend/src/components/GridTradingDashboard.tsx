@@ -139,6 +139,7 @@ export function GridTradingDashboard() {
   const [importStrategyId, setImportStrategyId] = useState('');
   const [attestation, setAttestation] = useState<GridAttestationEvidence | null>(null);
   const [attestationStatus, setAttestationStatus] = useState<GridAttestationVerification | null>(null);
+  const [attestationUnavailableReason, setAttestationUnavailableReason] = useState('');
   const [queueJobs, setQueueJobs] = useState<ExecutionJob[]>([]);
   const [pairs, setPairs] = useState<GridPairConfig[]>([]);
   const [selectedPairId, setSelectedPairId] = useState('');
@@ -231,6 +232,17 @@ export function GridTradingDashboard() {
   const onchainPairEnabled = pairConfig ? Boolean(pairConfigEnabled) : selectedPair?.enabled !== false;
   const testingGasSubsidyMode = Boolean(testingGasSubsidyModeRaw);
   const currentStatus = strategy ? STATUS_LABELS[Number(strategy.status)] ?? 'Unknown' : 'No Strategy';
+  const attestationConfigured = Boolean(attestation);
+  const attestationLabel = attestationStatus?.verified
+    ? 'TEE key verified'
+    : attestationConfigured
+      ? 'Verification failed'
+      : 'Not configured';
+  const attestationTone = attestationStatus?.verified
+    ? 'text-[#00FFA3]'
+    : attestationConfigured
+      ? 'text-[#FF4466]'
+      : 'text-[#8B949E]';
   const strategyOwner = strategy?.owner as string | undefined;
   const isCurrentStrategyOwner =
     Boolean(strategyOwner && address && strategyOwner.toLowerCase() === address.toLowerCase());
@@ -264,8 +276,12 @@ export function GridTradingDashboard() {
       ]);
 
       if (!identityRes.ok) {
+        const body = await identityRes.json().catch(() => ({}));
         setAttestation(null);
         setAttestationStatus(null);
+        setAttestationUnavailableReason(
+          typeof body.error === 'string' ? body.error : 'Grid encryption identity is not configured.',
+        );
         return;
       }
 
@@ -278,6 +294,7 @@ export function GridTradingDashboard() {
       );
 
       setAttestation(identity);
+      setAttestationUnavailableReason('');
       setAttestationStatus(
         verifyGridAttestation({
           attestation: identity,
@@ -288,6 +305,8 @@ export function GridTradingDashboard() {
         }),
       );
     } catch (err) {
+      setAttestation(null);
+      setAttestationUnavailableReason('');
       setAttestationStatus({
         verified: false,
         failures: [err instanceof Error ? err.message : 'Failed to verify grid attestation'],
@@ -878,16 +897,21 @@ export function GridTradingDashboard() {
 
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
           <div className="mb-5 flex items-center gap-3">
-            <ShieldCheck size={17} className={attestationStatus?.verified ? 'text-[#00FFA3]' : 'text-amber-300'} />
-            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Attestation</h4>
+            <ShieldCheck size={17} className={attestationStatus?.verified ? 'text-[#00FFA3]' : 'text-[#8B949E]'} />
+            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Confidential Mode</h4>
           </div>
           <div className="space-y-3 text-[10px] font-mono font-bold uppercase tracking-widest">
-            <p className={attestationStatus?.verified ? 'text-[#00FFA3]' : 'text-amber-300'}>
-              {attestationStatus?.verified ? 'TEE key verified' : 'Verification pending'}
+            <p className={attestationTone}>
+              {attestationLabel}
             </p>
             <p className="text-[#484F58]">Processor: <span className="text-[#8B949E]">{short(attestation?.identity.processorAddress)}</span></p>
             <p className="text-[#484F58]">Key: <span className="text-[#8B949E]">{short(attestation?.identity.keyId)}</span></p>
           </div>
+          {attestationUnavailableReason ? (
+            <p className="mt-4 text-[10px] font-mono leading-relaxed text-[#8B949E] uppercase tracking-widest">
+              Encrypted payloads are disabled until GRID_ENCRYPTION_PUBLIC_KEY and processor attestation metadata are configured.
+            </p>
+          ) : null}
           {attestationStatus && !attestationStatus.verified && (
             <p className="mt-4 text-[10px] font-mono leading-relaxed text-[#FF4466] uppercase tracking-widest">
               {attestationStatus.failures[0] || 'Attestation failed'}
