@@ -18,6 +18,7 @@
     "smoke:grid": "node scripts/smokeGridVaultMainnet.cjs",
     "recover:grid": "npx hardhat run scripts/recoverGridStrategyMainnet.cjs --network baseMainnet",
     "upgrade:grid": "npx hardhat run scripts/upgradeGridMainnet.cjs --network baseMainnet",
+    "enable:grid:acu": "npx hardhat run scripts/enableGridAcuMainnet.cjs --network baseMainnet",
     "dev": "node --env-file=.env dist/index.bundle.cjs",
     "dev:processor": "node --env-file=.env dist/processor.bundle.cjs",
     "rpc:relay": "node scripts/rpcRelay.cjs",

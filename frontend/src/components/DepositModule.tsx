@@ -4,8 +4,16 @@ import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { ERC20_ABI, KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
-import { ShieldCheck, ArrowDownToLine, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
+import { ArrowDownToLine, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
 import { useNetwork } from '@/providers/NetworkProvider';
+
+function tryParseUsdc(value: string) {
+  try {
+    return value ? parseUnits(value, 6) : BigInt(0);
+  } catch {
+    return null;
+  }
+}
 
 export function DepositModule() {
   const { address, isConnected } = useAccount();
@@ -54,19 +62,26 @@ export function DepositModule() {
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
+  const { data: maxDepositRaw } = useReadContract({
+    address: KEEPER_ADDRESS,
+    abi: KEEPER_ABI,
+    functionName: 'maxDeposit',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && !!KEEPER_ADDRESS },
+  });
+
   const { writeContractAsync } = useWriteContract();
 
   const ZERO = BigInt(0);
 
-  const depositAmountParsed =
-    depositAmount && parseFloat(depositAmount) > 0
-      ? parseUnits(depositAmount, 6)
-      : ZERO;
+  const parsedDepositAmount = tryParseUsdc(depositAmount);
+  const depositAmountParsed = parsedDepositAmount ?? ZERO;
 
   const currentAllowance = allowance ? (allowance as bigint) : ZERO;
   const isApprovedForAmount = depositAmountParsed > ZERO && currentAllowance >= depositAmountParsed;
 
-  const walletBalance = assetBalance ? formatUnits(assetBalance as bigint, 6) : '0';
+  const walletBalanceRaw = assetBalance ? (assetBalance as bigint) : ZERO;
+  const walletBalance = formatUnits(walletBalanceRaw, 6);
   const totalAssetsNum = totalAssets ? Number(formatUnits(totalAssets as bigint, 6)) : 0;
   const totalAssetsVal = totalAssets !== undefined ? (totalAssets as bigint) : ZERO;
   const maxTotalAssetsVal = maxTotalAssets !== undefined ? (maxTotalAssets as bigint) : ZERO;
@@ -78,6 +93,7 @@ export function DepositModule() {
         ? maxTotalAssetsVal - totalAssetsVal
         : ZERO
       : ZERO;
+  const maxDepositVal = maxDepositRaw !== undefined ? (maxDepositRaw as bigint) : remainingCapacity;
 
   const capReached = maxAssetsNum > 0 && totalAssetsNum >= maxAssetsNum;
   const depositsDisabled = maxTotalAssets !== undefined && maxTotalAssetsVal === ZERO;
@@ -87,11 +103,35 @@ export function DepositModule() {
     totalAssets !== undefined &&
     depositAmountParsed > ZERO &&
     depositAmountParsed > remainingCapacity;
+  const maxDepositableRaw =
+    walletBalanceRaw < maxDepositVal ? walletBalanceRaw : maxDepositVal;
+  const maxDepositable = formatUnits(maxDepositableRaw, 6);
+  const amountExceedsWallet = depositAmountParsed > walletBalanceRaw;
+  const amountExceedsMaxDeposit = depositAmountParsed > maxDepositVal;
+  const depositError =
+    parsedDepositAmount === null
+      ? 'Enter a valid USDC amount.'
+      : depositAmountParsed < ZERO
+        ? 'Deposit amount cannot be negative.'
+        : depositAmountParsed === ZERO
+        ? ''
+        : amountExceedsWallet
+          ? `Wallet balance is only ${Number(walletBalance).toFixed(2)} USDC.`
+          : amountExceedsMaxDeposit || amountExceedsCapacity
+            ? `Maximum vault deposit is ${Number(formatUnits(maxDepositVal, 6)).toFixed(2)} USDC.`
+            : '';
 
   const isLoading = txState === 'approving' || txState === 'depositing';
+  const canSubmitDeposit =
+    !isLoading &&
+    depositAmountParsed > ZERO &&
+    !capReached &&
+    !depositsDisabled &&
+    !depositError;
 
   const handleApprove = async () => {
     if (!actualAssetAddress || depositAmountParsed === ZERO) return;
+    if (depositError) return;
     setTxState('approving');
     try {
       await writeContractAsync({
@@ -111,6 +151,7 @@ export function DepositModule() {
 
   const handleDeposit = async () => {
     if (!address || !actualAssetAddress || depositAmountParsed === ZERO) return;
+    if (depositError) return;
     setTxState('depositing');
     try {
       if (!isApprovedForAmount) {
@@ -164,9 +205,8 @@ export function DepositModule() {
             <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Asset Allocation</h3>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-0 py-1.5 text-[#00FFA3]">
-          <ShieldCheck size={14} />
-          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.3em]">Secured</span>
+        <div className="px-0 py-1.5 text-[#8B949E]">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.3em]">Yield Vault</span>
         </div>
       </div>
 
@@ -194,16 +234,29 @@ export function DepositModule() {
                 placeholder="0.00"
                 value={depositAmount}
                 onChange={e => setDepositAmount(e.target.value)}
+                min="0"
+                max={maxDepositable}
                 className="ys-input w-full pr-16 text-2xl"
               />
               <div className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-[#484F58]">USDC</div>
             </div>
             <button
-              onClick={() => setDepositAmount(parseFloat(walletBalance).toFixed(6))}
-              className="px-6 rounded-2xl bg-white/5 border border-white/10 font-heading font-bold text-xs uppercase tracking-widest hover:bg-white/10 transition-all"
+              onClick={() => setDepositAmount(Number(maxDepositable).toFixed(6))}
+              disabled={maxDepositableRaw === ZERO}
+              className="px-6 rounded-2xl bg-white/5 border border-white/10 font-heading font-bold text-xs uppercase tracking-widest hover:bg-white/10 transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
               Max
             </button>
+          </div>
+          <div className="flex flex-col gap-1 px-1 text-[10px] font-mono font-bold uppercase tracking-widest">
+            <span className={depositError ? 'text-[#FF4466]' : 'text-[#484F58]'}>
+              {depositError || `Max deposit now: ${Number(maxDepositable).toFixed(2)} USDC`}
+            </span>
+            {depositAmountParsed > ZERO && !depositError ? (
+              <span className="text-[#8B949E]">
+                {isApprovedForAmount ? 'Approval ready' : 'Approval required before deposit'}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -245,11 +298,13 @@ export function DepositModule() {
       <div className="mt-auto">
         <button
           onClick={handleDeposit}
-          disabled={isLoading || depositAmountParsed === ZERO || capReached || depositsDisabled || amountExceedsCapacity}
+          disabled={!canSubmitDeposit}
           className="ys-btn-primary w-full h-16 text-sm"
         >
           {depositsDisabled ? (
             'Deposits Paused'
+          ) : depositError ? (
+            'Check Deposit Amount'
           ) : amountExceedsCapacity ? (
             'Amount Exceeds Pilot Cap'
           ) : capReached ? (

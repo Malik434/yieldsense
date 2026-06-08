@@ -8,6 +8,8 @@ export type GridPairConfig = {
   quoteSymbol: string;
   baseToken: HexAddress;
   quoteToken: HexAddress;
+  baseLogoUrl?: string;
+  quoteLogoUrl?: string;
   poolAddress: HexAddress;
   dexRouter: HexAddress;
   factory: HexAddress;
@@ -56,11 +58,17 @@ export const gridStore: GridStore =
 
 const MAINNET_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 const MAINNET_AERO = '0x940181a94A35A4569E4529A3CDfB74e38FD98631' as const;
+const MAINNET_ACU = '0xc5fEd7c8cCC75D8A72b601a66DffD7A489073F0b' as const;
 const MAINNET_WETH = '0x4200000000000000000000000000000000000006' as const;
 const MAINNET_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43' as const;
 const MAINNET_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da' as const;
 const MAINNET_AERO_USDC_POOL = '0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d' as const;
 const MAINNET_ETH_USDC_PRICE_POOL = '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59' as const;
+const MAINNET_ACU_USDC_POOL = '0xfea8865c8c9f316584aC4a10346FfE4CD4308351' as const;
+const AERO_LOGO_URL = 'https://aerodrome.finance/svg/AERO/favicon.svg';
+const ACU_LOGO_URL = 'https://hub.acurast.com/assets/acurast-logo.png';
+const ETH_LOGO_URL = 'https://assets.coingecko.com/coins/images/279/small/ethereum.png';
+const USDC_LOGO_URL = 'https://assets.coingecko.com/coins/images/6319/small/usdc.png';
 
 function pairId(label: string) {
   return keccak256(stringToBytes(label));
@@ -81,6 +89,8 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
         quoteSymbol: 'USDC',
         baseToken: (process.env.NEXT_PUBLIC_TESTNET_REWARD_TOKEN_ADDRESS || MAINNET_AERO) as HexAddress,
         quoteToken: (process.env.NEXT_PUBLIC_TESTNET_ASSET_ADDRESS || MAINNET_USDC) as HexAddress,
+        baseLogoUrl: AERO_LOGO_URL,
+        quoteLogoUrl: USDC_LOGO_URL,
         poolAddress: (process.env.NEXT_PUBLIC_TESTNET_POOL_ADDRESS || '0x0000000000000000000000000000000000000000') as HexAddress,
         dexRouter: (process.env.NEXT_PUBLIC_TESTNET_ROUTER_ADDRESS || MAINNET_ROUTER) as HexAddress,
         factory: (process.env.NEXT_PUBLIC_TESTNET_FACTORY_ADDRESS || MAINNET_FACTORY) as HexAddress,
@@ -103,6 +113,8 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       quoteSymbol: 'USDC',
       baseToken: MAINNET_AERO,
       quoteToken: MAINNET_USDC,
+      baseLogoUrl: AERO_LOGO_URL,
+      quoteLogoUrl: USDC_LOGO_URL,
       poolAddress: envAddress(process.env.NEXT_PUBLIC_AERO_USDC_POOL_ADDRESS) ?? MAINNET_AERO_USDC_POOL,
       dexRouter: MAINNET_ROUTER,
       factory: MAINNET_FACTORY,
@@ -121,6 +133,8 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       quoteSymbol: 'USDC',
       baseToken: MAINNET_WETH,
       quoteToken: MAINNET_USDC,
+      baseLogoUrl: ETH_LOGO_URL,
+      quoteLogoUrl: USDC_LOGO_URL,
       poolAddress:
         envAddress(process.env.NEXT_PUBLIC_ETH_USDC_GRID_POOL_ADDRESS) ??
         envAddress(process.env.NEXT_PUBLIC_ETH_USDC_POOL_ADDRESS) ??
@@ -138,8 +152,8 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
     },
   ];
 
-  const acuToken = envAddress(process.env.NEXT_PUBLIC_ACU_TOKEN_ADDRESS);
-  const acuPool = envAddress(process.env.NEXT_PUBLIC_ACU_USDC_POOL_ADDRESS);
+  const acuToken = envAddress(process.env.NEXT_PUBLIC_ACU_TOKEN_ADDRESS) ?? MAINNET_ACU;
+  const acuPool = envAddress(process.env.NEXT_PUBLIC_ACU_USDC_POOL_ADDRESS) ?? MAINNET_ACU_USDC_POOL;
   if (acuToken && acuPool) {
     pairs.push({
       pairId: pairId('ACU-USDC'),
@@ -148,11 +162,13 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       quoteSymbol: 'USDC',
       baseToken: acuToken,
       quoteToken: MAINNET_USDC,
+      baseLogoUrl: ACU_LOGO_URL,
+      quoteLogoUrl: USDC_LOGO_URL,
       poolAddress: acuPool,
       dexRouter: MAINNET_ROUTER,
       factory: MAINNET_FACTORY,
       stable: process.env.NEXT_PUBLIC_ACU_USDC_STABLE === 'true',
-      baseDecimals: Number(process.env.NEXT_PUBLIC_ACU_DECIMALS || '18'),
+      baseDecimals: Number(process.env.NEXT_PUBLIC_ACU_DECIMALS || '12'),
       quoteDecimals: 6,
       minGasReserveQuote: process.env.NEXT_PUBLIC_GRID_MIN_GAS_RESERVE_USDC || '1',
       maxGasCostQuotePerTrade: process.env.NEXT_PUBLIC_GRID_MAX_GAS_COST_USDC || '2',

@@ -2,20 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity,
   AlertTriangle,
   ArrowDownToLine,
+  BookOpen,
   Check,
-  CheckCircle2,
   ChevronDown,
   CirclePause,
   CircleX,
   Gauge,
-  KeyRound,
   Loader2,
   Play,
   Plus,
-  ShieldCheck,
   Wallet,
 } from 'lucide-react';
 import { decodeEventLog, formatUnits, isAddress, keccak256, parseUnits, stringToBytes } from 'viem';
@@ -26,13 +23,7 @@ import {
   GRID_STRATEGY_MANAGER_ABI,
   GRID_VAULT_ABI,
 } from '@/lib/contracts';
-import { verifyGridAttestation } from '@/lib/gridAttestation';
-import type {
-  ExecutionJob,
-  GridAttestationEvidence,
-  GridAttestationVerification,
-  HexAddress,
-} from '@/lib/gridTypes';
+import type { ExecutionJob, HexAddress } from '@/lib/gridTypes';
 import type { GridPairConfig } from '@/lib/gridStore';
 
 type StrategyForm = {
@@ -46,16 +37,6 @@ type StrategyForm = {
   takeProfitPrice: string;
   executionIntervalSec: string;
   maxSlippageBps: string;
-};
-
-type ProcessorRegistryResponse = {
-  processors?: Array<{
-    processor: HexAddress;
-    role: string;
-    active: boolean;
-    codeHash?: string;
-    deploymentHash?: string;
-  }>;
 };
 
 const DEFAULT_FORM: StrategyForm = {
@@ -123,6 +104,37 @@ function tryParseAmount(value: string, decimals: number) {
   }
 }
 
+function amountIsNegative(value: string) {
+  return value.trim().startsWith('-');
+}
+
+function TokenLogo({ symbol, src, className = '' }: { symbol: string; src?: string; className?: string }) {
+  return (
+    <span className={`grid place-items-center overflow-hidden rounded-full border border-white/10 bg-[#0B1114] ${className}`}>
+      {src ? (
+        // External token assets are intentionally rendered with img so the dapp can use official token-hosted logos.
+        <img src={src} alt={`${symbol} logo`} className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        <span className="text-[9px] font-mono font-bold text-[#C2E812]">{symbol.slice(0, 3)}</span>
+      )}
+    </span>
+  );
+}
+
+function PairLogos({ pair, size = 'md' }: { pair?: GridPairConfig; size?: 'sm' | 'md' }) {
+  const iconSize = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8';
+  const quoteOffset = size === 'sm' ? '-ml-2' : '-ml-2.5';
+  const baseSymbol = pair?.baseSymbol || 'BASE';
+  const quoteSymbol = pair?.quoteSymbol || 'USD';
+
+  return (
+    <span className="flex shrink-0 items-center">
+      <TokenLogo symbol={baseSymbol} src={pair?.baseLogoUrl} className={`${iconSize} z-10`} />
+      <TokenLogo symbol={quoteSymbol} src={pair?.quoteLogoUrl} className={`${iconSize} ${quoteOffset}`} />
+    </span>
+  );
+}
+
 export function GridTradingDashboard() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
@@ -137,9 +149,6 @@ export function GridTradingDashboard() {
   const [form, setForm] = useState<StrategyForm>(DEFAULT_FORM);
   const [strategyId, setStrategyId] = useState<string>('');
   const [importStrategyId, setImportStrategyId] = useState('');
-  const [attestation, setAttestation] = useState<GridAttestationEvidence | null>(null);
-  const [attestationStatus, setAttestationStatus] = useState<GridAttestationVerification | null>(null);
-  const [attestationUnavailableReason, setAttestationUnavailableReason] = useState('');
   const [queueJobs, setQueueJobs] = useState<ExecutionJob[]>([]);
   const [pairs, setPairs] = useState<GridPairConfig[]>([]);
   const [selectedPairId, setSelectedPairId] = useState('');
@@ -232,17 +241,6 @@ export function GridTradingDashboard() {
   const onchainPairEnabled = pairConfig ? Boolean(pairConfigEnabled) : selectedPair?.enabled !== false;
   const testingGasSubsidyMode = Boolean(testingGasSubsidyModeRaw);
   const currentStatus = strategy ? STATUS_LABELS[Number(strategy.status)] ?? 'Unknown' : 'No Strategy';
-  const attestationConfigured = Boolean(attestation);
-  const attestationLabel = attestationStatus?.verified
-    ? 'TEE key verified'
-    : attestationConfigured
-      ? 'Verification failed'
-      : 'Not configured';
-  const attestationTone = attestationStatus?.verified
-    ? 'text-[#00FFA3]'
-    : attestationConfigured
-      ? 'text-[#FF4466]'
-      : 'text-[#8B949E]';
   const strategyOwner = strategy?.owner as string | undefined;
   const isCurrentStrategyOwner =
     Boolean(strategyOwner && address && strategyOwner.toLowerCase() === address.toLowerCase());
@@ -266,53 +264,6 @@ export function GridTradingDashboard() {
     refetchTestingGasSubsidyMode,
     refetchTokenBalance,
   ]);
-
-  const fetchAttestation = useCallback(async () => {
-    if (!config.executorRegistry) return;
-    try {
-      const [identityRes, processorsRes] = await Promise.all([
-        fetch('/api/grid/encryption-identity'),
-        fetch(`/api/processors?chainId=${chainId}`),
-      ]);
-
-      if (!identityRes.ok) {
-        const body = await identityRes.json().catch(() => ({}));
-        setAttestation(null);
-        setAttestationStatus(null);
-        setAttestationUnavailableReason(
-          typeof body.error === 'string' ? body.error : 'Grid encryption identity is not configured.',
-        );
-        return;
-      }
-
-      const identity = (await identityRes.json()) as GridAttestationEvidence;
-      const registry = processorsRes.ok ? ((await processorsRes.json()) as ProcessorRegistryResponse) : {};
-      const gridProcessors = (registry.processors ?? []).filter((entry) => entry.role === 'GRID_EXECUTOR' && entry.active);
-
-      const approvedMatch = gridProcessors.find(
-        (entry) => entry.processor.toLowerCase() === identity.identity.processorAddress.toLowerCase(),
-      );
-
-      setAttestation(identity);
-      setAttestationUnavailableReason('');
-      setAttestationStatus(
-        verifyGridAttestation({
-          attestation: identity,
-          authorizedGridExecutors: gridProcessors.map((entry) => entry.processor),
-          approvedCodeHash: approvedMatch?.codeHash || process.env.NEXT_PUBLIC_GRID_PROCESSOR_CODE_HASH || identity.identity.codeHash,
-          approvedDeploymentHash:
-            approvedMatch?.deploymentHash || process.env.NEXT_PUBLIC_GRID_PROCESSOR_DEPLOYMENT_HASH || identity.identity.deploymentHash,
-        }),
-      );
-    } catch (err) {
-      setAttestation(null);
-      setAttestationUnavailableReason('');
-      setAttestationStatus({
-        verified: false,
-        failures: [err instanceof Error ? err.message : 'Failed to verify grid attestation'],
-      });
-    }
-  }, [chainId, config.executorRegistry]);
 
   const fetchQueue = useCallback(async () => {
     if (!strategyId) {
@@ -371,12 +322,6 @@ export function GridTradingDashboard() {
   }, [pairs, selectedPairId, strategy?.pairId]);
 
   useEffect(() => {
-    fetchAttestation();
-    const attestationInterval = setInterval(fetchAttestation, 60_000);
-    return () => clearInterval(attestationInterval);
-  }, [fetchAttestation]);
-
-  useEffect(() => {
     fetchQueue();
     const queueInterval = setInterval(fetchQueue, 10_000);
     return () => clearInterval(queueInterval);
@@ -410,6 +355,7 @@ export function GridTradingDashboard() {
   const handleApprove = () =>
     runTx(`Approving ${quoteSymbol}`, async () => {
       if (!contractsReady) throw new Error('Grid contracts are not configured.');
+      if (depositError) throw new Error(depositError);
       const amount = parseUnits(depositAmount || '0', quoteDecimals);
       await writeContractAsync({
         address: quoteToken,
@@ -422,6 +368,7 @@ export function GridTradingDashboard() {
   const handleDeposit = () =>
     runTx(`Depositing ${quoteSymbol}`, async () => {
       if (!contractsReady) throw new Error('Grid contracts are not configured.');
+      if (depositError) throw new Error(depositError);
       const amount = parseUnits(depositAmount || '0', quoteDecimals);
       await writeContractAsync({
         address: gridVault,
@@ -452,7 +399,7 @@ export function GridTradingDashboard() {
   const handleCreateStrategy = () =>
     runTx('Creating strategy', async () => {
       if (!address || !publicClient || !contractsReady) throw new Error('Wallet or grid contracts are not ready.');
-      if (attestation && !attestationStatus?.verified) throw new Error('Attestation must pass before sealing a confidential strategy.');
+      if (createStrategyError) throw new Error(createStrategyError);
 
       const payloadHash = createPayloadHash(form, pairId, address, chainId);
       const txHash = await writeContractAsync({
@@ -580,9 +527,21 @@ export function GridTradingDashboard() {
   const tokenBalance = formatUnits((tokenBalanceRaw as bigint | undefined) ?? BigInt(0), quoteDecimals);
   const availableBalance = formatUnits((availableRaw as bigint | undefined) ?? BigInt(0), quoteDecimals);
   const availableBaseBalance = formatUnits((availableBaseRaw as bigint | undefined) ?? BigInt(0), baseDecimals);
+  const depositRaw = tryParseAmount(depositAmount, quoteDecimals);
   const allocationRaw = tryParseAmount(allocationAmount, quoteDecimals);
   const gasReserveRaw = tryParseAmount(gasReserveAmount, quoteDecimals);
   const withdrawAmountRaw = tryParseAmount(withdrawAmount, withdrawTokenSide === 'quote' ? quoteDecimals : baseDecimals);
+  const depositError =
+    depositRaw === null
+      ? 'Enter a valid deposit amount.'
+      : amountIsNegative(depositAmount) || depositRaw < BigInt(0)
+        ? 'Deposit amount cannot be negative.'
+        : depositRaw === BigInt(0)
+          ? ''
+          : depositRaw > ((tokenBalanceRaw as bigint | undefined) ?? BigInt(0))
+            ? `Wallet balance is only ${Number(tokenBalance).toFixed(2)} ${quoteSymbol}.`
+            : '';
+  const canSubmitGridDeposit = contractsReady && depositRaw !== null && depositRaw > BigInt(0) && !depositError;
   const freeQuoteRaw = (availableRaw as bigint | undefined) ?? BigInt(0);
   const freeBaseRaw = (availableBaseRaw as bigint | undefined) ?? BigInt(0);
   const selectedFreeWithdrawRaw = withdrawTokenSide === 'quote' ? freeQuoteRaw : freeBaseRaw;
@@ -612,6 +571,7 @@ export function GridTradingDashboard() {
         (!onchainPairEnabled ? 'This trading pair is disabled.' : '') ||
         (currentStatus !== 'Draft' && currentStatus !== 'Funded' ? 'Allocation is only available for Draft or Funded strategies.' : '') ||
         (allocationRaw === null || gasReserveRaw === null ? 'Enter valid capital and gas reserve amounts.' : '') ||
+        (amountIsNegative(allocationAmount) || amountIsNegative(gasReserveAmount) ? 'Trading capital and gas reserve cannot be negative.' : '') ||
         (allocationRaw !== null && allocationRaw <= BigInt(0) ? 'Trading capital must be greater than zero.' : '') ||
         (totalAllocationRaw !== null && totalAllocationRaw > freeQuoteRaw
           ? `Free ${quoteSymbol} is too low. Available ${Number(availableBalance).toFixed(2)}, needed ${Number(formatUnits(totalAllocationRaw, quoteDecimals)).toFixed(2)}.`
@@ -624,8 +584,7 @@ export function GridTradingDashboard() {
         (currentStatus !== 'Funded' && currentStatus !== 'Paused' ? 'Enable requires a Funded or Paused strategy.' : '') ||
         (!hasSufficientGasReserve
           ? `Gas reserve must be at least ${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol}.`
-          : '') ||
-        (attestation && !attestationStatus?.verified ? 'Attestation must pass before enabling confidential mode.' : '');
+          : '');
   const pauseError =
     !strategyId
       ? 'Create or load a strategy first.'
@@ -640,11 +599,45 @@ export function GridTradingDashboard() {
   const withdrawError =
     withdrawAmountRaw === null
       ? 'Enter a valid withdrawal amount.'
+      : amountIsNegative(withdrawAmount) || withdrawAmountRaw < BigInt(0)
+        ? 'Withdrawal amount cannot be negative.'
       : withdrawAmountRaw <= BigInt(0)
         ? 'Enter a withdrawal amount greater than zero.'
         : withdrawAmountRaw > selectedFreeWithdrawRaw
           ? `Maximum withdrawal is ${Number(withdrawAvailable).toFixed(withdrawTokenSide === 'quote' ? 2 : 4)} ${withdrawSymbol}.`
           : '';
+  const allocationStatusOpen = currentStatus === 'Draft' || currentStatus === 'Funded';
+  const allocationFormEnabled = Boolean(strategyId && allocationStatusOpen && !lifecycleOwnerError && onchainPairEnabled);
+  const maxTradingCapitalRaw =
+    gasReserveRaw !== null && freeQuoteRaw > gasReserveRaw ? freeQuoteRaw - gasReserveRaw : BigInt(0);
+  const maxGasReserveRaw =
+    allocationRaw !== null && freeQuoteRaw > allocationRaw ? freeQuoteRaw - allocationRaw : BigInt(0);
+  const maxTradingCapital = formatUnits(maxTradingCapitalRaw, quoteDecimals);
+  const maxGasReserve = formatUnits(maxGasReserveRaw, quoteDecimals);
+  const tradingCapitalFieldError =
+    amountIsNegative(allocationAmount)
+      ? 'Trading capital cannot be negative.'
+      : allocationRaw !== null && allocationRaw > maxTradingCapitalRaw
+      ? `Max trading capital is ${Number(maxTradingCapital).toFixed(2)} ${quoteSymbol} after gas reserve.`
+      : '';
+  const gasReserveFieldError =
+    amountIsNegative(gasReserveAmount)
+      ? 'Gas reserve cannot be negative.'
+      : gasReserveRaw !== null && gasReserveRaw > maxGasReserveRaw
+      ? `Max gas reserve is ${Number(maxGasReserve).toFixed(2)} ${quoteSymbol} after trading capital.`
+      : !testingGasSubsidyMode && gasReserveRaw !== null && gasReserveRaw < pairMinGasReserveRaw
+        ? `Gas reserve should be at least ${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol} before enabling.`
+        : '';
+  const negativeStrategyField = (Object.entries(form) as Array<[keyof StrategyForm, string]>).find(
+    ([, value]) => amountIsNegative(value),
+  );
+  const createStrategyError =
+    negativeStrategyField
+      ? 'Grid strategy values cannot be negative.'
+      : !onchainPairEnabled
+        ? `${selectedPair?.label || 'Selected pair'} is not enabled on-chain yet.`
+        : '';
+  const canCreateStrategy = contractsReady && !createStrategyError;
   const canAllocate = contractsReady && !allocateError;
   const canEnable = contractsReady && !enableError;
   const canPause = contractsReady && !pauseError;
@@ -663,6 +656,9 @@ export function GridTradingDashboard() {
         : currentStatus === 'Closed'
           ? 'This strategy is closed. Free released funds can be withdrawn from the Capital panel.'
           : allocateError || enableError || pauseError || closeError);
+  const hasGridCapital = freeQuoteRaw > BigInt(0) || Boolean(strategy);
+  const hasGridStrategy = Boolean(strategyId);
+  const isGridLive = currentStatus === 'Active';
 
   return (
     <div className="ys-card p-5 sm:p-8 flex flex-col gap-8">
@@ -673,7 +669,10 @@ export function GridTradingDashboard() {
           </div>
           <div>
             <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Live Grid Engine</p>
-            <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">{selectedPair?.label || 'Grid'} Trading</h3>
+            <div className="mt-1 flex items-center gap-3">
+              <PairLogos pair={selectedPair} />
+              <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">{selectedPair?.label || 'Grid'} Trading</h3>
+            </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-[#8B949E] uppercase tracking-[0.16em]">
               Deposit grid capital, seal strategy parameters, allocate gas reserve, and enable the shared Acurast executor.
             </p>
@@ -716,7 +715,40 @@ export function GridTradingDashboard() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest md:grid-cols-3">
+        {[
+          ['1', 'Fund', hasGridCapital ? 'Ready' : `Add ${quoteSymbol}`],
+          ['2', 'Configure', hasGridStrategy ? 'Strategy set' : 'Create strategy'],
+          ['3', 'Run', isGridLive ? 'Active' : 'Enable when ready'],
+        ].map(([step, label, value]) => {
+          const active =
+            (step === '1' && hasGridCapital) ||
+            (step === '2' && hasGridStrategy) ||
+            (step === '3' && isGridLive);
+          return (
+            <div
+              key={step}
+              className={`flex items-center gap-3 rounded-xl border p-4 ${
+                active ? 'border-[#C2E812]/20 bg-[#C2E812]/[0.04]' : 'border-white/10 bg-white/[0.025]'
+              }`}
+            >
+              <span
+                className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${
+                  active ? 'bg-[#C2E812] text-[#030605]' : 'border border-white/10 text-[#8B949E]'
+                }`}
+              >
+                {step}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[#F5F7FA]">{label}</span>
+                <span className="mt-1 block truncate text-[#484F58]">{value}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
           <div className="mb-5 flex items-center gap-3">
             <Wallet size={17} className="text-[#C2E812]" />
@@ -738,9 +770,7 @@ export function GridTradingDashboard() {
                   aria-haspopup="listbox"
                 >
                   <span className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[#C2E812]/15 bg-[#C2E812]/10 text-[10px] font-mono font-bold text-[#C2E812]">
-                      {baseSymbol.slice(0, 3)}
-                    </span>
+                    <PairLogos pair={selectedPair} />
                     <span className="min-w-0">
                       <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
                         {selectedPair?.label || 'Select Pair'}
@@ -784,10 +814,13 @@ export function GridTradingDashboard() {
                                 : 'border border-transparent text-[#8B949E] hover:border-white/10 hover:bg-white/[0.05] hover:text-[#F5F7FA]'
                             }`}
                           >
-                            <span className="min-w-0">
-                              <span className="block text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
-                              <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                                {pair.baseSymbol} base / {pair.quoteSymbol} quote
+                            <span className="flex min-w-0 items-center gap-3">
+                              <PairLogos pair={pair} size="sm" />
+                              <span className="min-w-0">
+                                <span className="block text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
+                                <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                                  {pair.baseSymbol} base / {pair.quoteSymbol} quote
+                                </span>
                               </span>
                             </span>
                             {active && <Check size={15} className="shrink-0 text-[#C2E812]" />}
@@ -832,23 +865,29 @@ export function GridTradingDashboard() {
                   {quoteSymbol}
                 </span>
               </div>
+              {depositError && depositAmount ? (
+                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#FF4466]">
+                  {depositError}
+                </span>
+              ) : null}
             </label>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <button className="ys-btn-secondary h-12" disabled={!contractsReady || Boolean(busyLabel) || !needsApproval} onClick={handleApprove}>
+            <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canSubmitGridDeposit || !needsApproval} onClick={handleApprove}>
               {needsApproval ? 'Approve' : 'Approved'}
             </button>
-            <button className="ys-btn-primary h-12" disabled={!contractsReady || Boolean(busyLabel) || needsApproval} onClick={handleDeposit}>
+            <button className="ys-btn-primary h-12" disabled={Boolean(busyLabel) || !canSubmitGridDeposit || needsApproval} onClick={handleDeposit}>
               Deposit
             </button>
           </div>
-          <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">Withdraw Free Vault Balance</p>
-              <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+          <details className="group mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+              <span>Withdraw free balance</span>
+              <span className="text-[#484F58] group-open:text-[#C2E812]">
                 {Number(withdrawAvailable).toFixed(withdrawTokenSide === 'quote' ? 2 : 4)} {withdrawSymbol}
-              </p>
-            </div>
+              </span>
+            </summary>
+            <div className="mt-4">
             <div className="grid grid-cols-2 gap-2">
               {(['quote', 'base'] as const).map((side) => {
                 const active = withdrawTokenSide === side;
@@ -892,39 +931,13 @@ export function GridTradingDashboard() {
                 {withdrawError}
               </p>
             ) : null}
-          </div>
+            </div>
+          </details>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
           <div className="mb-5 flex items-center gap-3">
-            <ShieldCheck size={17} className={attestationStatus?.verified ? 'text-[#00FFA3]' : 'text-[#8B949E]'} />
-            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Confidential Mode</h4>
-          </div>
-          <div className="space-y-3 text-[10px] font-mono font-bold uppercase tracking-widest">
-            <p className={attestationTone}>
-              {attestationLabel}
-            </p>
-            <p className="text-[#484F58]">Processor: <span className="text-[#8B949E]">{short(attestation?.identity.processorAddress)}</span></p>
-            <p className="text-[#484F58]">Key: <span className="text-[#8B949E]">{short(attestation?.identity.keyId)}</span></p>
-          </div>
-          {attestationUnavailableReason ? (
-            <p className="mt-4 text-[10px] font-mono leading-relaxed text-[#8B949E] uppercase tracking-widest">
-              Encrypted payloads are disabled until GRID_ENCRYPTION_PUBLIC_KEY and processor attestation metadata are configured.
-            </p>
-          ) : null}
-          {attestationStatus && !attestationStatus.verified && (
-            <p className="mt-4 text-[10px] font-mono leading-relaxed text-[#FF4466] uppercase tracking-widest">
-              {attestationStatus.failures[0] || 'Attestation failed'}
-            </p>
-          )}
-          <button className="ys-btn-secondary mt-5 h-12 w-full" onClick={fetchAttestation}>
-            <KeyRound size={15} /> Verify Key
-          </button>
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
-          <div className="mb-5 flex items-center gap-3">
-            <Activity size={17} className="text-[#00FFA3]" />
+            <BookOpen size={17} className="text-[#C2E812]" />
             <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Accounting</h4>
           </div>
           <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
@@ -958,7 +971,7 @@ export function GridTradingDashboard() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
-          <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Strategy Parameters</h4>
+          <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Grid Setup</h4>
           <p className="mb-5 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
             Price limits are {baseSymbol} price quoted in {quoteSymbol}.
           </p>
@@ -968,11 +981,6 @@ export function GridTradingDashboard() {
               ['upperPrice', `Upper ${quoteSymbol}`],
               ['gridCount', 'Grids'],
               ['tradeSizeQuote', `Trade ${quoteSymbol}`],
-              ['triggerPrice', `Trigger ${quoteSymbol}`],
-              ['stopLossPrice', 'Stop Loss'],
-              ['takeProfitPrice', 'Take Profit'],
-              ['executionIntervalSec', 'Interval Sec'],
-              ['maxSlippageBps', 'Slippage Bps'],
             ] as Array<[Exclude<keyof StrategyForm, 'gridMode'>, string]>).map(([key, label]) => (
               <label key={key} className="flex flex-col gap-2">
                 <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</span>
@@ -981,10 +989,35 @@ export function GridTradingDashboard() {
                   onChange={(event) => setForm((prev) => ({ ...prev, [key]: event.target.value }))}
                   className="ys-input w-full"
                   type="number"
+                  min="0"
                 />
               </label>
             ))}
           </div>
+          <details className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+              Advanced protection settings
+            </summary>
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              {([
+                ['triggerPrice', `Trigger ${quoteSymbol}`],
+                ['stopLossPrice', 'Stop Loss'],
+                ['takeProfitPrice', 'Take Profit'],
+                ['maxSlippageBps', 'Slippage Bps'],
+              ] as Array<[Exclude<keyof StrategyForm, 'gridMode'>, string]>).map(([key, label]) => (
+                <label key={key} className="flex flex-col gap-2">
+                  <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</span>
+                  <input
+                    value={form[key]}
+                    onChange={(event) => setForm((prev) => ({ ...prev, [key]: event.target.value }))}
+                    className="ys-input w-full"
+                    type="number"
+                    min="0"
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
           <div className="mt-5">
             <p className="mb-3 text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Grid Mode</p>
             <div className="grid grid-cols-2 gap-2">
@@ -1023,14 +1056,23 @@ export function GridTradingDashboard() {
               ))}
             </div>
           </div>
-          <button className="ys-btn-primary mt-5 h-12 w-full" disabled={!contractsReady || Boolean(busyLabel)} onClick={handleCreateStrategy}>
-            <Plus size={16} /> Seal & Create Strategy
+          {createStrategyError && (
+            <div className="mt-5 rounded-xl border border-amber-300/15 bg-amber-300/[0.04] p-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-200">
+              {createStrategyError}
+            </div>
+          )}
+          <button className="ys-btn-primary mt-5 h-12 w-full" disabled={Boolean(busyLabel) || !canCreateStrategy} onClick={handleCreateStrategy}>
+            <Plus size={16} /> Create Strategy
           </button>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
-          <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Allocation & Lifecycle</h4>
-          <div className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4">
+          <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Start & Manage</h4>
+          <details className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+              Load existing strategy
+            </summary>
+            <div className="mt-4">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Load On-chain Strategy</span>
               <input
@@ -1043,15 +1085,38 @@ export function GridTradingDashboard() {
             <button className="ys-btn-secondary mt-3 h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
               Load Strategy ID
             </button>
-          </div>
+            </div>
+          </details>
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Capital</span>
-              <input value={allocationAmount} onChange={(event) => setAllocationAmount(event.target.value)} className="ys-input w-full" type="number" />
+              <input
+                value={allocationAmount}
+                onChange={(event) => setAllocationAmount(event.target.value)}
+                className="ys-input w-full disabled:cursor-not-allowed disabled:opacity-50"
+                type="number"
+                min="0"
+                max={maxTradingCapital}
+                disabled={!allocationFormEnabled || Boolean(busyLabel)}
+              />
+              <span className={`text-[10px] font-mono font-bold uppercase tracking-widest ${tradingCapitalFieldError ? 'text-[#FF4466]' : 'text-[#484F58]'}`}>
+                {tradingCapitalFieldError || `Available after gas: ${Number(maxTradingCapital).toFixed(2)} ${quoteSymbol}`}
+              </span>
             </label>
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Gas Reserve</span>
-              <input value={gasReserveAmount} onChange={(event) => setGasReserveAmount(event.target.value)} className="ys-input w-full" type="number" />
+              <input
+                value={gasReserveAmount}
+                onChange={(event) => setGasReserveAmount(event.target.value)}
+                className="ys-input w-full disabled:cursor-not-allowed disabled:opacity-50"
+                type="number"
+                min="0"
+                max={maxGasReserve}
+                disabled={!allocationFormEnabled || Boolean(busyLabel)}
+              />
+              <span className={`text-[10px] font-mono font-bold uppercase tracking-widest ${gasReserveFieldError ? 'text-[#FF4466]' : 'text-[#484F58]'}`}>
+                {gasReserveFieldError || `Required to run: ${testingGasSubsidyMode ? 'subsidized' : `${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol}`}`}
+              </span>
             </label>
           </div>
           {lifecycleHint && (
@@ -1061,8 +1126,10 @@ export function GridTradingDashboard() {
           )}
           <div className="mt-4 grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
             <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-              <p className="text-[#484F58]">Max Allocate</p>
-              <p className="mt-1 text-[#F5F7FA]">{Number(availableBalance).toFixed(2)} {quoteSymbol}</p>
+              <p className="text-[#484F58]">{allocationFormEnabled ? 'Max Allocate' : 'Allocation'}</p>
+              <p className="mt-1 text-[#F5F7FA]">
+                {allocationFormEnabled ? `${Number(availableBalance).toFixed(2)} ${quoteSymbol}` : currentStatus}
+              </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-black/20 p-3">
               <p className="text-[#484F58]">Min Gas Reserve</p>
@@ -1086,7 +1153,12 @@ export function GridTradingDashboard() {
             </button>
           </div>
 
-          <div className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+          <details className="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+              <span>Execution logs</span>
+              <span className="text-[#484F58]">{queueJobs.length}</span>
+            </summary>
+            <div className="mt-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">Execution Queue</p>
               <button className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]" onClick={fetchQueue}>
@@ -1119,7 +1191,8 @@ export function GridTradingDashboard() {
                 ))
               )}
             </div>
-          </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -1131,11 +1204,6 @@ export function GridTradingDashboard() {
       {error && (
         <div className="flex items-start gap-3 rounded-xl border border-[#FF4466]/15 bg-[#FF4466]/[0.04] p-4 text-xs font-mono leading-relaxed text-[#FF4466]">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {error}
-        </div>
-      )}
-      {attestationStatus?.verified && (
-        <div className="flex items-center gap-3 rounded-xl border border-[#00FFA3]/10 bg-[#00FFA3]/[0.03] p-4 text-xs font-mono font-bold uppercase tracking-widest text-[#00FFA3]">
-          <CheckCircle2 size={16} /> Strategy encryption key is bound to an authorized grid executor.
         </div>
       )}
     </div>

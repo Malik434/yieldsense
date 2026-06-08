@@ -21,6 +21,18 @@
       "pairId": "0xd7c55e13a482c46ef0f9a2319e6a727f48a445851591103a2ffc2e2acb9b61e9",
       "baseToken": "0x4200000000000000000000000000000000000006",
       "quoteToken": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    },
+    {
+      "label": "ACU/USDC",
+      "pairId": "0xd9b83c6912a7b9ca628005a26272b1aa2efe1db41a55f947c566ed221290b490",
+      "baseToken": "0xc5fEd7c8cCC75D8A72b601a66DffD7A489073F0b",
+      "quoteToken": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "poolAddress": "0xfea8865c8c9f316584aC4a10346FfE4CD4308351",
+      "dexRouter": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
+      "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+      "stable": false,
+      "baseDecimals": 12,
+      "quoteDecimals": 6
     }
   ],
   "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -41,5 +53,8 @@
   "previousGridStrategyManager": "0x87faE8215c5984B207A24077fAF6039c93fb4E8b",
   "previousGridExecutionRouter": "0x809f89bFAD1D2c6b9fB79e4CB19b009163b16E5c",
   "gridUpgradedAt": "2026-06-06T18:13:15.268Z",
-  "gridUpgradeBlock": 46990124
+  "gridUpgradeBlock": 46990124,
+  "acuUsdcPool": "0xfea8865c8c9f316584aC4a10346FfE4CD4308351",
+  "gridAcuEnabledAt": "2026-06-08T16:05:13.091Z",
+  "gridAcuEnabledBlock": 47072683
 }
