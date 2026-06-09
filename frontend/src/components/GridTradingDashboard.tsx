@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -37,6 +38,54 @@ type StrategyForm = {
   takeProfitPrice: string;
   executionIntervalSec: string;
   maxSlippageBps: string;
+};
+
+type GridStrategy = {
+  id: `0x${string}`;
+  owner: HexAddress;
+  pairId: `0x${string}`;
+  baseToken: HexAddress;
+  quoteToken: HexAddress;
+  allocatedQuote: bigint;
+  quoteBalance: bigint;
+  baseBalance: bigint;
+  avgEntryPrice: bigint;
+  realizedPnlQuote: bigint;
+  feesPaidQuote: bigint;
+  gasReserveQuote: bigint;
+  gasSpentQuote: bigint;
+  maxGasCostQuotePerTrade: bigint;
+  lastExecutionAt: bigint;
+  currentGridLevel: number;
+  strategyVersion: number;
+  encryptedPayloadHash: `0x${string}`;
+  status: number;
+  createdAt: bigint;
+  updatedAt: bigint;
+};
+
+type PairConfig = readonly [
+  baseToken: HexAddress,
+  quoteToken: HexAddress,
+  enabled: boolean,
+  minGasReserveQuote: bigint,
+  maxGasCostQuotePerTrade: bigint,
+  minExecutionInterval: bigint,
+] & {
+  baseToken: HexAddress;
+  quoteToken: HexAddress;
+  enabled: boolean;
+  minGasReserveQuote: bigint;
+  maxGasCostQuotePerTrade: bigint;
+  minExecutionInterval: bigint;
+};
+
+type GridPairsResponse = {
+  pairs?: GridPairConfig[];
+};
+
+type ExecutionQueueResponse = {
+  jobs?: ExecutionJob[];
 };
 
 const DEFAULT_FORM: StrategyForm = {
@@ -108,6 +157,27 @@ function amountIsNegative(value: string) {
   return value.trim().startsWith('-');
 }
 
+function getStoredStrategyId(address: string | undefined, chainId: number) {
+  if (typeof window === 'undefined') return DEFAULT_IMPORTED_STRATEGY_ID;
+  const stored = address ? window.localStorage.getItem(`ys_grid_strategy_${address}_${chainId}`) : null;
+  return stored || DEFAULT_IMPORTED_STRATEGY_ID;
+}
+
+async function fetchGridPairs(chainId: number) {
+  const res = await fetch(`/api/grid/pairs?chainId=${chainId}`);
+  if (!res.ok) throw new Error(`Failed to load grid pairs: ${res.status}`);
+  const body = (await res.json()) as GridPairsResponse;
+  return Array.isArray(body.pairs) ? body.pairs : [];
+}
+
+async function fetchExecutionQueue(strategyId: string) {
+  if (!strategyId) return [];
+  const res = await fetch(`/api/grid/execution-queue?strategyId=${strategyId}`);
+  if (!res.ok) throw new Error(`Failed to load execution queue: ${res.status}`);
+  const body = (await res.json()) as ExecutionQueueResponse;
+  return Array.isArray(body.jobs) ? body.jobs : [];
+}
+
 function TokenLogo({ symbol, src, className = '' }: { symbol: string; src?: string; className?: string }) {
   return (
     <span className={`grid place-items-center overflow-hidden rounded-full border border-white/10 bg-[#0B1114] ${className}`}>
@@ -138,8 +208,10 @@ function PairLogos({ pair, size = 'md' }: { pair?: GridPairConfig; size?: 'sm' |
 export function GridTradingDashboard() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
   const { config, chainId } = useNetwork();
   const { writeContractAsync } = useWriteContract();
+  const initialStrategyId = getStoredStrategyId(address, chainId);
 
   const [depositAmount, setDepositAmount] = useState('20');
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -147,10 +219,8 @@ export function GridTradingDashboard() {
   const [allocationAmount, setAllocationAmount] = useState('10');
   const [gasReserveAmount, setGasReserveAmount] = useState('2');
   const [form, setForm] = useState<StrategyForm>(DEFAULT_FORM);
-  const [strategyId, setStrategyId] = useState<string>('');
-  const [importStrategyId, setImportStrategyId] = useState('');
-  const [queueJobs, setQueueJobs] = useState<ExecutionJob[]>([]);
-  const [pairs, setPairs] = useState<GridPairConfig[]>([]);
+  const [strategyId, setStrategyId] = useState<string>(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
+  const [importStrategyId, setImportStrategyId] = useState(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
   const [selectedPairId, setSelectedPairId] = useState('');
   const [pairMenuOpen, setPairMenuOpen] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
@@ -159,10 +229,27 @@ export function GridTradingDashboard() {
 
   const gridVault = config.gridVault;
   const strategyManager = config.gridStrategyManager;
-  const selectedPair = useMemo(
-    () => pairs.find((pair) => pair.pairId === selectedPairId) ?? pairs[0],
-    [pairs, selectedPairId],
-  );
+  const { data: pairs = [] } = useQuery({
+    queryKey: ['grid-pairs', chainId],
+    queryFn: () => fetchGridPairs(chainId),
+  });
+
+  const { data: strategyRaw, refetch: refetchStrategy } = useReadContract({
+    address: strategyManager,
+    abi: GRID_STRATEGY_MANAGER_ABI,
+    functionName: 'getStrategy',
+    args: strategyId ? [strategyId as `0x${string}`] : undefined,
+    query: { enabled: Boolean(strategyId && isConfigured(strategyManager)) },
+  });
+
+  const strategy = strategyRaw as GridStrategy | undefined;
+  const strategyPairId = strategy?.pairId;
+  const selectedPair = useMemo(() => {
+    const strategyPair = strategyPairId
+      ? pairs.find((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase())
+      : undefined;
+    return strategyPair ?? pairs.find((pair) => pair.pairId === selectedPairId) ?? pairs[0];
+  }, [pairs, selectedPairId, strategyPairId]);
   const quoteToken = selectedPair?.quoteToken || config.asset;
   const baseToken = selectedPair?.baseToken;
   const quoteSymbol = selectedPair?.quoteSymbol || 'USDC';
@@ -212,14 +299,6 @@ export function GridTradingDashboard() {
     query: { enabled: Boolean(address && isConfigured(gridVault) && isConfigured(baseToken)) },
   });
 
-  const { data: strategyRaw, refetch: refetchStrategy } = useReadContract({
-    address: strategyManager,
-    abi: GRID_STRATEGY_MANAGER_ABI,
-    functionName: 'getStrategy',
-    args: strategyId ? [strategyId as `0x${string}`] : undefined,
-    query: { enabled: Boolean(strategyId && isConfigured(strategyManager)) },
-  });
-
   const { data: pairConfigRaw, refetch: refetchPairConfig } = useReadContract({
     address: strategyManager,
     abi: GRID_STRATEGY_MANAGER_ABI,
@@ -235,8 +314,7 @@ export function GridTradingDashboard() {
     query: { enabled: isConfigured(strategyManager) },
   });
 
-  const strategy = strategyRaw as any;
-  const pairConfig = pairConfigRaw as any;
+  const pairConfig = pairConfigRaw as PairConfig | undefined;
   const pairConfigEnabled = pairConfig?.enabled ?? pairConfig?.[2];
   const onchainPairEnabled = pairConfig ? Boolean(pairConfigEnabled) : selectedPair?.enabled !== false;
   const testingGasSubsidyMode = Boolean(testingGasSubsidyModeRaw);
@@ -265,30 +343,16 @@ export function GridTradingDashboard() {
     refetchTokenBalance,
   ]);
 
+  const { data: queueJobs = [], refetch: refetchQueue } = useQuery({
+    queryKey: ['grid-execution-queue', strategyId],
+    queryFn: () => fetchExecutionQueue(strategyId),
+    enabled: Boolean(strategyId),
+    refetchInterval: 10_000,
+  });
+
   const fetchQueue = useCallback(async () => {
-    if (!strategyId) {
-      setQueueJobs([]);
-      return;
-    }
-    const res = await fetch(`/api/grid/execution-queue?strategyId=${strategyId}`);
-    if (res.ok) {
-      const body = await res.json();
-      setQueueJobs(body.jobs ?? []);
-    }
-  }, [strategyId]);
-
-  const fetchPairs = useCallback(async () => {
-    const res = await fetch(`/api/grid/pairs?chainId=${chainId}`);
-    if (!res.ok) return;
-    const body = await res.json();
-    const nextPairs = Array.isArray(body.pairs) ? body.pairs : [];
-    setPairs(nextPairs);
-    setSelectedPairId((current) => current || nextPairs[0]?.pairId || '');
-  }, [chainId]);
-
-  useEffect(() => {
-    fetchPairs();
-  }, [fetchPairs]);
+    await refetchQueue();
+  }, [refetchQueue]);
 
   useEffect(() => {
     if (!pairMenuOpen) return undefined;
@@ -303,30 +367,6 @@ export function GridTradingDashboard() {
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [pairMenuOpen]);
 
-  useEffect(() => {
-    const stored = address ? localStorage.getItem(`ys_grid_strategy_${address}_${chainId}`) : null;
-    const fallback = stored || DEFAULT_IMPORTED_STRATEGY_ID;
-    if (fallback && isStrategyId(fallback)) {
-      setStrategyId(fallback);
-      setImportStrategyId(fallback);
-    }
-  }, [address, chainId]);
-
-  useEffect(() => {
-    const strategyPairId = strategy?.pairId as string | undefined;
-    if (!strategyPairId || pairs.length === 0) return;
-    const pairExists = pairs.some((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase());
-    if (pairExists && selectedPairId.toLowerCase() !== strategyPairId.toLowerCase()) {
-      setSelectedPairId(strategyPairId);
-    }
-  }, [pairs, selectedPairId, strategy?.pairId]);
-
-  useEffect(() => {
-    fetchQueue();
-    const queueInterval = setInterval(fetchQueue, 10_000);
-    return () => clearInterval(queueInterval);
-  }, [fetchQueue]);
-
   const runTx = async (label: string, action: () => Promise<unknown>) => {
     setBusyLabel(label);
     setError('');
@@ -334,6 +374,7 @@ export function GridTradingDashboard() {
       await action();
       await refreshBalances();
       await fetchQueue();
+      await queryClient.invalidateQueries({ queryKey: ['grid-execution-queue', strategyId] });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
