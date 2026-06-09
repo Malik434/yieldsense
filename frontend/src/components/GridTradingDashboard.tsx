@@ -16,7 +16,7 @@ import {
   Plus,
   Wallet,
 } from 'lucide-react';
-import { decodeEventLog, formatUnits, isAddress, keccak256, parseUnits, stringToBytes } from 'viem';
+import { decodeEventLog, formatUnits, isAddress, keccak256, parseUnits, stringToBytes, type PublicClient } from 'viem';
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from 'wagmi';
 import { useNetwork } from '@/providers/NetworkProvider';
 import {
@@ -88,6 +88,49 @@ type ExecutionQueueResponse = {
   jobs?: ExecutionJob[];
 };
 
+type PairPrice = {
+  price: number;
+  source: 'reserves' | 'slot0' | 'fallback';
+};
+
+const POOL_PRICE_ABI = [
+  {
+    type: 'function',
+    name: 'token0',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'token1',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'getReserves',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'slot0',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { type: 'uint160' },
+      { type: 'int24' },
+      { type: 'uint16' },
+      { type: 'uint16' },
+      { type: 'uint16' },
+      { type: 'bool' },
+    ],
+  },
+] as const;
+
 const DEFAULT_FORM: StrategyForm = {
   lowerPrice: '0.80',
   upperPrice: '1.20',
@@ -157,6 +200,107 @@ function amountIsNegative(value: string) {
   return value.trim().startsWith('-');
 }
 
+function formatPriceInput(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (value >= 1000) return value.toFixed(2);
+  if (value >= 1) return value.toFixed(4);
+  if (value >= 0.01) return value.toFixed(6);
+  return value.toPrecision(4);
+}
+
+function formatDisplayPrice(value: number | undefined, quoteSymbol: string) {
+  if (!value || !Number.isFinite(value)) return 'Loading price';
+  const formatted =
+    value >= 1000
+      ? value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : value >= 1
+        ? value.toLocaleString(undefined, { maximumFractionDigits: 4 })
+        : value.toLocaleString(undefined, { maximumFractionDigits: 8 });
+  return `${formatted} ${quoteSymbol}`;
+}
+
+function priceRangeFromSpot(price: number | undefined) {
+  if (!price || !Number.isFinite(price) || price <= 0) {
+    return { lowerPrice: DEFAULT_FORM.lowerPrice, upperPrice: DEFAULT_FORM.upperPrice };
+  }
+  return {
+    lowerPrice: formatPriceInput(price * 0.8),
+    upperPrice: formatPriceInput(price * 1.2),
+  };
+}
+
+function fallbackPairPrice(pair: GridPairConfig | undefined): PairPrice | null {
+  const fallbackPrice = Number(pair?.fallbackPriceQuote || 0);
+  return fallbackPrice > 0 && Number.isFinite(fallbackPrice) ? { price: fallbackPrice, source: 'fallback' } : null;
+}
+
+function priceFromSqrtPriceX96(sqrtPriceX96: bigint, decimals0: number, decimals1: number) {
+  const q96 = BigInt(2) ** BigInt(96);
+  const precision = BigInt(10) ** BigInt(18);
+  const scaled = (sqrtPriceX96 * sqrtPriceX96 * precision) / (q96 * q96);
+  return (Number(scaled) / Number(precision)) * 10 ** (decimals0 - decimals1);
+}
+
+async function fetchPairPrice(publicClient: PublicClient | undefined, pair: GridPairConfig | undefined): Promise<PairPrice | null> {
+  if (!pair) return null;
+  const pricePoolAddress = pair?.pricePoolAddress ?? pair?.poolAddress;
+  if (!publicClient || !pricePoolAddress || !isConfigured(pricePoolAddress)) return null;
+  const fallback = fallbackPairPrice(pair);
+
+  const [token0Raw, token1Raw] = await Promise.all([
+    publicClient.readContract({
+      address: pricePoolAddress,
+      abi: POOL_PRICE_ABI,
+      functionName: 'token0',
+    }),
+    publicClient.readContract({
+      address: pricePoolAddress,
+      abi: POOL_PRICE_ABI,
+      functionName: 'token1',
+    }),
+  ]);
+
+  const token0 = String(token0Raw).toLowerCase();
+  const token1 = String(token1Raw).toLowerCase();
+  const baseToken = pair.baseToken.toLowerCase();
+  const quoteToken = pair.quoteToken.toLowerCase();
+  const token0Decimals = token0 === baseToken ? pair.baseDecimals : pair.quoteDecimals;
+  const token1Decimals = token1 === baseToken ? pair.baseDecimals : pair.quoteDecimals;
+
+  try {
+    const reserves = await publicClient.readContract({
+      address: pricePoolAddress,
+      abi: POOL_PRICE_ABI,
+      functionName: 'getReserves',
+    });
+    const [reserve0Raw, reserve1Raw] = reserves as readonly [bigint, bigint, bigint];
+    const reserve0 = Number(formatUnits(reserve0Raw, token0Decimals));
+    const reserve1 = Number(formatUnits(reserve1Raw, token1Decimals));
+    const baseReserve = token0 === baseToken ? reserve0 : reserve1;
+    const quoteReserve = token0 === quoteToken ? reserve0 : reserve1;
+    if (fallback && quoteReserve < 1) return fallback;
+    if (baseReserve > 0 && quoteReserve > 0) return { price: quoteReserve / baseReserve, source: 'reserves' };
+  } catch {
+    // Slipstream/V3 pools expose slot0 instead of V2 reserves.
+  }
+
+  const slot0 = await publicClient.readContract({
+    address: pricePoolAddress,
+    abi: POOL_PRICE_ABI,
+    functionName: 'slot0',
+  });
+  const [sqrtPriceX96] = slot0 as readonly [bigint, ...unknown[]];
+  const token1PerToken0 = priceFromSqrtPriceX96(sqrtPriceX96, token0Decimals, token1Decimals);
+  const price =
+    token0 === baseToken && token1 === quoteToken
+      ? token1PerToken0
+      : token1 === baseToken && token0 === quoteToken
+        ? 1 / token1PerToken0
+        : 0;
+
+  return price > 0 && Number.isFinite(price) ? { price, source: 'slot0' } : fallback;
+}
+
 function getStoredStrategyId(address: string | undefined, chainId: number) {
   if (typeof window === 'undefined') return DEFAULT_IMPORTED_STRATEGY_ID;
   const stored = address ? window.localStorage.getItem(`ys_grid_strategy_${address}_${chainId}`) : null;
@@ -219,6 +363,7 @@ export function GridTradingDashboard() {
   const [allocationAmount, setAllocationAmount] = useState('');
   const [gasReserveAmount, setGasReserveAmount] = useState('');
   const [form, setForm] = useState<StrategyForm>(DEFAULT_FORM);
+  const [manualPriceRangePairId, setManualPriceRangePairId] = useState('');
   const [strategyId, setStrategyId] = useState<string>(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
   const [importStrategyId, setImportStrategyId] = useState(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
   const [selectedPairId, setSelectedPairId] = useState('');
@@ -245,10 +390,11 @@ export function GridTradingDashboard() {
   const strategy = strategyRaw as GridStrategy | undefined;
   const strategyPairId = strategy?.pairId;
   const selectedPair = useMemo(() => {
+    const selectedPairMatch = pairs.find((pair) => pair.pairId === selectedPairId);
     const strategyPair = strategyPairId
       ? pairs.find((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase())
       : undefined;
-    return strategyPair ?? pairs.find((pair) => pair.pairId === selectedPairId) ?? pairs[0];
+    return selectedPairMatch ?? strategyPair ?? pairs[0];
   }, [pairs, selectedPairId, strategyPairId]);
   const quoteToken = selectedPair?.quoteToken || config.asset;
   const baseToken = selectedPair?.baseToken;
@@ -257,6 +403,25 @@ export function GridTradingDashboard() {
   const baseDecimals = selectedPair?.baseDecimals || 18;
   const pairId = selectedPair?.pairId || keccak256(stringToBytes('AERO-USDC'));
   const contractsReady = isConfigured(gridVault) && isConfigured(strategyManager) && isConfigured(quoteToken);
+  const { data: pairPrice } = useQuery({
+    queryKey: ['grid-pair-price', chainId, selectedPair?.pairId, selectedPair?.poolAddress, selectedPair?.pricePoolAddress],
+    queryFn: () => fetchPairPrice(publicClient, selectedPair),
+    enabled: Boolean(publicClient && (selectedPair?.pricePoolAddress || selectedPair?.poolAddress)),
+    refetchInterval: 30_000,
+  });
+  const spotPrice = pairPrice?.price;
+  const suggestedRange = useMemo(() => priceRangeFromSpot(spotPrice), [spotPrice]);
+  const usingManualPriceRange = manualPriceRangePairId === pairId;
+  const lowerPriceInput = usingManualPriceRange ? form.lowerPrice : suggestedRange.lowerPrice;
+  const upperPriceInput = usingManualPriceRange ? form.upperPrice : suggestedRange.upperPrice;
+  const strategyFormForSubmission = useMemo(
+    () => ({
+      ...form,
+      lowerPrice: lowerPriceInput,
+      upperPrice: upperPriceInput,
+    }),
+    [form, lowerPriceInput, upperPriceInput],
+  );
 
   const { data: quoteDecimalsRaw } = useReadContract({
     address: quoteToken,
@@ -442,7 +607,7 @@ export function GridTradingDashboard() {
       if (!address || !publicClient || !contractsReady) throw new Error('Wallet or grid contracts are not ready.');
       if (createStrategyError) throw new Error(createStrategyError);
 
-      const payloadHash = createPayloadHash(form, pairId, address, chainId);
+      const payloadHash = createPayloadHash(strategyFormForSubmission, pairId, address, chainId);
       const txHash = await writeContractAsync({
         address: strategyManager,
         abi: GRID_STRATEGY_MANAGER_ABI,
@@ -471,8 +636,8 @@ export function GridTradingDashboard() {
                 chainId,
                 pairId,
                 status: 'draft',
-                lowerPrice: Number(form.lowerPrice),
-                upperPrice: Number(form.upperPrice),
+                lowerPrice: Number(strategyFormForSubmission.lowerPrice),
+                upperPrice: Number(strategyFormForSubmission.upperPrice),
                 gridMode: form.gridMode,
                 gridCount: Number(form.gridCount),
                 tradeSizeQuote: form.tradeSizeQuote,
@@ -692,7 +857,7 @@ export function GridTradingDashboard() {
     : strategy
       ? `Reserved for gas: ${Number(formatUnits(strategyGasReserveRaw, quoteDecimals)).toFixed(2)} ${quoteSymbol}`
       : `Free for gas reserve: ${Number(availableBalance).toFixed(2)} ${quoteSymbol}`;
-  const negativeStrategyField = (Object.entries(form) as Array<[keyof StrategyForm, string]>).find(
+  const negativeStrategyField = (Object.entries(strategyFormForSubmission) as Array<[keyof StrategyForm, string]>).find(
     ([, value]) => amountIsNegative(value),
   );
   const createStrategyError =
@@ -743,7 +908,11 @@ export function GridTradingDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-4 sm:gap-3 lg:min-w-[520px]">
+        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-5 sm:gap-3 lg:min-w-[640px]">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-[#484F58]">{baseSymbol} Price</p>
+            <p className="mt-2 break-words text-[#F5F7FA]">{formatDisplayPrice(spotPrice, quoteSymbol)}</p>
+          </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[#484F58]">Wallet {quoteSymbol}</p>
             <p className="mt-2 break-words text-[#F5F7FA]">{Number(tokenBalance).toFixed(2)}</p>
@@ -839,8 +1008,8 @@ export function GridTradingDashboard() {
                       <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
                         {selectedPair?.label || 'Select Pair'}
                       </span>
-                      <span className="mt-0.5 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                        {baseSymbol} / {quoteSymbol}
+                      <span className="mt-0.5 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                        {formatDisplayPrice(spotPrice, quoteSymbol)} per {baseSymbol}
                       </span>
                     </span>
                   </span>
@@ -883,8 +1052,13 @@ export function GridTradingDashboard() {
                               <span className="min-w-0">
                                 <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
                                 <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                                  {pair.baseSymbol} base / {pair.quoteSymbol} quote
+                                  Base {pair.baseSymbol} | Quote {pair.quoteSymbol}
                                 </span>
+                                {active ? (
+                                  <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                                    {formatDisplayPrice(spotPrice, pair.quoteSymbol)} per {pair.baseSymbol}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                             {active && <Check size={15} className="shrink-0 text-[#C2E812]" />}
@@ -911,7 +1085,10 @@ export function GridTradingDashboard() {
                 </div>
               </div>
               <p className="mt-3 truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                Price pool <span className="text-[#8B949E]">{short(selectedPair?.poolAddress)}</span>
+                Price pool <span className="text-[#8B949E]">{short(selectedPair?.pricePoolAddress ?? selectedPair?.poolAddress)}</span>
+              </p>
+              <p className="mt-2 text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                Current {baseSymbol}: {formatDisplayPrice(spotPrice, quoteSymbol)}
               </p>
             </div>
 
@@ -1042,7 +1219,7 @@ export function GridTradingDashboard() {
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Grid Setup</h4>
           <p className="mb-5 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-            Price limits are {baseSymbol} price quoted in {quoteSymbol}.
+            Price limits are {baseSymbol} price quoted in {quoteSymbol}. Current pool price: {formatDisplayPrice(spotPrice, quoteSymbol)}.
           </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {([
@@ -1054,8 +1231,11 @@ export function GridTradingDashboard() {
               <label key={key} className="flex flex-col gap-2">
                 <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</span>
                 <input
-                  value={form[key]}
-                  onChange={(event) => setForm((prev) => ({ ...prev, [key]: event.target.value }))}
+                  value={key === 'lowerPrice' ? lowerPriceInput : key === 'upperPrice' ? upperPriceInput : form[key]}
+                  onChange={(event) => {
+                    if (key === 'lowerPrice' || key === 'upperPrice') setManualPriceRangePairId(pairId);
+                    setForm((prev) => ({ ...prev, [key]: event.target.value }));
+                  }}
                   className="ys-input w-full"
                   type="number"
                   min="0"

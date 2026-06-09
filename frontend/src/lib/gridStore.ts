@@ -11,6 +11,7 @@ export type GridPairConfig = {
   baseLogoUrl?: string;
   quoteLogoUrl?: string;
   poolAddress: HexAddress;
+  pricePoolAddress?: HexAddress;
   dexRouter: HexAddress;
   factory: HexAddress;
   stable: boolean;
@@ -19,6 +20,7 @@ export type GridPairConfig = {
   minGasReserveQuote: string;
   maxGasCostQuotePerTrade: string;
   minExecutionInterval: number;
+  fallbackPriceQuote?: string;
   enabled: boolean;
 };
 
@@ -154,6 +156,7 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
 
   const acuToken = envAddress(process.env.NEXT_PUBLIC_ACU_TOKEN_ADDRESS) ?? MAINNET_ACU;
   const acuPool = envAddress(process.env.NEXT_PUBLIC_ACU_USDC_POOL_ADDRESS) ?? MAINNET_ACU_USDC_POOL;
+  const acuPricePool = envAddress(process.env.NEXT_PUBLIC_ACU_USDC_PRICE_POOL_ADDRESS);
   if (acuToken && acuPool) {
     pairs.push({
       pairId: pairId('ACU-USDC'),
@@ -165,6 +168,7 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       baseLogoUrl: ACU_LOGO_URL,
       quoteLogoUrl: USDC_LOGO_URL,
       poolAddress: acuPool,
+      pricePoolAddress: acuPricePool ?? undefined,
       dexRouter: MAINNET_ROUTER,
       factory: MAINNET_FACTORY,
       stable: process.env.NEXT_PUBLIC_ACU_USDC_STABLE === 'true',
@@ -173,6 +177,7 @@ export function loadGridPairs(chainId: number): GridPairConfig[] {
       minGasReserveQuote: process.env.NEXT_PUBLIC_GRID_MIN_GAS_RESERVE_USDC || '1',
       maxGasCostQuotePerTrade: process.env.NEXT_PUBLIC_GRID_MAX_GAS_COST_USDC || '2',
       minExecutionInterval: Number(process.env.NEXT_PUBLIC_GRID_MIN_EXECUTION_INTERVAL_SEC || '60'),
+      fallbackPriceQuote: process.env.NEXT_PUBLIC_ACU_PRICE_USDC || '0.07665',
       enabled: true,
     });
   }
