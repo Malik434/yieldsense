@@ -81,8 +81,8 @@ async function main() {
   console.log("Wiring autocompounder keeper...");
   await (await autocompounder.setKeeper(keeperAddress, { gasLimit: 100_000 })).wait();
 
-  const initialCap = hre.ethers.parseUnits("20", 6);
-  console.log("Setting testing cap to 20 USDC...");
+  const initialCap = hre.ethers.parseUnits("500", 6);
+  console.log("Setting testing cap to 500 USDC...");
   await (await keeper.setMaxTotalAssets(initialCap, { gasLimit: 100_000 })).wait();
 
   if (ownerAddress.toLowerCase() !== deployer.address.toLowerCase()) {

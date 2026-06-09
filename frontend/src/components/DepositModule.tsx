@@ -4,8 +4,19 @@ import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { ERC20_ABI, KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
-import { ArrowDownToLine, Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
+import { Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
 import { useNetwork } from '@/providers/NetworkProvider';
+
+const USDC_ICON_URL = 'https://assets.coingecko.com/coins/images/6319/small/usdc.png';
+
+function UsdcTokenIcon({ size = 'md' }: { size?: 'sm' | 'md' }) {
+  const className = size === 'sm' ? 'h-5 w-5' : 'h-10 w-10';
+  return (
+    <span className={`grid shrink-0 place-items-center overflow-hidden rounded-full border border-white/20 bg-white shadow-lg shadow-[#2775CA]/20 ${className}`}>
+      <img src={USDC_ICON_URL} alt="USDC" className="h-full w-full object-cover" loading="lazy" />
+    </span>
+  );
+}
 
 function tryParseUsdc(value: string) {
   try {
@@ -197,9 +208,7 @@ export function DepositModule() {
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-4">
-          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-            <ArrowDownToLine size={20} className="text-[#C2E812]" />
-          </div>
+          <UsdcTokenIcon />
           <div>
             <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#484F58] sm:tracking-[0.3em]">Yield Vault</p>
             <h3 className="text-lg font-heading font-bold text-[#F5F7FA] sm:text-xl">Deposit USDC</h3>
@@ -316,7 +325,7 @@ export function DepositModule() {
           ) : txState === 'success' ? (
             <><CheckCircle2 size={20} className="text-[#030605]" /> Transaction Complete</>
           ) : (
-            <><ArrowDownToLine size={20} /> Deposit USDC</>
+            <><UsdcTokenIcon size="sm" /> Deposit USDC</>
           )}
         </button>
       </div>

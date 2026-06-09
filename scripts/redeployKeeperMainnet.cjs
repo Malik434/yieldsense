@@ -115,7 +115,7 @@ async function main() {
   await (await autocompounder.setKeeper(newKeeperAddress, { gasLimit: 120_000 })).wait();
   console.log("Autocompounder keeper updated.");
 
-  const maxTotalAssets = parseUsdc("MAX_TOTAL_ASSETS_USDC", "20");
+  const maxTotalAssets = parseUsdc("MAX_TOTAL_ASSETS_USDC", "500");
   await (await keeper.setMaxTotalAssets(maxTotalAssets, { gasLimit: 120_000 })).wait();
   console.log("Keeper cap     :", hre.ethers.formatUnits(maxTotalAssets, 6), "USDC");
 

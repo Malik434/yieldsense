@@ -15,7 +15,15 @@ import { TransactionHistory } from "@/components/TransactionHistory";
 import { WithdrawModule } from "@/components/WithdrawModule";
 import { PortfolioTicker } from "@/components/PortfolioTicker";
 import { TestingSuite } from "@/components/TestingSuite";
-import { Activity, Cpu, ArrowRight, ArrowDownToLine, Grid3X3 } from "lucide-react";
+import { Activity, Cpu, ArrowRight } from "lucide-react";
+
+const TOKEN_ICONS = {
+  aero: "https://aerodrome.finance/svg/AERO/favicon.svg",
+  usdc: "https://assets.coingecko.com/coins/images/6319/small/usdc.png",
+  usdt: "https://tether.to/images/logoCircle.svg",
+  eth: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
+  acu: "https://hub.acurast.com/assets/acurast-logo.png",
+} as const;
 
 interface WorkerState {
   previousApr: number | null;
@@ -83,6 +91,35 @@ function SectionHeading({
   );
 }
 
+function UsdcMark() {
+  return (
+    <div className="relative h-12 w-16 shrink-0">
+      <div className="absolute left-0 top-1 grid h-8 w-8 place-items-center overflow-hidden rounded-full border border-white/20 bg-white shadow-lg shadow-[#2775CA]/20">
+        <img src={TOKEN_ICONS.usdc} alt="USDC" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+      <div className="absolute right-1 top-3 grid h-8 w-8 place-items-center overflow-hidden rounded-full border border-[#26A17B]/30 bg-white shadow-lg shadow-[#26A17B]/20">
+        <img src={TOKEN_ICONS.usdt} alt="USDT" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+    </div>
+  );
+}
+
+function GridTokenMark() {
+  return (
+    <div className="relative h-12 w-16 shrink-0">
+      <div className="absolute left-0 top-0 grid h-7 w-7 place-items-center overflow-hidden rounded-full border border-[#C2E812]/30 bg-black shadow-lg shadow-[#C2E812]/10">
+        <img src={TOKEN_ICONS.acu} alt="ACU" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+      <div className="absolute right-0 top-1 grid h-7 w-7 place-items-center overflow-hidden rounded-full border border-[#627EEA]/40 bg-white shadow-lg shadow-[#627EEA]/10">
+        <img src={TOKEN_ICONS.eth} alt="ETH" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+      <div className="absolute bottom-0 left-1/2 grid h-7 w-7 -translate-x-1/2 place-items-center overflow-hidden rounded-full border border-[#00FFA3]/30 bg-black shadow-lg shadow-[#00FFA3]/10">
+        <img src={TOKEN_ICONS.aero} alt="AERO" className="h-full w-full object-cover" loading="lazy" />
+      </div>
+    </div>
+  );
+}
+
 function StartHerePanel() {
   const actions = [
     {
@@ -90,14 +127,14 @@ function StartHerePanel() {
       description: "Deposit USDC into the yield vault and let the keeper manage the pool position.",
       href: "#command-center",
       cta: "Deposit USDC",
-      icon: ArrowDownToLine,
+      icon: <UsdcMark />,
     },
     {
       title: "Run a grid",
       description: "Deposit grid capital, choose a pair, set price limits, then enable automation.",
       href: "#grid-trading",
       cta: "Create strategy",
-      icon: Grid3X3,
+      icon: <GridTokenMark />,
     },
   ];
 
@@ -115,16 +152,14 @@ function StartHerePanel() {
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {actions.map(({ title, description, href, cta, icon: Icon }) => (
+            {actions.map(({ title, description, href, cta, icon }) => (
               <a
                 key={title}
                 href={href}
                 className="group rounded-2xl border border-white/10 bg-white/[0.025] p-4 transition-all hover:border-[#C2E812]/25 hover:bg-[#C2E812]/[0.04] sm:p-5"
               >
                 <div className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-black/20 text-[#C2E812]">
-                    <Icon size={18} />
-                  </div>
+                  {icon}
                   <div className="min-w-0">
                     <h2 className="break-words text-lg font-heading font-bold text-[#F5F7FA]">{title}</h2>
                     <p className="mt-1 text-xs leading-relaxed text-[#8B949E]">{description}</p>

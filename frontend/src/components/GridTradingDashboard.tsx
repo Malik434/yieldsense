@@ -216,8 +216,8 @@ export function GridTradingDashboard() {
   const [depositAmount, setDepositAmount] = useState('20');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawTokenSide, setWithdrawTokenSide] = useState<'quote' | 'base'>('quote');
-  const [allocationAmount, setAllocationAmount] = useState('10');
-  const [gasReserveAmount, setGasReserveAmount] = useState('2');
+  const [allocationAmount, setAllocationAmount] = useState('');
+  const [gasReserveAmount, setGasReserveAmount] = useState('');
   const [form, setForm] = useState<StrategyForm>(DEFAULT_FORM);
   const [strategyId, setStrategyId] = useState<string>(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
   const [importStrategyId, setImportStrategyId] = useState(() => (isStrategyId(initialStrategyId) ? initialStrategyId : ''));
@@ -595,6 +595,7 @@ export function GridTradingDashboard() {
   const withdrawAvailable = withdrawTokenSide === 'quote' ? availableBalance : availableBaseBalance;
   const totalAllocationRaw =
     allocationRaw !== null && gasReserveRaw !== null ? allocationRaw + gasReserveRaw : null;
+  const strategyAllocatedQuoteRaw = (strategy?.allocatedQuote as bigint | undefined) ?? BigInt(0);
   const strategyGasReserveRaw = (strategy?.gasReserveQuote as bigint | undefined) ?? BigInt(0);
   const nextGasReserveRaw =
     gasReserveRaw !== null && (currentStatus === 'Draft' || currentStatus === 'Funded')
@@ -655,6 +656,18 @@ export function GridTradingDashboard() {
     allocationRaw !== null && freeQuoteRaw > allocationRaw ? freeQuoteRaw - allocationRaw : BigInt(0);
   const maxTradingCapital = formatUnits(maxTradingCapitalRaw, quoteDecimals);
   const maxGasReserve = formatUnits(maxGasReserveRaw, quoteDecimals);
+  const allocationInputValue = allocationFormEnabled
+    ? allocationAmount
+    : strategy
+      ? formatUnits(strategyAllocatedQuoteRaw, quoteDecimals)
+      : '';
+  const gasReserveInputValue = allocationFormEnabled
+    ? gasReserveAmount
+    : strategy
+      ? formatUnits(strategyGasReserveRaw, quoteDecimals)
+      : '';
+  const allocationInputPlaceholder = allocationFormEnabled ? maxTradingCapital : formatUnits(freeQuoteRaw, quoteDecimals);
+  const gasReserveInputPlaceholder = allocationFormEnabled ? maxGasReserve : formatUnits(freeQuoteRaw, quoteDecimals);
   const tradingCapitalFieldError =
     amountIsNegative(allocationAmount)
       ? 'Trading capital cannot be negative.'
@@ -669,6 +682,16 @@ export function GridTradingDashboard() {
       : !testingGasSubsidyMode && gasReserveRaw !== null && gasReserveRaw < pairMinGasReserveRaw
         ? `Gas reserve should be at least ${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol} before enabling.`
         : '';
+  const tradingCapitalHelp = allocationFormEnabled
+    ? tradingCapitalFieldError || `Available after gas: ${Number(maxTradingCapital).toFixed(2)} ${quoteSymbol}`
+    : strategy
+      ? `Allocated to strategy: ${Number(formatUnits(strategyAllocatedQuoteRaw, quoteDecimals)).toFixed(2)} ${quoteSymbol}`
+      : `Free to allocate: ${Number(availableBalance).toFixed(2)} ${quoteSymbol}`;
+  const gasReserveHelp = allocationFormEnabled
+    ? gasReserveFieldError || `Available for gas: ${Number(maxGasReserve).toFixed(2)} ${quoteSymbol}`
+    : strategy
+      ? `Reserved for gas: ${Number(formatUnits(strategyGasReserveRaw, quoteDecimals)).toFixed(2)} ${quoteSymbol}`
+      : `Free for gas reserve: ${Number(availableBalance).toFixed(2)} ${quoteSymbol}`;
   const negativeStrategyField = (Object.entries(form) as Array<[keyof StrategyForm, string]>).find(
     ([, value]) => amountIsNegative(value),
   );
@@ -1137,31 +1160,33 @@ export function GridTradingDashboard() {
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Capital</span>
               <input
-                value={allocationAmount}
+                value={allocationInputValue}
                 onChange={(event) => setAllocationAmount(event.target.value)}
                 className="ys-input w-full disabled:cursor-not-allowed disabled:opacity-50"
                 type="number"
                 min="0"
                 max={maxTradingCapital}
+                placeholder={allocationInputPlaceholder}
                 disabled={!allocationFormEnabled || Boolean(busyLabel)}
               />
               <span className={`text-[10px] font-mono font-bold uppercase tracking-widest ${tradingCapitalFieldError ? 'text-[#FF4466]' : 'text-[#484F58]'}`}>
-                {tradingCapitalFieldError || `Available after gas: ${Number(maxTradingCapital).toFixed(2)} ${quoteSymbol}`}
+                {tradingCapitalHelp}
               </span>
             </label>
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Gas Reserve</span>
               <input
-                value={gasReserveAmount}
+                value={gasReserveInputValue}
                 onChange={(event) => setGasReserveAmount(event.target.value)}
                 className="ys-input w-full disabled:cursor-not-allowed disabled:opacity-50"
                 type="number"
                 min="0"
                 max={maxGasReserve}
+                placeholder={gasReserveInputPlaceholder}
                 disabled={!allocationFormEnabled || Boolean(busyLabel)}
               />
               <span className={`text-[10px] font-mono font-bold uppercase tracking-widest ${gasReserveFieldError ? 'text-[#FF4466]' : 'text-[#484F58]'}`}>
-                {gasReserveFieldError || `Required to run: ${testingGasSubsidyMode ? 'subsidized' : `${formatUnits(pairMinGasReserveRaw, quoteDecimals)} ${quoteSymbol}`}`}
+                {gasReserveHelp}
               </span>
             </label>
           </div>
