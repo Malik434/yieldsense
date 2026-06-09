@@ -177,14 +177,14 @@ export function DepositModule() {
 
   if (!isConnected) {
     return (
-      <div className="ys-card p-12 flex flex-col items-center justify-center text-center gap-6 min-h-[350px]">
+      <div className="ys-card flex min-h-[300px] flex-col items-center justify-center gap-6 p-6 text-center sm:min-h-[350px] sm:p-12">
         <div className="w-20 h-20 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center">
           <Wallet size={32} className="text-[#484F58]" />
         </div>
         <div className="space-y-2">
           <h3 className="text-xl font-heading font-bold text-[#F5F7FA] uppercase tracking-widest">Connect Wallet</h3>
-          <p className="text-xs font-mono text-[#8B949E] max-w-[240px] mx-auto leading-relaxed uppercase tracking-widest">
-            Synchronize your asset account to initialize vault allocation.
+          <p className="mx-auto max-w-[240px] text-[11px] font-mono uppercase leading-relaxed tracking-[0.16em] text-[#8B949E] sm:text-xs sm:tracking-widest">
+            Connect your wallet to deposit into the yield vault.
           </p>
         </div>
       </div>
@@ -192,30 +192,30 @@ export function DepositModule() {
   }
 
   return (
-    <div className="ys-card p-12 flex flex-col gap-10 h-full relative">
+    <div className="ys-card relative flex h-full flex-col gap-7 p-5 sm:gap-10 sm:p-8 lg:p-12">
       <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
           <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
             <ArrowDownToLine size={20} className="text-[#C2E812]" />
           </div>
           <div>
-            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Capital Inflow</p>
-            <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Asset Allocation</h3>
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#484F58] sm:tracking-[0.3em]">Yield Vault</p>
+            <h3 className="text-lg font-heading font-bold text-[#F5F7FA] sm:text-xl">Deposit USDC</h3>
           </div>
         </div>
         <div className="px-0 py-1.5 text-[#8B949E]">
-          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.3em]">Yield Vault</span>
+          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] sm:tracking-[0.3em]">Yield Vault</span>
         </div>
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-5 sm:space-y-6">
         {/* Wallet Balance */}
-        <div className="rounded-3xl p-6 bg-white/[0.02] border border-white/[0.04]">
+        <div className="rounded-2xl border border-white/[0.04] bg-white/[0.02] p-4 sm:rounded-3xl sm:p-6">
           <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-2">Available Balance</p>
-          <div className="flex items-baseline gap-3">
-            <span className="text-4xl font-heading font-bold text-[#F5F7FA]">
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+            <span className="break-words text-3xl font-heading font-bold text-[#F5F7FA] sm:text-4xl">
               {parseFloat(walletBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
             <span className="text-lg font-heading font-bold text-[#484F58]">USDC</span>
@@ -227,7 +227,7 @@ export function DepositModule() {
           <label className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] ml-1">
             Amount to Deposit
           </label>
-          <div className="flex gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
             <div className="relative flex-1">
               <input
                 type="number"
@@ -236,14 +236,14 @@ export function DepositModule() {
                 onChange={e => setDepositAmount(e.target.value)}
                 min="0"
                 max={maxDepositable}
-                className="ys-input w-full pr-16 text-2xl"
+                className="ys-input w-full pr-16 text-xl sm:text-2xl"
               />
               <div className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-[#484F58]">USDC</div>
             </div>
             <button
               onClick={() => setDepositAmount(Number(maxDepositable).toFixed(6))}
               disabled={maxDepositableRaw === ZERO}
-              className="px-6 rounded-2xl bg-white/5 border border-white/10 font-heading font-bold text-xs uppercase tracking-widest hover:bg-white/10 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-12 rounded-2xl border border-white/10 bg-white/5 px-6 text-xs font-heading font-bold uppercase tracking-widest transition-all hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Max
             </button>
@@ -283,12 +283,12 @@ export function DepositModule() {
           </div>
         </div>
 
-        <div className="flex items-start gap-4 p-5 rounded-2xl bg-[#C2E812]/[0.03] border border-[#C2E812]/10">
+        <div className="flex items-start gap-3 rounded-2xl border border-[#C2E812]/10 bg-[#C2E812]/[0.03] p-4 sm:gap-4 sm:p-5">
           <Info size={16} className="text-[#C2E812] flex-shrink-0 mt-0.5" />
           <p className="text-[10px] font-mono text-[#8B949E] leading-relaxed uppercase tracking-wider">
             {depositsDisabled 
               ? "Deposits are currently disabled for security maintenance. Withdrawal remains active."
-              : "Allocation will be processed through the YieldSense autonomous engine. Funds remain accessible via the exit flow at any time."
+              : "Deposited USDC enters the yield vault. You can withdraw available funds from the exit section."
             }
           </p>
         </div>
@@ -299,7 +299,7 @@ export function DepositModule() {
         <button
           onClick={handleDeposit}
           disabled={!canSubmitDeposit}
-          className="ys-btn-primary w-full h-16 text-sm"
+          className="ys-btn-primary min-h-14 w-full sm:min-h-16 sm:text-sm"
         >
           {depositsDisabled ? (
             'Deposits Paused'
@@ -316,7 +316,7 @@ export function DepositModule() {
           ) : txState === 'success' ? (
             <><CheckCircle2 size={20} className="text-[#030605]" /> Transaction Complete</>
           ) : (
-            <><ArrowDownToLine size={20} /> Confirm Allocation</>
+            <><ArrowDownToLine size={20} /> Deposit USDC</>
           )}
         </button>
       </div>

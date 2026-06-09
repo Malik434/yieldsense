@@ -200,6 +200,13 @@ export const KEEPER_ABI = [
   },
   {
     "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "maxDeposit",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
     "name": "maxWithdraw",
     "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
     "stateMutability": "view",

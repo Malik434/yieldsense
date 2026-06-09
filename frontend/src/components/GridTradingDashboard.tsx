@@ -661,40 +661,40 @@ export function GridTradingDashboard() {
   const isGridLive = currentStatus === 'Active';
 
   return (
-    <div className="ys-card p-5 sm:p-8 flex flex-col gap-8">
+    <div className="ys-card flex flex-col gap-6 p-4 sm:gap-8 sm:p-8">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex items-start gap-4">
-          <div className="p-2.5 rounded-xl bg-[#C2E812]/10 border border-[#C2E812]/15">
+        <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+          <div className="shrink-0 rounded-xl border border-[#C2E812]/15 bg-[#C2E812]/10 p-2.5">
             <Gauge size={22} className="text-[#C2E812]" />
           </div>
-          <div>
-            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Live Grid Engine</p>
-            <div className="mt-1 flex items-center gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#484F58] sm:tracking-[0.3em]">Live Grid Engine</p>
+            <div className="mt-1 flex min-w-0 items-center gap-3">
               <PairLogos pair={selectedPair} />
-              <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">{selectedPair?.label || 'Grid'} Trading</h3>
+              <h3 className="min-w-0 break-words text-xl font-heading font-bold text-[#F5F7FA] sm:text-2xl">{selectedPair?.label || 'Grid'} Trading</h3>
             </div>
-            <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-[#8B949E] uppercase tracking-[0.16em]">
-              Deposit grid capital, seal strategy parameters, allocate gas reserve, and enable the shared Acurast executor.
+            <p className="mt-2 max-w-2xl text-[11px] font-mono uppercase leading-relaxed tracking-[0.1em] text-[#8B949E] sm:text-xs sm:tracking-[0.16em]">
+              Deposit USDC, choose a pair, set your price range, then enable automation.
             </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-4 lg:min-w-[520px]">
+        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-4 sm:gap-3 lg:min-w-[520px]">
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[#484F58]">Wallet {quoteSymbol}</p>
-            <p className="mt-2 text-[#F5F7FA]">{Number(tokenBalance).toFixed(2)}</p>
+            <p className="mt-2 break-words text-[#F5F7FA]">{Number(tokenBalance).toFixed(2)}</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[#484F58]">Free {quoteSymbol}</p>
-            <p className="mt-2 text-[#F5F7FA]">{Number(availableBalance).toFixed(2)}</p>
+            <p className="mt-2 break-words text-[#F5F7FA]">{Number(availableBalance).toFixed(2)}</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[#484F58]">Status</p>
-            <p className="mt-2 text-[#F5F7FA]">{currentStatus}</p>
+            <p className="mt-2 break-words text-[#F5F7FA]">{currentStatus}</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <p className="text-[#484F58]">Strategy</p>
-            <p className="mt-2 text-[#F5F7FA]">{short(strategyId)}</p>
+            <p className="mt-2 break-words text-[#F5F7FA]">{short(strategyId)}</p>
           </div>
         </div>
       </div>
@@ -717,9 +717,9 @@ export function GridTradingDashboard() {
 
       <div className="grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest md:grid-cols-3">
         {[
-          ['1', 'Fund', hasGridCapital ? 'Ready' : `Add ${quoteSymbol}`],
-          ['2', 'Configure', hasGridStrategy ? 'Strategy set' : 'Create strategy'],
-          ['3', 'Run', isGridLive ? 'Active' : 'Enable when ready'],
+          ['1', 'Deposit', hasGridCapital ? 'Ready' : `Add ${quoteSymbol}`],
+          ['2', 'Set range', hasGridStrategy ? 'Ready' : 'Create strategy'],
+          ['3', 'Enable', isGridLive ? 'Running' : 'Start when ready'],
         ].map(([step, label, value]) => {
           const active =
             (step === '1' && hasGridCapital) ||
@@ -749,7 +749,7 @@ export function GridTradingDashboard() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
+        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <div className="mb-5 flex items-center gap-3">
             <Wallet size={17} className="text-[#C2E812]" />
             <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Capital</h4>
@@ -817,7 +817,7 @@ export function GridTradingDashboard() {
                             <span className="flex min-w-0 items-center gap-3">
                               <PairLogos pair={pair} size="sm" />
                               <span className="min-w-0">
-                                <span className="block text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
+                                <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
                                 <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
                                   {pair.baseSymbol} base / {pair.quoteSymbol} quote
                                 </span>
@@ -834,16 +834,16 @@ export function GridTradingDashboard() {
             </label>
 
             <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3">
-              <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
-                <div>
+              <div className="grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-2">
+                <div className="min-w-0">
                   <p className="text-[#484F58]">Base</p>
                   <p className="mt-1 text-[#F5F7FA]">{baseSymbol}</p>
-                  <p className="mt-1 text-[#484F58]">Free {Number(availableBaseBalance).toFixed(4)}</p>
+                  <p className="mt-1 break-words text-[#484F58]">Free {Number(availableBaseBalance).toFixed(4)}</p>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-[#484F58]">Quote</p>
                   <p className="mt-1 text-[#F5F7FA]">{quoteSymbol}</p>
-                  <p className="mt-1 text-[#484F58]">Free {Number(availableBalance).toFixed(2)}</p>
+                  <p className="mt-1 break-words text-[#484F58]">Free {Number(availableBalance).toFixed(2)}</p>
                 </div>
               </div>
               <p className="mt-3 truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
@@ -872,7 +872,7 @@ export function GridTradingDashboard() {
               ) : null}
             </label>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canSubmitGridDeposit || !needsApproval} onClick={handleApprove}>
               {needsApproval ? 'Approve' : 'Approved'}
             </button>
@@ -881,7 +881,7 @@ export function GridTradingDashboard() {
             </button>
           </div>
           <details className="group mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+            <summary className="flex cursor-pointer list-none flex-col gap-1 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <span>Withdraw free balance</span>
               <span className="text-[#484F58] group-open:text-[#C2E812]">
                 {Number(withdrawAvailable).toFixed(withdrawTokenSide === 'quote' ? 2 : 4)} {withdrawSymbol}
@@ -935,19 +935,24 @@ export function GridTradingDashboard() {
           </details>
         </div>
 
-        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
-          <div className="mb-5 flex items-center gap-3">
-            <BookOpen size={17} className="text-[#C2E812]" />
-            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Accounting</h4>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
+        <details className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5" open={Boolean(strategy)}>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-3">
+              <BookOpen size={17} className="shrink-0 text-[#C2E812]" />
+              <span className="font-heading text-base font-bold text-[#F5F7FA]">Position Details</span>
+            </span>
+            <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+              {strategy ? 'View balances' : 'After setup'}
+            </span>
+          </summary>
+          <div className="mt-5 grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-2">
             <div>
               <p className="text-[#484F58]">Quote</p>
-              <p className="mt-2 text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.quoteBalance, quoteDecimals)).toFixed(2) : '0.00'}</p>
+              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.quoteBalance, quoteDecimals)).toFixed(2) : '0.00'}</p>
             </div>
             <div>
               <p className="text-[#484F58]">Base</p>
-              <p className="mt-2 text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.baseBalance, selectedPair?.baseDecimals || 18)).toFixed(4) : '0.0000'}</p>
+              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.baseBalance, selectedPair?.baseDecimals || 18)).toFixed(4) : '0.0000'}</p>
             </div>
             <div>
               <p className="text-[#484F58]">Gas Reserve</p>
@@ -966,16 +971,16 @@ export function GridTradingDashboard() {
               <p className="mt-2 text-[#F5F7FA]">{strategy?.lastExecutionAt ? new Date(Number(strategy.lastExecutionAt) * 1000).toLocaleTimeString() : 'None'}</p>
             </div>
           </div>
-        </div>
+        </details>
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
+        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Grid Setup</h4>
           <p className="mb-5 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
             Price limits are {baseSymbol} price quoted in {quoteSymbol}.
           </p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {([
               ['lowerPrice', `Lower ${quoteSymbol}`],
               ['upperPrice', `Upper ${quoteSymbol}`],
@@ -998,7 +1003,7 @@ export function GridTradingDashboard() {
             <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
               Advanced protection settings
             </summary>
-            <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               {([
                 ['triggerPrice', `Trigger ${quoteSymbol}`],
                 ['stopLossPrice', 'Stop Loss'],
@@ -1039,7 +1044,7 @@ export function GridTradingDashboard() {
           </div>
           <div className="mt-5">
             <p className="mb-3 text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Execution Interval</p>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {EXECUTION_INTERVALS.map((interval) => (
                 <button
                   key={interval.seconds}
@@ -1066,7 +1071,7 @@ export function GridTradingDashboard() {
           </button>
         </div>
 
-        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-5">
+        <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Start & Manage</h4>
           <details className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4">
             <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
@@ -1087,7 +1092,7 @@ export function GridTradingDashboard() {
             </button>
             </div>
           </details>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Capital</span>
               <input
@@ -1124,7 +1129,7 @@ export function GridTradingDashboard() {
               {lifecycleHint}
             </div>
           )}
-          <div className="mt-4 grid grid-cols-2 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest">
+          <div className="mt-4 grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-2">
             <div className="rounded-lg border border-white/10 bg-black/20 p-3">
               <p className="text-[#484F58]">{allocationFormEnabled ? 'Max Allocate' : 'Allocation'}</p>
               <p className="mt-1 text-[#F5F7FA]">
@@ -1138,7 +1143,7 @@ export function GridTradingDashboard() {
               </p>
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <button className="ys-btn-secondary h-12" disabled={Boolean(busyLabel) || !canAllocate} onClick={handleAllocate}>
               Allocate
             </button>

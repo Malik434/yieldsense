@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { TrendingUp, Wallet, ArrowUpRight, BarChart3, Target, Fuel, PieChart, Layers } from 'lucide-react';
+import { BarChart3, PieChart, Layers } from 'lucide-react';
 
 const MS_IN_YEAR = 365 * 24 * 60 * 60 * 1000;
 
@@ -53,53 +53,45 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
   }, [balance]);
 
   return (
-    <div className="flex flex-col gap-8 mb-12">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div className="mb-10 flex flex-col gap-5 sm:mb-12 sm:gap-8">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 lg:gap-8">
         {/* Primary Net Worth Card */}
-        <div className="lg:col-span-2 ys-card p-10 flex flex-col justify-between min-h-[300px] bg-gradient-to-br from-[#0B0F0D] to-[#030605] relative overflow-hidden group">
+        <div className="ys-card relative flex min-h-[260px] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#0B0F0D] to-[#030605] p-5 group sm:p-8 lg:col-span-2 lg:min-h-[300px] lg:p-10">
           <div className="absolute top-0 right-0 p-20 bg-[#C2E812]/[0.02] rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
           <div className="relative z-10 space-y-1">
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Personal Net Position</p>
-              <div className="flex items-center gap-2 text-[#00FFA3]">
-                <TrendingUp size={14} />
-                <span className="text-[10px] font-mono font-bold uppercase tracking-widest">Growth Active</span>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] sm:text-[11px] sm:tracking-[0.3em]">Personal Net Position</p>
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+                  {hasActivePosition ? 'Position Active' : 'No Position'}
+                </span>
               </div>
             </div>
-            <div className="flex items-baseline gap-4 mt-4">
-              <h2 className="text-7xl font-heading font-bold text-[#F5F7FA] tracking-tighter">
+            <div className="mt-4 flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-4">
+              <h2 className="break-words text-[clamp(2.35rem,14vw,4.5rem)] font-heading font-bold leading-none tracking-tight text-[#F5F7FA]">
                 ${netWorth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h2>
-              <span className="text-2xl font-heading font-bold text-[#484F58] tracking-tight">USDC</span>
+              <span className="text-lg font-heading font-bold tracking-tight text-[#484F58] sm:text-2xl">USDC</span>
             </div>
           </div>
 
-          <div className="relative z-10 flex flex-wrap items-center gap-12 pt-10 border-t border-white/[0.03]">
-            <div className="space-y-1">
-              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest flex items-center gap-2">
-                <Target size={12} className="text-[#C2E812]" />
-                Principal
-              </p>
-              <p className="text-2xl font-heading font-bold text-[#F5F7FA]">
+          <div className="relative z-10 grid grid-cols-1 gap-3 border-t border-white/[0.03] pt-8 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Principal</p>
+              <p className="mt-2 text-xl font-heading font-bold text-[#F5F7FA]">
                 ${(balance - totalRealized).toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
             </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest flex items-center gap-2">
-                <ArrowUpRight size={12} className="text-[#00FFA3]" />
-                Total Yield
-              </p>
-              <p className="text-2xl font-heading font-bold text-[#00FFA3]">
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Total Yield</p>
+              <p className="mt-2 text-xl font-heading font-bold text-[#F5F7FA]">
                 +${(totalRealized + unrealizedYield).toLocaleString(undefined, { minimumFractionDigits: 4 })}
               </p>
             </div>
-            <div className="space-y-1 ml-auto">
-              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest flex items-center gap-2">
-                <Fuel size={12} className="text-amber-500" />
-                Gas Optimized
-              </p>
-              <p className="text-2xl font-heading font-bold text-amber-500">
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Estimated Gas Offset</p>
+              <p className="mt-2 text-xl font-heading font-bold text-[#F5F7FA]">
                 ${estimatedGasSaved.toFixed(2)}
               </p>
             </div>
@@ -107,10 +99,10 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
         </div>
 
         {/* Global TVL & Stats Card */}
-        <div className="ys-card p-10 flex flex-col justify-between bg-[#0B0F0D]/40">
+        <div className="ys-card flex flex-col justify-between bg-[#0B0F0D]/40 p-5 sm:p-8 lg:p-10">
           <div className="space-y-1">
-            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Global Ecosystem</p>
-            <h3 className="text-3xl font-heading font-bold text-[#F5F7FA] mt-2">
+            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] sm:tracking-[0.3em]">Global Ecosystem</p>
+            <h3 className="mt-2 break-words text-2xl font-heading font-bold text-[#F5F7FA] sm:text-3xl">
               ${globalTvl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </h3>
             <p className="text-[10px] font-mono font-bold text-[#C2E812] uppercase tracking-widest">Total Value Locked</p>
@@ -143,15 +135,15 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
       </div>
 
       {/* Yield Projection Banner */}
-      <div className="ys-card p-8 flex flex-col md:flex-row md:items-center justify-between gap-8 border-none bg-gradient-to-r from-[#C2E812]/[0.03] to-transparent">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-[#C2E812]">
+      <div className="ys-card flex flex-col gap-5 border-none bg-gradient-to-r from-[#C2E812]/[0.03] to-transparent p-5 sm:p-8 md:flex-row md:items-center md:justify-between md:gap-8">
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+          <div className="flex shrink-0 items-center gap-2 text-[#C2E812]">
             <BarChart3 size={20} />
-            <span className="text-[11px] font-mono font-bold uppercase tracking-[0.3em]">Projected Alpha</span>
+            <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] sm:text-[11px] sm:tracking-[0.3em]">Projected Alpha</span>
           </div>
-          <div className="h-8 w-px bg-white/[0.05]" />
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-heading font-bold text-[#F5F7FA]">
+          <div className="hidden h-8 w-px bg-white/[0.05] sm:block" />
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-2">
+            <span className="break-words text-2xl font-heading font-bold text-[#F5F7FA] sm:text-3xl">
               ${projectedAnnualYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
             <span className="text-xs font-mono font-bold text-[#484F58] uppercase tracking-widest">
@@ -159,11 +151,11 @@ export function PortfolioTicker({ balance, unrealizedYield, totalRealized, apr, 
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="px-5 py-2 rounded-xl bg-[#C2E812] text-[#030605] font-heading font-bold text-sm tracking-tight">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="rounded-xl bg-[#C2E812] px-4 py-2 text-center text-sm font-heading font-bold tracking-tight text-[#030605] sm:px-5">
             +{apr.toFixed(2)}% Strategy APR
           </div>
-          <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">
+          <div className="flex items-center justify-center gap-3 rounded-xl border border-white/5 bg-white/5 px-4 py-2 text-center text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
             <Layers size={12} />
             Aerodrome MVP Strategy
           </div>
