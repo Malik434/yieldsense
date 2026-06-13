@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { applyTelemetryEvent } from '@/lib/stateStore';
+import { processGridProcessorTelemetry } from '@/lib/gridProcessorOrchestrator';
 
 /**
  * POST /api/telemetry
@@ -75,6 +76,25 @@ export async function POST(request: Request) {
   for (const event of events) {
     if (!event || typeof event !== 'object' || typeof event.event !== 'string') {
       console.warn(`[telemetry] Skipping invalid event structure: ${JSON.stringify(event).substring(0, 100)}`);
+      continue;
+    }
+
+    if (event.event === 'grid_processor_identity') {
+      const chainId = Number(event.chainId || event.CHAIN_ID || 8453);
+      try {
+        await processGridProcessorTelemetry(chainId, {
+          deploymentId: typeof event.deploymentId === 'string' ? event.deploymentId : undefined,
+          processorAddress: typeof event.processorAddress === 'string' ? event.processorAddress : undefined,
+          leaseEpoch: Number.isFinite(Number(event.leaseEpoch)) ? Number(event.leaseEpoch) : undefined,
+          healthy: event.healthy !== false,
+          timestamp: Number.isFinite(Number(event.timestamp)) ? Number(event.timestamp) : undefined,
+          deploymentHash: typeof event.deploymentHash === 'string' ? event.deploymentHash : undefined,
+          codeHash: typeof event.codeHash === 'string' ? event.codeHash : undefined,
+        });
+        processedCount++;
+      } catch (error) {
+        console.error('[telemetry] Error processing grid processor identity:', error);
+      }
       continue;
     }
 

@@ -11,7 +11,8 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 3600000,
-        "numberOfExecutions": 8760
+        "numberOfExecutions": 8760,
+        "maxExecutionTimeInMs": 50000
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -24,7 +25,10 @@
       "minProcessorReputation": 0,
       "maxCostPerExecution": 5500000000,
       "includeEnvironmentVariables": [],
-      "processorWhitelist": []
+      "processorWhitelist": [],
+      "mutability": "Mutable",
+      "restartPolicy": "onFailure",
+      "reuseKeysFrom": null
     },
     "YieldSenseGridExecutor": {
       "projectName": "YieldSenseGridExecutor",
@@ -37,7 +41,8 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 60000,
-        "numberOfExecutions": 8760
+        "numberOfExecutions": 4320,
+        "maxExecutionTimeInMs": 50000
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -50,7 +55,10 @@
       "minProcessorReputation": 0,
       "maxCostPerExecution": 5500000000,
       "includeEnvironmentVariables": [],
-      "processorWhitelist": []
+      "processorWhitelist": [],
+      "mutability": "Mutable",
+      "restartPolicy": "onFailure",
+      "reuseKeysFrom": null
     },
     "YieldSenseTest": {
       "projectName": "YieldSenseTest",
@@ -63,7 +71,8 @@
       "execution": {
         "type": "interval",
         "intervalInMs": 300000,
-        "numberOfExecutions": 1
+        "numberOfExecutions": 1,
+        "maxExecutionTimeInMs": 50000
       },
       "maxAllowedStartDelayInMs": 60000,
       "usageLimit": {
@@ -76,7 +85,10 @@
       "minProcessorReputation": 0,
       "maxCostPerExecution": 10000000000,
       "includeEnvironmentVariables": [],
-      "processorWhitelist": []
+      "processorWhitelist": [],
+      "mutability": "Immutable",
+      "restartPolicy": "no",
+      "reuseKeysFrom": null
     }
   }
 }

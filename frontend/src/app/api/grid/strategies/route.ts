@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isAddress } from 'viem';
-import { gridStore, loadGridPairs, toLiveGridConfig, type StoredGridStrategy } from '@/lib/gridStore';
+import { loadGridPairs, toLiveGridConfig, type StoredGridStrategy } from '@/lib/gridStore';
+import {
+  listGridStrategies,
+  patchGridStrategyStatus,
+  upsertGridStrategy,
+} from '@/lib/gridStrategyRepository';
+import { reconcileGridProcessorLease } from '@/lib/gridProcessorOrchestrator';
 
 function validStatus(status: unknown): status is StoredGridStrategy['status'] {
   return typeof status === 'string' && ['draft', 'funded', 'active', 'paused', 'gas_paused', 'archived', 'closed'].includes(status);
@@ -16,6 +22,14 @@ function optionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+async function wakeGridOrchestrator(chainId: number) {
+  try {
+    await reconcileGridProcessorLease(chainId);
+  } catch (error) {
+    console.error('[grid-strategies] Failed to wake grid orchestrator:', error);
+  }
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const owner = searchParams.get('owner')?.toLowerCase();
@@ -24,11 +38,10 @@ export async function GET(request: NextRequest) {
   const mode = searchParams.get('mode');
   const pairs = new Map(loadGridPairs(chainId).map((pair) => [pair.pairId, pair]));
 
-  const strategies = Array.from(gridStore.strategies.values()).filter((strategy) => {
-    if (strategy.chainId !== chainId) return false;
-    if (owner && strategy.owner.toLowerCase() !== owner) return false;
-    if (status && strategy.status !== status) return false;
-    return true;
+  const strategies = await listGridStrategies({
+    chainId,
+    owner,
+    status,
   });
 
   if (mode === 'processor') {
@@ -56,7 +69,8 @@ export async function POST(request: NextRequest) {
   if (!validStatus(strategy.status)) return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
 
   const now = new Date().toISOString();
-  const existing = gridStore.strategies.get(strategy.strategyId);
+  const existing = (await listGridStrategies({ chainId: Number(strategy.chainId || 8453) }))
+    .find((item) => item.strategyId === strategy.strategyId);
   const record: StoredGridStrategy = {
     strategyId: strategy.strategyId,
     owner: strategy.owner,
@@ -77,20 +91,25 @@ export async function POST(request: NextRequest) {
     updatedAt: now,
   };
 
-  gridStore.strategies.set(record.strategyId, record);
+  await upsertGridStrategy(record);
+  await wakeGridOrchestrator(record.chainId);
   return NextResponse.json({ strategy: record });
 }
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
-  const { strategyId, status } = body as { strategyId?: string; status?: StoredGridStrategy['status'] };
+  const { strategyId, status, chainId: bodyChainId } = body as {
+    strategyId?: string;
+    status?: StoredGridStrategy['status'];
+    chainId?: number;
+  };
   if (!strategyId || !validStatus(status)) return NextResponse.json({ error: 'Invalid strategyId or status' }, { status: 400 });
 
-  const existing = gridStore.strategies.get(strategyId);
-  if (!existing) return NextResponse.json({ error: 'Strategy not found' }, { status: 404 });
+  const chainId = Number(bodyChainId || 8453);
+  const updated = await patchGridStrategyStatus(chainId, strategyId, status);
+  if (!updated) return NextResponse.json({ error: 'Strategy not found' }, { status: 404 });
 
-  const updated = { ...existing, status, updatedAt: new Date().toISOString() };
-  gridStore.strategies.set(strategyId, updated);
+  await wakeGridOrchestrator(chainId);
   return NextResponse.json({ strategy: updated });
 }

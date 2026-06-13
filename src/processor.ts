@@ -110,6 +110,11 @@ const GRID_EXECUTION_ROUTER_ABI = [
   "function markStrategyGasPaused(bytes32 strategyId) external",
 ];
 
+const EXECUTOR_REGISTRY_ABI = [
+  "function GRID_EXECUTOR() view returns (bytes32)",
+  "function isAuthorized(address processor, bytes32 role) view returns (bool)",
+];
+
 const POLL_INTERVAL_MS = 60_000;
 const BPS_DENOMINATOR = 10_000;
 
@@ -144,6 +149,42 @@ function parseJsonEnv<T>(name: string, fallback: T): T {
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function getGridProcessorDeploymentId(): string | undefined {
+  return process.env.ACURAST_DEPLOYMENT_ID || (globalThis as any).__ENV__?.ACURAST_DEPLOYMENT_ID;
+}
+
+function getGridProcessorLeaseEpoch(): number | undefined {
+  const raw = process.env.GRID_PROCESSOR_LEASE_EPOCH || (globalThis as any).__ENV__?.GRID_PROCESSOR_LEASE_EPOCH;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+async function reportGridProcessorIdentity(processorAddress: string): Promise<void> {
+  await emitTelemetry(
+    {
+      event: "grid_processor_identity",
+      timestamp: nowSeconds(),
+      processorAddress,
+      deploymentId: getGridProcessorDeploymentId(),
+      leaseEpoch: getGridProcessorLeaseEpoch(),
+      healthy: true,
+    },
+    true
+  );
+}
+
+async function isCurrentGridProcessorAuthorized(
+  provider: ethers.JsonRpcApiProvider,
+  processorAddress: string
+): Promise<boolean> {
+  const registryAddress = process.env.EXECUTOR_REGISTRY_ADDRESS || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS;
+  if (!registryAddress) return true;
+
+  const registry = new ethers.Contract(registryAddress, EXECUTOR_REGISTRY_ABI, provider);
+  const role = await registry.GRID_EXECUTOR();
+  return Boolean(await registry.isAuthorized(processorAddress, role));
 }
 
 function serialiseError(error: unknown): Record<string, unknown> {
@@ -669,6 +710,17 @@ async function monitorAndExecuteLiveGrid(): Promise<void> {
   const managerAddress = process.env.GRID_STRATEGY_MANAGER_ADDRESS ?? "";
   const routerAddress = process.env.GRID_EXECUTION_ROUTER_ADDRESS ?? "";
   const strategies = await loadLiveGridStrategies(frontendUrl);
+  const privateKey = process.env.ACURAST_WORKER_KEY;
+  const acurastStd = getAcurastStd();
+  const processorAddress = acurastStd
+    ? ethers.getAddress(acurastStd.chains.ethereum.getAddress())
+    : privateKey
+      ? new ethers.Wallet(privateKey).address
+      : "";
+
+  if (processorAddress) {
+    await reportGridProcessorIdentity(processorAddress);
+  }
 
   if (!managerAddress || !routerAddress || strategies.length === 0) {
     await emitTelemetry({
@@ -682,7 +734,19 @@ async function monitorAndExecuteLiveGrid(): Promise<void> {
   const provider = createJsonRpcProvider(rpcUrl, Number(process.env.CHAIN_ID ?? 8453));
   const dataProvider = createJsonRpcProvider(dataRpcUrl, Number(process.env.CHAIN_ID ?? 8453));
   const manager = new ethers.Contract(managerAddress, GRID_STRATEGY_MANAGER_ABI, provider);
-  const privateKey = process.env.ACURAST_WORKER_KEY;
+
+  if (processorAddress) {
+    const authorized = await isCurrentGridProcessorAuthorized(provider, processorAddress);
+    if (!authorized) {
+      await emitTelemetry({
+        event: "grid_live_check_skipped",
+        timestamp: nowSeconds(),
+        reason: "processor_not_authorized",
+        processorAddress,
+      });
+      return;
+    }
+  }
 
   for (const config of strategies) {
     const strategy = await manager.getStrategy(config.strategyId);

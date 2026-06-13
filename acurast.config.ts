@@ -1,5 +1,11 @@
-type AssignmentStrategy = { type: "Single" | "RoundRobin" };
-type ExecutionConfig = { type: "interval"; intervalInMs: number; numberOfExecutions: number };
+type AssignmentStrategy = { type: "Single" | "Competing" };
+type ExecutionConfig = {
+  type: "interval";
+  intervalInMs: number;
+  numberOfExecutions: number;
+  maxExecutionTimeInMs: number;
+};
+type AcurastDeploymentRef = ["Acurast", string, number];
 
 const YIELD_PROCESSOR_INTERVAL_MS = 60 * 60_000;
 const GRID_PROCESSOR_INTERVAL_MS = 60_000;
@@ -23,6 +29,9 @@ interface AcurastProjectConfig {
   maxCostPerExecution: number;
   includeEnvironmentVariables: string[];
   processorWhitelist: string[];
+  mutability: "Immutable" | "Mutable";
+  restartPolicy: "no" | "onFailure";
+  reuseKeysFrom: AcurastDeploymentRef | null;
 }
 
 interface AcurastConfig {
@@ -45,6 +54,7 @@ const config: AcurastConfig = {
         type: "interval",
         intervalInMs: YIELD_PROCESSOR_INTERVAL_MS,
         numberOfExecutions: 8_760,
+        maxExecutionTimeInMs: 50_000,
       },
       maxAllowedStartDelayInMs: 30_000,
       usageLimit: {
@@ -58,6 +68,9 @@ const config: AcurastConfig = {
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [],
       processorWhitelist: [],
+      mutability: "Mutable",
+      restartPolicy: "onFailure",
+      reuseKeysFrom: null,
     },
     YieldSenseGridExecutor: {
       projectName: "YieldSenseGridExecutor",
@@ -68,7 +81,8 @@ const config: AcurastConfig = {
       execution: {
         type: "interval",
         intervalInMs: GRID_PROCESSOR_INTERVAL_MS,
-        numberOfExecutions: 8_760,
+        numberOfExecutions: 4_320,
+        maxExecutionTimeInMs: 50_000,
       },
       maxAllowedStartDelayInMs: 30_000,
       usageLimit: {
@@ -82,6 +96,9 @@ const config: AcurastConfig = {
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [],
       processorWhitelist: [],
+      mutability: "Mutable",
+      restartPolicy: "onFailure",
+      reuseKeysFrom: null,
     },
   },
 };

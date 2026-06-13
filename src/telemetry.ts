@@ -51,6 +51,7 @@ const STANDARD_SUPPRESSED_EVENTS = new Set([
 const ESSENTIAL_EVENTS = new Set([
   "processor_boot",
   "hw_address_report",
+  "grid_processor_identity",
   "harvest_submit_attempt",
   "harvest_skipped_profitability",
   "harvest_submitted",
@@ -111,6 +112,16 @@ export async function emitTelemetry(event: TelemetryEvent, immediate: boolean = 
   const envChainId = process.env.CHAIN_ID || (globalThis as any).__ENV__?.CHAIN_ID;
   if (envChainId && !event.chainId) {
     event.chainId = Number(envChainId);
+  }
+
+  const deploymentId = process.env.ACURAST_DEPLOYMENT_ID || (globalThis as any).__ENV__?.ACURAST_DEPLOYMENT_ID;
+  if (deploymentId && !event.deploymentId) {
+    event.deploymentId = deploymentId;
+  }
+
+  const leaseEpoch = process.env.GRID_PROCESSOR_LEASE_EPOCH || (globalThis as any).__ENV__?.GRID_PROCESSOR_LEASE_EPOCH;
+  if (leaseEpoch && !event.leaseEpoch) {
+    event.leaseEpoch = Number(leaseEpoch);
   }
 
   console.log(`[TELEMETRY_STDOUT] ${JSON.stringify(event)}`);

@@ -9,6 +9,18 @@ import {
   calculateSupervisorDelayMs,
   isProcessorNotAttestedError,
 } from "./processorSupervisor.js";
+import {
+  emptyGridProcessorLease,
+  markGridLeaseCandidates,
+  markGridProcessorAuthorized,
+  recordGridDeploymentStarted,
+  recordGridProcessorTelemetry,
+  shouldRenewGridLease,
+} from "../frontend/src/lib/gridProcessorLease.js";
+
+const GRID_LEASE_TEST_NOW = new Date("2026-06-11T00:00:00.000Z");
+const GRID_PROCESSOR_A = "0x0000000000000000000000000000000000000001";
+const GRID_PROCESSOR_B = "0x0000000000000000000000000000000000000002";
 
 // --- TC_STATE_01 ---
 test("loadState returns defaults when file is missing", async () => {
@@ -127,4 +139,85 @@ test("isProcessorNotAttestedError detects the keeper custom error selector", () 
   assert.equal(isProcessorNotAttestedError({ data: "0x326c7612" }), true);
   assert.equal(isProcessorNotAttestedError(new Error("execution reverted: ProcessorNotAttested")), true);
   assert.equal(isProcessorNotAttestedError(new Error("network timeout")), false);
+});
+
+test("grid lease spawns when active strategies transition from zero to one", () => {
+  const lease = emptyGridProcessorLease(8453, GRID_LEASE_TEST_NOW);
+  const next = markGridLeaseCandidates(lease, ["0xstrategy"], GRID_LEASE_TEST_NOW);
+
+  assert.equal(next.state, "deploying");
+  assert.equal(next.leaseEpoch, 1);
+  assert.deepEqual(next.activeStrategyIds, ["0xstrategy"]);
+});
+
+test("grid lease drains when there are no active strategy candidates", () => {
+  const active = {
+    ...emptyGridProcessorLease(8453, GRID_LEASE_TEST_NOW),
+    state: "active" as const,
+    currentDeploymentId: "Acurast:5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL:123",
+    currentProcessorAddress: GRID_PROCESSOR_A,
+  };
+
+  const next = markGridLeaseCandidates(active, [], GRID_LEASE_TEST_NOW);
+  assert.equal(next.state, "draining");
+  assert.deepEqual(next.activeStrategyIds, []);
+});
+
+test("new grid processor identity remains pending until explicitly authorized", () => {
+  const deployment = recordGridDeploymentStarted(
+    markGridLeaseCandidates(emptyGridProcessorLease(8453, GRID_LEASE_TEST_NOW), ["0xstrategy"], GRID_LEASE_TEST_NOW),
+    "Acurast:5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL:124",
+    GRID_LEASE_TEST_NOW
+  );
+
+  const reported = recordGridProcessorTelemetry(deployment, {
+    deploymentId: deployment.pendingDeploymentId,
+    processorAddress: GRID_PROCESSOR_B,
+    leaseEpoch: deployment.leaseEpoch,
+    healthy: true,
+  }, GRID_LEASE_TEST_NOW);
+
+  assert.equal(reported.state, "deploying");
+  assert.equal(reported.pendingProcessorAddress, GRID_PROCESSOR_B);
+  assert.equal(reported.currentProcessorAddress, undefined);
+
+  const authorized = markGridProcessorAuthorized(reported, {
+    deploymentId: reported.pendingDeploymentId!,
+    processorAddress: reported.pendingProcessorAddress!,
+    txHash: "0xabc",
+    reason: "processor_identity_reported",
+  }, GRID_LEASE_TEST_NOW);
+
+  assert.equal(authorized.state, "active");
+  assert.equal(authorized.currentProcessorAddress, GRID_PROCESSOR_B);
+  assert.equal(authorized.rotations[0].action, "register");
+});
+
+test("stale grid processor telemetry from an older lease epoch is ignored", () => {
+  const lease = {
+    ...emptyGridProcessorLease(8453, GRID_LEASE_TEST_NOW),
+    state: "active" as const,
+    leaseEpoch: 3,
+    currentProcessorAddress: GRID_PROCESSOR_B,
+  };
+
+  const next = recordGridProcessorTelemetry(lease, {
+    deploymentId: "Acurast:5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL:122",
+    processorAddress: GRID_PROCESSOR_A,
+    leaseEpoch: 2,
+    healthy: true,
+  }, GRID_LEASE_TEST_NOW);
+
+  assert.equal(next.currentProcessorAddress, GRID_PROCESSOR_B);
+  assert.equal(next.pendingProcessorAddress, undefined);
+});
+
+test("active grid leases enter update window twelve hours before expiry", () => {
+  const lease = {
+    ...emptyGridProcessorLease(8453, GRID_LEASE_TEST_NOW),
+    state: "active" as const,
+    leaseExpiresAt: new Date("2026-06-11T11:59:00.000Z").toISOString(),
+  };
+
+  assert.equal(shouldRenewGridLease(lease, GRID_LEASE_TEST_NOW), true);
 });
