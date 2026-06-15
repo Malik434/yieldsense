@@ -3,9 +3,27 @@
 import { useState } from 'react';
 import { useAccount, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits } from 'viem';
-import { AlertTriangle, CheckCircle2, Info, Loader2, LogOut, Shield } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, Loader2, Shield } from 'lucide-react';
 import { KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { useNetwork } from '@/providers/NetworkProvider';
+
+const USDC_ICON_URL = 'https://assets.coingecko.com/coins/images/6319/small/usdc.png';
+
+function VaultSettlementMark() {
+  return (
+    <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-white/20 bg-white shadow-lg shadow-[#2775CA]/20">
+      <img src={USDC_ICON_URL} alt="USDC" className="h-full w-full object-cover" loading="lazy" />
+    </div>
+  );
+}
+
+function SettlementButtonMark() {
+  return (
+    <span className="grid h-5 w-5 place-items-center overflow-hidden rounded-full border border-white/20 bg-white transition-transform group-hover:scale-105">
+      <img src={USDC_ICON_URL} alt="USDC" className="h-full w-full object-cover" loading="lazy" />
+    </span>
+  );
+}
 
 export function WithdrawModule() {
   const { address, isConnected } = useAccount();
@@ -49,8 +67,9 @@ export function WithdrawModule() {
   const { writeContractAsync } = useWriteContract();
 
   const withdrawableRaw = maxWithdrawRaw ? (maxWithdrawRaw as bigint) : BigInt(0);
+  const redeemableSharesRaw = userSharesRaw ? (userSharesRaw as bigint) : BigInt(0);
   const withdrawable = parseFloat(formatUnits(withdrawableRaw, 6));
-  const userShares = userSharesRaw ? parseFloat(formatUnits(userSharesRaw as bigint, 6)) : 0;
+  const userShares = parseFloat(formatUnits(redeemableSharesRaw, 6));
   const totalShares = totalSharesRaw ? parseFloat(formatUnits(totalSharesRaw as bigint, 6)) : 0;
   const totalAssets = totalAssetsRaw ? parseFloat(formatUnits(totalAssetsRaw as bigint, 6)) : 0;
   const shareFraction = totalShares > 0 && userShares > 0 ? Math.min(userShares / totalShares, 1) : 0;
@@ -67,8 +86,8 @@ export function WithdrawModule() {
       await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
-        functionName: 'withdraw',
-        args: [withdrawableRaw, address as `0x${string}`, address as `0x${string}`],
+        functionName: 'redeem',
+        args: [redeemableSharesRaw, address as `0x${string}`, address as `0x${string}`],
         dataSuffix: BUILDER_CODE_SUFFIX,
       });
       setSuccess(true);
@@ -94,13 +113,11 @@ export function WithdrawModule() {
 
   return (
     <div className="ys-card p-8 sm:p-12 flex flex-col gap-10 relative overflow-hidden group">
-      <div className="absolute top-0 right-0 p-12 bg-[#FF4466]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+      <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
       <div className="flex items-center justify-between relative z-10">
         <div className="flex items-center gap-4">
-          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
-            <LogOut size={20} className="text-[#FF4466]" />
-          </div>
+          <VaultSettlementMark />
           <div>
             <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Liquidity Exit</p>
             <h3 className="text-xl font-heading font-bold text-[#F5F7FA]">Vault Withdrawal</h3>
@@ -170,10 +187,10 @@ export function WithdrawModule() {
           <div className="flex flex-col gap-3">
             <button
               onClick={handleWithdraw}
-              disabled={withdrawable === 0 || withdrawing}
+              disabled={redeemableSharesRaw === BigInt(0) || withdrawing}
               className={`
                 ys-btn-primary w-full h-16 text-sm relative group overflow-hidden
-                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : withdrawable === 0 ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
+                ${confirming ? 'bg-[#FF4466] border-[#FF4466]/40' : redeemableSharesRaw === BigInt(0) ? 'opacity-30 grayscale pointer-events-none' : 'bg-[#1C212E] hover:bg-[#252B3A] border-white/[0.05] hover:border-white/[0.1]'}
               `}
             >
               <div className="relative flex items-center justify-center gap-3">
@@ -182,7 +199,7 @@ export function WithdrawModule() {
                 ) : confirming ? (
                   <><AlertTriangle size={20} className="animate-pulse" /> Confirm Full Exit</>
                 ) : (
-                  <><LogOut size={20} className="group-hover:translate-x-1 transition-transform" /> Initialize Exit Flow</>
+                  <><SettlementButtonMark /> Initialize Exit Flow</>
                 )}
               </div>
             </button>

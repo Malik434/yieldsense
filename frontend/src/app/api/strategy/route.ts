@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { getStore } from '@netlify/blobs';
 
-const MAINNET_KEEPER = process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || '0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF';
+const MAINNET_KEEPER = process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || '0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792';
 const TESTNET_KEEPER = process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '';
 
 function getConfig(chainId: number) {

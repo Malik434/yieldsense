@@ -133,13 +133,20 @@ async function fetchOnchainAudit(
 ): Promise<OnchainAuditResponse | null> {
   if (!portfolioAddress) return null;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
   try {
-    const res = await fetch(`/api/onchain-audit?userAddress=${portfolioAddress}&chainId=${chainId}`);
+    const res = await fetch(`/api/onchain-audit?userAddress=${portfolioAddress}&chainId=${chainId}`, {
+      signal: controller.signal,
+    });
     if (!res.ok) return null;
     return await res.json();
   } catch (error) {
     console.warn('[PnlChart] Falling back without on-chain audit history:', error);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -444,25 +451,25 @@ export function PnlChart({
   }, [fetchHistory]);
 
   return (
-    <div className="ys-card p-10 flex min-w-0 flex-col gap-10 h-full bg-[#0B0F0D] group/chart relative overflow-hidden">
+    <div className="ys-card relative flex h-full min-w-0 flex-col gap-7 overflow-hidden bg-[#0B0F0D] p-5 group/chart sm:gap-10 sm:p-8 lg:p-10">
       <div className="absolute top-0 right-0 p-12 bg-[#C2E812]/[0.02] rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#C2E812]/5 border border-[#C2E812]/10 flex items-center justify-center">
+      <div className="relative z-10 flex flex-col justify-between gap-5 md:flex-row md:items-center md:gap-6">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#C2E812]/10 bg-[#C2E812]/5 sm:h-12 sm:w-12">
             <Activity size={24} className="text-[#C2E812]" />
           </div>
-          <div>
-            <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">Guardian Analytics</p>
-            <h3 className="text-2xl font-heading font-bold text-[#F5F7FA]">Asset Growth Audit</h3>
+          <div className="min-w-0">
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-[#484F58] sm:tracking-[0.3em]">Guardian Analytics</p>
+            <h3 className="break-words text-xl font-heading font-bold text-[#F5F7FA] sm:text-2xl">Asset Growth Audit</h3>
           </div>
         </div>
-        <div className="flex bg-black/40 p-1 rounded-xl border border-white/[0.05]">
+        <div className="grid grid-cols-4 rounded-xl border border-white/[0.05] bg-black/40 p-1">
           {['1D', '1W', '1M', 'ALL'].map(t => (
             <button
               key={t}
               onClick={() => setPeriod(t)}
-              className={`px-6 py-2 rounded-lg text-[10px] font-mono font-bold tracking-widest transition-all ${period === t ? 'bg-[#C2E812] text-[#030605]' : 'text-[#484F58] hover:text-[#8B949E]'}`}
+              className={`rounded-lg px-3 py-2 text-[10px] font-mono font-bold tracking-widest transition-all sm:px-6 ${period === t ? 'bg-[#C2E812] text-[#030605]' : 'text-[#484F58] hover:text-[#8B949E]'}`}
             >
               {t}
             </button>
@@ -470,35 +477,35 @@ export function PnlChart({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 relative z-10">
+      <div className="relative z-10 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
         {[
           { label: 'Settled Profit', value: `$${totalRealized.toFixed(2)}`, color: 'text-[#C2E812]', icon: <CheckCircle2 size={12} /> },
           { label: 'Unrealized', value: `+$${unrealizedYield.toFixed(4)}`, color: 'text-[#00FFA3]', icon: <TrendingUp size={12} /> },
           { label: 'Principal', value: `$${initialDeposit.toFixed(2)}`, color: 'text-[#8B949E]', icon: <Shield size={12} /> },
           { label: 'Net Position', value: `$${(currentBalance + unrealizedYield).toFixed(2)}`, color: 'text-[#F5F7FA]', icon: <Target size={12} /> },
         ].map(({ label, value, color, icon }) => (
-          <div key={label} className="p-6 rounded-3xl bg-white/[0.02] border border-white/[0.04] space-y-2 hover:bg-white/[0.04] transition-all">
-            <div className="flex items-center gap-2">
+          <div key={label} className="space-y-2 rounded-2xl border border-white/[0.04] bg-white/[0.02] p-4 transition-all hover:bg-white/[0.04] sm:rounded-3xl sm:p-6">
+            <div className="flex min-w-0 items-center gap-2">
               {icon}
-              <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">{label}</p>
+              <p className="min-w-0 truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">{label}</p>
             </div>
-            <p className={`text-2xl font-heading font-bold ${color} tracking-tight`}>{value}</p>
+            <p className={`break-words text-xl font-heading font-bold ${color} tracking-tight sm:text-2xl`}>{value}</p>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
+      <div className="relative z-10 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
         {/* Attribution breakdown */}
         <div className="space-y-6 relative flex flex-col justify-center">
           <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em] mb-2">Yield Attribution</p>
           <div className="space-y-6">
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-[#F5F7FA] font-heading font-bold">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <div className="flex min-w-0 items-center gap-2 font-heading font-bold text-[#F5F7FA]">
                   <Zap size={14} className="text-[#00FFA3]" />
                   Protocol Harvests
                 </div>
-                <span className={`font-mono font-bold ${attribution.harvest >= 0 ? 'text-[#00FFA3]' : 'text-[#FF4466]'}`}>
+                <span className={`shrink-0 font-mono font-bold ${attribution.harvest >= 0 ? 'text-[#00FFA3]' : 'text-[#FF4466]'}`}>
                   {attribution.harvest >= 0 ? '+' : ''}${attribution.harvest.toFixed(2)}
                 </span>
               </div>
@@ -507,12 +514,12 @@ export function PnlChart({
               </div>
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-[#F5F7FA] font-heading font-bold">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <div className="flex min-w-0 items-center gap-2 font-heading font-bold text-[#F5F7FA]">
                   <ArrowUpDown size={14} className="text-[#C2E812]" />
                   Grid Trades
                 </div>
-                <span className="text-[#C2E812] font-mono font-bold">
+                <span className="shrink-0 font-mono font-bold text-[#C2E812]">
                   {attribution.gridTrades} executed
                 </span>
               </div>
@@ -524,7 +531,7 @@ export function PnlChart({
         </div>
 
         {/* Chart area */}
-        <div className="relative h-[300px] min-w-0">
+        <div className="relative h-[240px] min-w-0 sm:h-[300px]">
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0B0F0D]/50 backdrop-blur-sm z-20 rounded-3xl">
               <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
@@ -583,10 +590,10 @@ export function PnlChart({
         </div>
       </div>
 
-      <div className="flex items-center justify-between pt-8 border-t border-white/[0.03] relative z-10">
-        <div className="flex items-center gap-3">
+      <div className="relative z-10 flex flex-col gap-4 border-t border-white/[0.03] pt-6 sm:flex-row sm:items-center sm:justify-between sm:pt-8">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-[#C2E812] animate-pulse" />
-          <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.2em]">Real-time Telemetry Synchronization Active</span>
+          <span className="min-w-0 break-words text-[10px] font-mono font-bold uppercase tracking-[0.16em] text-[#484F58] sm:tracking-[0.2em]">Real-time Telemetry Synchronization Active</span>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">

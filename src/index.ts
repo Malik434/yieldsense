@@ -67,9 +67,10 @@ const CONFIG = {
   yieldChainId: process.env.YIELD_CHAIN_ID ? Number(process.env.YIELD_CHAIN_ID) : undefined,
   keeperAddress: (() => {
     const addr = process.env.KEEPER_ADDRESS?.trim();
-    // Testnet fallback: keeper uses attestedProcessors set — any attested TEE can harvest.
-    return addr ? getAddress(addr) : getAddress("0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF");
+    // Testnet fallback: keeper uses ExecutorRegistry role checks for processor authorization.
+    return addr ? getAddress(addr) : getAddress("0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792");
   })(),
+  executorRegistryAddress: process.env.EXECUTOR_REGISTRY_ADDRESS?.trim() || process.env.NEXT_PUBLIC_EXECUTOR_REGISTRY_ADDRESS?.trim() || "",
   /** Pool (and gauge) addresses for yield indexing — use real mainnet pool when `dataRpcUrl` is mainnet. */
   poolAddress: (() => {
     const addr = process.env.POOL_ADDRESS?.trim();
@@ -374,14 +375,22 @@ async function emitHardwareAddressReport(nowSec: number): Promise<void> {
   const hwAddress = ethers.getAddress(std.chains.ethereum.getAddress());
   emitOperationalLog("hw_address_report", {
     hwAddress,
-    note: "Attest and fund this exact address for production Acurast executions.",
+    note: "Fund this address and register it in ExecutorRegistry for production Acurast executions.",
   });
   await emitTelemetry({
     event: "hw_address_report",
     timestamp: nowSec,
     hwAddress,
-    note: "Attest this address on-chain via ownerAttestProcessor(hwAddress)",
+    note: "Register this address on-chain via ExecutorRegistry.registerProcessor(hwAddress, YIELD_EXECUTOR, ...)",
   });
+  await emitTelemetry({
+    event: "yield_processor_identity",
+    timestamp: nowSec,
+    processorAddress: hwAddress,
+    deploymentId: process.env.ACURAST_DEPLOYMENT_ID || (globalThis as any).__ENV__?.ACURAST_DEPLOYMENT_ID,
+    leaseEpoch: Number(process.env.YIELD_PROCESSOR_LEASE_EPOCH || (globalThis as any).__ENV__?.YIELD_PROCESSOR_LEASE_EPOCH || 0) || undefined,
+    healthy: true,
+  }, true);
 }
 
 async function emitProcessorChainDiagnostics(
@@ -391,22 +400,38 @@ async function emitProcessorChainDiagnostics(
   executionChainId: number,
   envUser: string | undefined
 ): Promise<void> {
-  const attestationContract = new ethers.Contract(
-    keeperAddress,
-    ["function attestedProcessors(address) view returns (bool)"],
-    provider
-  );
+  const registryAddress = CONFIG.executorRegistryAddress;
+  const registryContract = registryAddress
+    ? new ethers.Contract(
+      registryAddress,
+      [
+        "function YIELD_EXECUTOR() view returns (bytes32)",
+        "function isAuthorized(address processor, bytes32 role) view returns (bool)",
+      ],
+      provider
+    )
+    : null;
 
-  const [balanceResult, pendingNonceResult, latestNonceResult, attestationResult] = await Promise.allSettled([
+  const roleResult = registryContract
+    ? await Promise.allSettled([
+      withTimeout(registryContract.YIELD_EXECUTOR(), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "executorRegistry.YIELD_EXECUTOR"),
+    ])
+    : [];
+  const yieldRole = roleResult[0]?.status === "fulfilled" ? roleResult[0].value : null;
+
+  const [balanceResult, pendingNonceResult, latestNonceResult, authorizationResult] = await Promise.allSettled([
     withTimeout(provider.getBalance(processorAddress), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getBalance"),
     withTimeout(provider.getTransactionCount(processorAddress, "pending"), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getTransactionCount pending"),
     withTimeout(provider.getTransactionCount(processorAddress, "latest"), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "processor.getTransactionCount latest"),
-    withTimeout(attestationContract.attestedProcessors(processorAddress), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "keeper.attestedProcessors"),
+    registryContract && yieldRole
+      ? withTimeout(registryContract.isAuthorized(processorAddress, yieldRole), PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS, "executorRegistry.isAuthorized")
+      : Promise.resolve(false),
   ]);
 
   const diagnostics: Record<string, unknown> = {
     processorAddress,
     keeperAddress,
+    executorRegistryAddress: registryAddress || null,
     diagnosticTimeoutMs: PROCESSOR_CHAIN_DIAGNOSTIC_TIMEOUT_MS,
   };
 
@@ -429,10 +454,10 @@ async function emitProcessorChainDiagnostics(
     diagnostics.latestNonceError = sanitizeBroadcastError(latestNonceResult.reason);
   }
 
-  if (attestationResult.status === "fulfilled") {
-    diagnostics.processorAttested = Boolean(attestationResult.value);
+  if (authorizationResult.status === "fulfilled") {
+    diagnostics.processorAuthorized = Boolean(authorizationResult.value);
   } else {
-    diagnostics.attestationError = sanitizeBroadcastError(attestationResult.reason);
+    diagnostics.authorizationError = sanitizeBroadcastError(authorizationResult.reason);
   }
 
   emitOperationalLog("processor_chain_diagnostics", diagnostics);
@@ -1325,13 +1350,13 @@ async function runOnce(): Promise<number | undefined> {
     return;
   }
 
-  // When running locally with a plain private key (not Acurast hardware), the keeper
-  // contract will always revert because that address is not in attestedProcessors.
+  // When running locally with a plain private key, the keeper will reject the tx
+  // unless that address is registered as a yield executor in ExecutorRegistry.
   // DRY_RUN=true lets you validate the full pipeline locally without a real on-chain submit.
   if (!acurastStd && privateKey && !CONFIG.dryRun) {
     console.warn(
       "[index] ACURAST_WORKER_KEY is set but you are NOT running on Acurast hardware. " +
-      "The keeper contract will reject the tx (attestation check). " +
+      "The keeper contract will reject the tx (executor registry check). " +
       "Add DRY_RUN=true to .env to simulate locally without submitting on-chain."
     );
   }
@@ -1483,7 +1508,7 @@ async function runOnce(): Promise<number | undefined> {
           emitOperationalLog("paymaster_smart_account_report", {
             ...paymasterContext,
             smartAccountAddress,
-            note: "Attest this smartAccountAddress via ownerAttestProcessor before disabling PAYMASTER_DISCOVERY_ONLY.",
+            note: "Register this smartAccountAddress as YIELD_EXECUTOR in ExecutorRegistry before disabling PAYMASTER_DISCOVERY_ONLY.",
           });
           await emitTelemetry({
             event: "paymaster_smart_account_report",
@@ -1720,9 +1745,8 @@ async function runOnce(): Promise<number | undefined> {
       const wallet = privateKey ? new ethers.Wallet(privateKey, executionProvider) : null;
 
       // DRY_RUN: sign + validate the payload without touching the chain.
-      // Use this locally since ACURAST_WORKER_KEY is not attested in the keeper contract
-      // and any real tx will revert. The payload hash + signature are logged so you can
-      // verify them off-chain or manually call the contract once the key is attested.
+      // Use this locally unless ACURAST_WORKER_KEY is registered in ExecutorRegistry.
+      // The payload hash + signature are logged so you can verify them off-chain.
       if (CONFIG.dryRun) {
         await emitTelemetry({
           event: "harvest_dry_run",

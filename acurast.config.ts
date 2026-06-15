@@ -1,7 +1,14 @@
-type AssignmentStrategy = { type: "Single" | "RoundRobin" };
-type ExecutionConfig = { type: "interval"; intervalInMs: number; numberOfExecutions: number };
+type AssignmentStrategy = { type: "Single" | "Competing" };
+type ExecutionConfig = {
+  type: "interval";
+  intervalInMs: number;
+  numberOfExecutions: number;
+  maxExecutionTimeInMs: number;
+};
+type AcurastDeploymentRef = ["Acurast", string, number];
 
-const PROCESSOR_INTERVAL_MS = 60 * 60_000;
+const YIELD_PROCESSOR_INTERVAL_MS = 60 * 60_000;
+const GRID_PROCESSOR_INTERVAL_MS = 60_000;
 
 interface AcurastProjectConfig {
   projectName: string;
@@ -22,6 +29,9 @@ interface AcurastProjectConfig {
   maxCostPerExecution: number;
   includeEnvironmentVariables: string[];
   processorWhitelist: string[];
+  mutability: "Immutable" | "Mutable";
+  restartPolicy: "no" | "onFailure";
+  reuseKeysFrom: AcurastDeploymentRef | null;
 }
 
 interface AcurastConfig {
@@ -34,16 +44,17 @@ interface AcurastConfig {
  */
 const config: AcurastConfig = {
   projects: {
-    YieldSenseGridKeeper: {
-      projectName: "YieldSense",
+    YieldSenseYieldExecutor: {
+      projectName: "YieldSenseYieldExecutor",
       fileUrl: "dist/index.bundle.cjs",
       network: "mainnet",
       onlyAttestedDevices: true,
       assignmentStrategy: { type: "Single" },
       execution: {
         type: "interval",
-        intervalInMs: PROCESSOR_INTERVAL_MS,
+        intervalInMs: YIELD_PROCESSOR_INTERVAL_MS,
         numberOfExecutions: 8_760,
+        maxExecutionTimeInMs: 50_000,
       },
       maxAllowedStartDelayInMs: 30_000,
       usageLimit: {
@@ -57,6 +68,37 @@ const config: AcurastConfig = {
       maxCostPerExecution: 100_000_000_000,
       includeEnvironmentVariables: [],
       processorWhitelist: [],
+      mutability: "Mutable",
+      restartPolicy: "onFailure",
+      reuseKeysFrom: null,
+    },
+    YieldSenseGridExecutor: {
+      projectName: "YieldSenseGridExecutor",
+      fileUrl: "dist/processor.bundle.cjs",
+      network: "mainnet",
+      onlyAttestedDevices: true,
+      assignmentStrategy: { type: "Single" },
+      execution: {
+        type: "interval",
+        intervalInMs: GRID_PROCESSOR_INTERVAL_MS,
+        numberOfExecutions: 4_320,
+        maxExecutionTimeInMs: 50_000,
+      },
+      maxAllowedStartDelayInMs: 30_000,
+      usageLimit: {
+        maxMemory: 256_000_000,
+        maxNetworkRequests: 250,
+        maxStorage: 5_000_000,
+      },
+      numberOfReplicas: 1,
+      requiredModules: [],
+      minProcessorReputation: 0,
+      maxCostPerExecution: 100_000_000_000,
+      includeEnvironmentVariables: [],
+      processorWhitelist: [],
+      mutability: "Mutable",
+      restartPolicy: "onFailure",
+      reuseKeysFrom: null,
     },
   },
 };

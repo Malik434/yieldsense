@@ -6,7 +6,6 @@ import { useAccount, useDisconnect } from 'wagmi';
 import { Cpu, Shield, LogOut, Wallet } from 'lucide-react';
 import { ProofOfExecutionModal } from './ProofOfExecutionModal';
 import { WalletSelectionModal } from './WalletSelectionModal';
-import { NetworkToggle } from './NetworkToggle';
 import { useNetwork } from '@/providers/NetworkProvider';
 
 interface HeaderProps {
@@ -45,11 +44,11 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
   return (
     <>
       <header className="sticky top-0 z-50 w-full bg-[#030605]/80 backdrop-blur-xl border-b border-white/[0.03]">
-        <div className="max-w-7xl mx-auto px-6 h-24 flex items-center justify-between">
-          {/* Logo & Network */}
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-4">
-              <div className="relative w-11 h-11 overflow-hidden rounded-2xl border border-[#C2E812]/20 bg-[#C2E812]/5 shadow-lg shadow-[#C2E812]/10">
+        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:h-24 sm:px-6">
+          {/* Logo */}
+          <div className="flex min-w-0 items-center gap-4 sm:gap-8">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-2xl border border-[#C2E812]/20 bg-[#C2E812]/5 shadow-lg shadow-[#C2E812]/10 sm:h-11 sm:w-11">
                 <Image
                   src="/YieldSenseLogo.png"
                   alt="YieldSense"
@@ -59,24 +58,19 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
                   priority
                 />
               </div>
-              <div className="flex flex-col">
-                <span className="font-heading font-bold text-2xl text-[#F5F7FA] tracking-tight">YieldSense</span>
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate font-heading text-xl font-bold tracking-tight text-[#F5F7FA] sm:text-2xl">YieldSense</span>
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${config.name.includes('Mainnet') ? 'bg-[#C2E812]' : 'bg-[#00FFA3]'} animate-pulse`} />
-                  <span className="text-[10px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">{config.name}</span>
+                  <span className="truncate text-[9px] font-mono font-bold uppercase tracking-widest text-[#8B949E] sm:text-[10px]">{config.name}</span>
                 </div>
               </div>
             </div>
 
-            <div className="h-8 w-px bg-white/[0.08] mx-2 hidden md:block" />
-            
-            <div className="hidden md:block">
-              <NetworkToggle />
-            </div>
           </div>
 
           {/* Actions & Status */}
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <button
               onClick={() => setIsModalOpen(true)}
               className="hidden lg:flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-[#C2E812]/5 border border-[#C2E812]/10 hover:bg-[#C2E812]/10 hover:border-[#C2E812]/30 text-[#C2E812] transition-all group"
@@ -108,7 +102,7 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
             {/* Account */}
             <button
               onClick={handleWalletAction}
-              className="flex items-center gap-3 pl-2 group transition-all"
+              className="group flex items-center gap-2 pl-1 transition-all sm:gap-3 sm:pl-2"
             >
               <div className="flex flex-col items-end hidden sm:flex">
                 <span className={`text-xs font-heading font-bold transition-colors ${showConnectedWallet ? 'text-[#F5F7FA] group-hover:text-[#FF4466]' : 'text-[#C2E812]'}`}>
@@ -122,7 +116,7 @@ export function Header({ isHealthy = true, isWarning = false }: HeaderProps) {
                   )}
                 </span>
               </div>
-              <div className={`w-10 h-10 rounded-2xl p-[1px] transition-all duration-500 ${showConnectedWallet ? 'bg-gradient-to-br from-[#C2E812] to-[#00FFA3] group-hover:scale-105' : 'bg-white/10 group-hover:bg-[#C2E812]/20'}`}>
+              <div className={`h-10 w-10 rounded-2xl p-[1px] transition-all duration-500 ${showConnectedWallet ? 'bg-gradient-to-br from-[#C2E812] to-[#00FFA3] group-hover:scale-105' : 'bg-white/10 group-hover:bg-[#C2E812]/20'}`}>
                 <div className="w-full h-full rounded-2xl bg-[#030605] flex items-center justify-center overflow-hidden">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${showConnectedWallet ? 'bg-white/10 border border-white/10 text-[#F5F7FA]' : 'bg-[#C2E812]/10 text-[#C2E812]'}`}>
                     {showConnectedWallet && address ? address.slice(2, 3).toUpperCase() : <Wallet size={14} className={!showConnectedWallet ? 'animate-pulse' : ''} />}

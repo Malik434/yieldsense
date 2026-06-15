@@ -97,12 +97,17 @@ export async function POST(req: Request) {
     // ── Build per-user bundle ───────────────────────────────────────────────
     
     const keeperAddress = isMainnet 
-      ? (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.KEEPER_ADDRESS || '0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF')
+      ? (process.env.NEXT_PUBLIC_MAINNET_KEEPER_ADDRESS || process.env.KEEPER_ADDRESS || '0xEb7cac0570236D6A36DF7BcCF275Cb6681f84792')
       : (process.env.NEXT_PUBLIC_TESTNET_KEEPER_ADDRESS || process.env.NEXT_PUBLIC_KEEPER_ADDRESS || '');
 
     const rpcUrl = isMainnet
       ? (process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://mainnet.base.org')
       : (process.env.NEXT_PUBLIC_TESTNET_RPC_URL || 'https://sepolia.base.org');
+    const ethUsdcPricePool =
+      process.env.GRID_ETH_USDC_PRICE_POOL_ADDRESS ||
+      process.env.ETH_USDC_GRID_POOL_ADDRESS ||
+      process.env.UNISWAP_POOL_ADDRESS ||
+      '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59';
     
     const processorSecret = process.env.PROCESSOR_SHARED_SECRET?.trim();
     if (!processorSecret) {
@@ -124,7 +129,7 @@ export async function POST(req: Request) {
       `  e.DATA_RPC_URL=${JSON.stringify(isMainnet ? 'https://mainnet.base.org' : (process.env.DATA_RPC_URL ?? 'https://mainnet.base.org'))};`,
       `  e.POOL_ADDRESS=${JSON.stringify(isMainnet ? '0x6cDcb1C4A4D1C3C6d054b27AC5B77e89eAFb971d' : (process.env.NEXT_PUBLIC_TESTNET_POOL_ADDRESS ?? ''))};`,
       `  e.GAUGE_ADDRESS=${JSON.stringify(isMainnet ? '0x4F09bAb2f0E15e2A078A227FE1537665F55b8360' : (process.env.NEXT_PUBLIC_TESTNET_GAUGE_ADDRESS ?? ''))};`,
-      `  e.UNISWAP_POOL_ADDRESS=${JSON.stringify(process.env.UNISWAP_POOL_ADDRESS ?? '0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59')};`,
+      `  e.UNISWAP_POOL_ADDRESS=${JSON.stringify(ethUsdcPricePool)};`,
       `  e.FORCE_TEST_HARVEST=${JSON.stringify(isMainnet ? 'false' : 'true')};`,
       `  e.FRONTEND_URL=${JSON.stringify(process.env.FRONTEND_URL ?? 'https://yieldsense.huzaifamalik.tech')};`,
       `  e.GRID_CONFIG_JSON=${JSON.stringify(process.env.GRID_CONFIG_JSON ?? 'W3siaWQiOiJnMSIsInJlZmVyZW5jZVByaWNlIjoxLjAsInRyaWdnZXJQZXJjZW50IjowLjAsImFsbG9jYXRpb25CcHMiOjUwMH1d')};`,

@@ -96,6 +96,8 @@ export function TestingSuite() {
   const { config } = useNetwork();
   const isTestnet = chainId === baseSepolia.id;
   const [logs, setLogs] = useState<HardwareLog[]>([]);
+  const [telemetryStatus, setTelemetryStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [telemetryError, setTelemetryError] = useState('');
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -105,13 +107,27 @@ export function TestingSuite() {
   const fetchLogs = useCallback(async () => {
     try {
       const res = await fetch(`/api/state?userAddress=${OPERATOR_ADDRESS}&chainId=${chainId}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setTelemetryStatus('error');
+        setTelemetryError(`Telemetry API returned ${res.status}`);
+        return;
+      }
 
       const data: { logs?: TelemetryLog[] } = await res.json();
       if (Array.isArray(data.logs)) {
-        setLogs(data.logs.map(mapTelemetryLog).reverse());
+        const mapped = data.logs.map(mapTelemetryLog).reverse();
+        setLogs(mapped);
+        setTelemetryStatus(mapped.length > 0 ? 'ready' : 'empty');
+        setTelemetryError('');
+      } else {
+        setLogs([]);
+        setTelemetryStatus('empty');
+        setTelemetryError('');
       }
-    } catch { }
+    } catch (error) {
+      setTelemetryStatus('error');
+      setTelemetryError(error instanceof Error ? error.message : 'Telemetry fetch failed');
+    }
   }, [chainId]);
 
   useEffect(() => {
@@ -262,8 +278,25 @@ export function TestingSuite() {
                   className="flex-1 space-y-3 overflow-y-auto p-4 font-mono text-[10px] sm:p-6 sm:text-[11px]"
                 >
                   {logs.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-center text-[#484F58] animate-pulse uppercase tracking-[0.3em]">
-                      Initializing secure channel...
+                    <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-[#484F58] uppercase tracking-[0.24em]">
+                      <span className={telemetryStatus === 'loading' ? 'animate-pulse' : ''}>
+                        {telemetryStatus === 'loading'
+                          ? 'Initializing secure channel...'
+                          : telemetryStatus === 'error'
+                            ? 'Telemetry stream unavailable'
+                            : 'No processor telemetry received yet'}
+                      </span>
+                      {telemetryError && (
+                        <span className="max-w-sm text-[9px] leading-relaxed text-[#FF4466] tracking-[0.16em]">
+                          {telemetryError}
+                        </span>
+                      )}
+                      <button
+                        onClick={fetchLogs}
+                        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-[9px] font-bold text-[#8B949E] transition-colors hover:text-[#C2E812]"
+                      >
+                        Refresh Telemetry
+                      </button>
                     </div>
                   ) : (
                     logs.map((log, i) => (

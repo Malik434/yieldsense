@@ -9,13 +9,14 @@ const FACTORY_ADDRESS = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da";
 const DEPLOYER_ADDRESS = "0x1Aa137C177a58D98d24d143b3533043b419479DD";
 const KEEPER_ADDR      = "0x757d30F22692Bf81aE3E3feb0F8FB7cAD48F7CEF";
 const AUTOCOMPOUNDER_ADDR = "0x8654862B4FaB12aC09843cc1b644E6dA5aa6DC4A";
+const EXECUTOR_REGISTRY_ADDR = "0x0000000000000000000000000000000000000000";
 
 const abiAutocompounder = [
   "constructor(address,address,address,address,address,address,address)"
 ];
 
 const abiKeeper = [
-  "constructor(address,address,address,address)"
+  "constructor(address,address,address,address,address)"
 ];
 
 const ifaceAuto = new ethers.Interface(abiAutocompounder);
@@ -34,7 +35,8 @@ const argsKeeper = ifaceKeeper.encodeDeploy([
   USDC_ADDRESS,
   AERO_ADDRESS,
   DEPLOYER_ADDRESS,
-  AUTOCOMPOUNDER_ADDR
+  AUTOCOMPOUNDER_ADDR,
+  EXECUTOR_REGISTRY_ADDR
 ]);
 
 console.log("Autocompounder Args:");

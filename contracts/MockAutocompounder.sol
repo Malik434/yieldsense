@@ -31,6 +31,7 @@ contract MockAutocompounder is Ownable {
     uint256 public pendingProfit;
     uint256 public lastHarvestAt;
     uint256 public totalCompounded;
+    uint256 public reportedDeployedValue;
 
     // ── Stub view returns for interface compliance ────────────────────────────
     address public pool     = address(0xB00B5);  // dummy — overridden in tests that need it
@@ -71,6 +72,11 @@ contract MockAutocompounder is Ownable {
         factory = factory_;
     }
 
+    /// @notice Test-only override for deployed value accounting.
+    function setReportedDeployedValue(uint256 value) external onlyOwner {
+        reportedDeployedValue = value;
+    }
+
     function harvestAndCompound(
         uint256 /*minLpOut*/,
         uint256 /*amountToSwap*/,
@@ -104,15 +110,21 @@ contract MockAutocompounder is Ownable {
 
     function unwindLp(uint256 lpAmount) external onlyKeeper returns (uint256 usdcUnwound) {
         asset.safeTransfer(msg.sender, lpAmount);
+        if (reportedDeployedValue > 0) {
+            reportedDeployedValue = asset.balanceOf(address(this));
+        }
         return lpAmount;
     }
 
     function getDeployedValueInUSDC() external view returns (uint256) {
+        if (reportedDeployedValue != 0) return reportedDeployedValue;
         return asset.balanceOf(address(this));
     }
 
     function pendingRewards() external pure returns (uint256) { return 0; }
-    function stakedLpBalance() external pure returns (uint256) { return 0; }
+    function stakedLpBalance() external view returns (uint256) {
+        return asset.balanceOf(address(this));
+    }
 
     /// @notice Seed the mock with USDC to simulate earned rewards.
     function seed(uint256 amount) external {
