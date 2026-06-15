@@ -542,6 +542,32 @@ function toChainStateSnapshot(snapshot: any): ChainStateSnapshot {
   };
 }
 
+function requiredInventoryForLiveGridTrade(
+  config: LiveGridStrategyConfig,
+  side: GridSide,
+  currentPrice: number
+): { tokenSide: "quote" | "base"; required: bigint; availableField: "quoteBalance" | "baseBalance" } {
+  const quoteDecimals = config.quoteDecimals ?? 6;
+  const baseDecimals = config.baseDecimals ?? 18;
+
+  if (side === "buy") {
+    return {
+      tokenSide: "quote",
+      required: ethers.parseUnits(config.tradeSizeQuote, quoteDecimals),
+      availableField: "quoteBalance",
+    };
+  }
+
+  return {
+    tokenSide: "base",
+    required: ethers.parseUnits(
+      (Number(config.tradeSizeQuote) / Math.max(currentPrice, 0.0000001)).toFixed(Math.min(baseDecimals, 12)),
+      baseDecimals
+    ),
+    availableField: "baseBalance",
+  };
+}
+
 function calculateGridLevel(config: LiveGridStrategyConfig, price: number): number {
   if (config.gridCount <= 0 || config.upperPrice <= config.lowerPrice) return 0;
   if (price <= config.lowerPrice) return 0;
@@ -751,6 +777,17 @@ async function monitorAndExecuteLiveGrid(): Promise<void> {
   for (const config of strategies) {
     const strategy = await manager.getStrategy(config.strategyId);
     if (Number(strategy.status) !== 2) continue;
+    if (String(strategy.pairId).toLowerCase() !== config.pairId.toLowerCase()) {
+      await emitTelemetry({
+        event: "grid_live_check_skipped",
+        timestamp: nowSeconds(),
+        reason: "strategy_pair_mismatch",
+        strategyId: config.strategyId,
+        expectedPairId: String(strategy.pairId),
+        configuredPairId: config.pairId,
+      });
+      continue;
+    }
 
     const poolAddress = config.poolAddress ?? process.env.GRID_POOL_ADDRESS ?? process.env.POOL_ADDRESS ?? "";
     if (!poolAddress) continue;
@@ -763,6 +800,25 @@ async function monitorAndExecuteLiveGrid(): Promise<void> {
     if (nextGridLevel === currentGridLevel) continue;
 
     const side: GridSide = nextGridLevel < currentGridLevel ? "buy" : "sell";
+    const inventory = requiredInventoryForLiveGridTrade(config, side, currentPrice);
+    const availableInventory = BigInt(snapshot[inventory.availableField]);
+    if (availableInventory < inventory.required) {
+      await emitTelemetry({
+        event: "grid_live_check_skipped",
+        timestamp: nowSeconds(),
+        reason: "insufficient_strategy_inventory",
+        strategyId: config.strategyId,
+        side,
+        tokenSide: inventory.tokenSide,
+        required: inventory.required.toString(),
+        available: availableInventory.toString(),
+        currentPrice,
+        currentGridLevel,
+        nextGridLevel,
+      });
+      continue;
+    }
+
     const intervalWindow = deriveIntervalWindow(Date.now(), config.executionIntervalSec);
     const idempotencyKey = buildExecutionIdempotencyKey({
       strategyId: config.strategyId,

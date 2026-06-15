@@ -394,14 +394,15 @@ export function GridTradingDashboard() {
     const strategyPair = strategyPairId
       ? pairs.find((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase())
       : undefined;
-    return selectedPairMatch ?? strategyPair ?? pairs[0];
+    return strategyPair ?? selectedPairMatch ?? pairs[0];
   }, [pairs, selectedPairId, strategyPairId]);
-  const quoteToken = selectedPair?.quoteToken || config.asset;
-  const baseToken = selectedPair?.baseToken;
+  const quoteToken = selectedPair?.quoteToken || strategy?.quoteToken || config.asset;
+  const baseToken = selectedPair?.baseToken || strategy?.baseToken;
   const quoteSymbol = selectedPair?.quoteSymbol || 'USDC';
   const baseSymbol = selectedPair?.baseSymbol || 'Base';
   const baseDecimals = selectedPair?.baseDecimals || 18;
-  const pairId = selectedPair?.pairId || keccak256(stringToBytes('AERO-USDC'));
+  const pairId = strategyPairId || selectedPair?.pairId || keccak256(stringToBytes('AERO-USDC'));
+  const pairLockedToStrategy = Boolean(strategyPairId);
   const contractsReady = isConfigured(gridVault) && isConfigured(strategyManager) && isConfigured(quoteToken);
   const { data: pairPrice } = useQuery({
     queryKey: ['grid-pair-price', chainId, selectedPair?.pairId, selectedPair?.poolAddress, selectedPair?.pricePoolAddress],
@@ -532,6 +533,10 @@ export function GridTradingDashboard() {
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [pairMenuOpen]);
 
+  useEffect(() => {
+    if (pairLockedToStrategy) setPairMenuOpen(false);
+  }, [pairLockedToStrategy]);
+
   const runTx = async (label: string, action: () => Promise<unknown>) => {
     setBusyLabel(label);
     setError('');
@@ -556,6 +561,15 @@ export function GridTradingDashboard() {
     }
     setStrategyId(nextId);
     if (address) localStorage.setItem(`ys_grid_strategy_${address}_${chainId}`, nextId);
+  };
+
+  const handleNewStrategy = () => {
+    setError('');
+    setStrategyId('');
+    setImportStrategyId('');
+    setAllocationAmount('');
+    setGasReserveAmount('');
+    if (address) localStorage.removeItem(`ys_grid_strategy_${address}_${chainId}`);
   };
 
   const handleApprove = () =>
@@ -761,6 +775,8 @@ export function GridTradingDashboard() {
   const totalAllocationRaw =
     allocationRaw !== null && gasReserveRaw !== null ? allocationRaw + gasReserveRaw : null;
   const strategyAllocatedQuoteRaw = (strategy?.allocatedQuote as bigint | undefined) ?? BigInt(0);
+  const strategyQuoteBalanceRaw = (strategy?.quoteBalance as bigint | undefined) ?? BigInt(0);
+  const strategyBaseBalanceRaw = (strategy?.baseBalance as bigint | undefined) ?? BigInt(0);
   const strategyGasReserveRaw = (strategy?.gasReserveQuote as bigint | undefined) ?? BigInt(0);
   const nextGasReserveRaw =
     gasReserveRaw !== null && (currentStatus === 'Draft' || currentStatus === 'Funded')
@@ -863,6 +879,10 @@ export function GridTradingDashboard() {
   const createStrategyError =
     negativeStrategyField
       ? 'Grid strategy values cannot be negative.'
+      : pairLockedToStrategy
+        ? 'Loaded strategies keep their original trading pair. Clear or load a different strategy before creating a new one.'
+      : !selectedPair
+        ? 'Select a trading pair before creating a strategy.'
       : !onchainPairEnabled
         ? `${selectedPair?.label || 'Selected pair'} is not enabled on-chain yet.`
         : '';
@@ -888,6 +908,22 @@ export function GridTradingDashboard() {
   const hasGridCapital = freeQuoteRaw > BigInt(0) || Boolean(strategy);
   const hasGridStrategy = Boolean(strategyId);
   const isGridLive = currentStatus === 'Active';
+  const strategySummaryRows = strategy
+    ? [
+        ['Strategy ID', short(strategyId)],
+        ['Pair', selectedPair?.label || short(strategyPairId)],
+        ['Status', currentStatus],
+        ['Owner', short(strategyOwner)],
+        ['Quote', `${Number(formatUnits(strategyQuoteBalanceRaw, quoteDecimals)).toFixed(2)} ${quoteSymbol}`],
+        ['Base', `${Number(formatUnits(strategyBaseBalanceRaw, baseDecimals)).toFixed(4)} ${baseSymbol}`],
+        ['Gas', `${Number(formatUnits(strategyGasReserveRaw, quoteDecimals)).toFixed(2)} ${quoteSymbol}`],
+        ['Grid Level', String(strategy.currentGridLevel)],
+      ]
+    : [];
+  const activeStrategyInventoryWarning =
+    strategy && currentStatus === 'Active' && strategyBaseBalanceRaw === BigInt(0) && Number(strategy.currentGridLevel) === 0
+      ? `This active strategy has no ${baseSymbol} inventory. If current price is above the first grid level, the processor will skip sells until the strategy is bootstrapped.`
+      : '';
 
   return (
     <div className="ys-card flex flex-col gap-6 p-4 sm:gap-8 sm:p-8">
@@ -903,7 +939,7 @@ export function GridTradingDashboard() {
               <h3 className="min-w-0 break-words text-xl font-heading font-bold text-[#F5F7FA] sm:text-2xl">{selectedPair?.label || 'Grid'} Trading</h3>
             </div>
             <p className="mt-2 max-w-2xl text-[11px] font-mono uppercase leading-relaxed tracking-[0.1em] text-[#8B949E] sm:text-xs sm:tracking-[0.16em]">
-              Deposit USDC, choose a pair, set your price range, then enable automation.
+              Choose a pair for the strategy, fund the vault, allocate capital, then enable automation.
             </p>
           </div>
         </div>
@@ -950,13 +986,13 @@ export function GridTradingDashboard() {
 
       <div className="grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest md:grid-cols-3">
         {[
-          ['1', 'Deposit', hasGridCapital ? 'Ready' : `Add ${quoteSymbol}`],
-          ['2', 'Set range', hasGridStrategy ? 'Ready' : 'Create strategy'],
+          ['1', 'Set pair', selectedPair ? selectedPair.label : 'Select pair'],
+          ['2', 'Fund', hasGridCapital ? 'Ready' : `Add ${quoteSymbol}`],
           ['3', 'Enable', isGridLive ? 'Running' : 'Start when ready'],
         ].map(([step, label, value]) => {
           const active =
-            (step === '1' && hasGridCapital) ||
-            (step === '2' && hasGridStrategy) ||
+            (step === '1' && Boolean(selectedPair)) ||
+            (step === '2' && hasGridCapital) ||
             (step === '3' && isGridLive);
           return (
             <div
@@ -985,92 +1021,9 @@ export function GridTradingDashboard() {
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <div className="mb-5 flex items-center gap-3">
             <Wallet size={17} className="text-[#C2E812]" />
-            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Capital</h4>
+            <h4 className="font-heading text-base font-bold text-[#F5F7FA]">Vault Funding</h4>
           </div>
           <div className="space-y-4">
-            <label className="flex flex-col gap-2">
-              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Pair</span>
-              <div ref={pairMenuRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setPairMenuOpen((open) => !open)}
-                  className={`flex h-12 w-full items-center justify-between rounded-xl border px-4 text-left transition-all ${
-                    pairMenuOpen
-                      ? 'border-[#C2E812]/50 bg-[#C2E812]/[0.04] shadow-[0_0_0_1px_rgba(194,232,18,0.12)]'
-                      : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.06]'
-                  }`}
-                  aria-expanded={pairMenuOpen}
-                  aria-haspopup="listbox"
-                >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <PairLogos pair={selectedPair} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
-                        {selectedPair?.label || 'Select Pair'}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
-                        {formatDisplayPrice(spotPrice, quoteSymbol)} per {baseSymbol}
-                      </span>
-                    </span>
-                  </span>
-                  <ChevronDown
-                    size={16}
-                    className={`shrink-0 text-[#8B949E] transition-transform ${pairMenuOpen ? 'rotate-180 text-[#C2E812]' : ''}`}
-                  />
-                </button>
-
-                {pairMenuOpen && (
-                  <div
-                    role="listbox"
-                    className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#070B0E] p-2 shadow-2xl shadow-black/40 ring-1 ring-[#C2E812]/10"
-                  >
-                    {pairs.length === 0 ? (
-                      <div className="rounded-lg px-3 py-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                        No pairs configured
-                      </div>
-                    ) : (
-                      pairs.map((pair) => {
-                        const active = pair.pairId === selectedPair?.pairId;
-                        return (
-                          <button
-                            key={pair.pairId}
-                            type="button"
-                            role="option"
-                            aria-selected={active}
-                            onClick={() => {
-                              setSelectedPairId(pair.pairId);
-                              setPairMenuOpen(false);
-                            }}
-                            className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left transition-all ${
-                              active
-                                ? 'border border-[#C2E812]/20 bg-[#C2E812]/10 text-[#F5F7FA]'
-                                : 'border border-transparent text-[#8B949E] hover:border-white/10 hover:bg-white/[0.05] hover:text-[#F5F7FA]'
-                            }`}
-                          >
-                            <span className="flex min-w-0 items-center gap-3">
-                              <PairLogos pair={pair} size="sm" />
-                              <span className="min-w-0">
-                                <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
-                                <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
-                                  Base {pair.baseSymbol} | Quote {pair.quoteSymbol}
-                                </span>
-                                {active ? (
-                                  <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
-                                    {formatDisplayPrice(spotPrice, pair.quoteSymbol)} per {pair.baseSymbol}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </span>
-                            {active && <Check size={15} className="shrink-0 text-[#C2E812]" />}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-              </div>
-            </label>
-
             <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3">
               <div className="grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-2">
                 <div className="min-w-0">
@@ -1189,11 +1142,11 @@ export function GridTradingDashboard() {
           <div className="mt-5 grid grid-cols-1 gap-3 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-2">
             <div>
               <p className="text-[#484F58]">Quote</p>
-              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.quoteBalance, quoteDecimals)).toFixed(2) : '0.00'}</p>
+              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategyQuoteBalanceRaw, quoteDecimals)).toFixed(2) : '0.00'}</p>
             </div>
             <div>
               <p className="text-[#484F58]">Base</p>
-              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategy.baseBalance, selectedPair?.baseDecimals || 18)).toFixed(4) : '0.0000'}</p>
+              <p className="mt-2 break-words text-[#F5F7FA]">{strategy ? Number(formatUnits(strategyBaseBalanceRaw, selectedPair?.baseDecimals || 18)).toFixed(4) : '0.0000'}</p>
             </div>
             <div>
               <p className="text-[#484F58]">Gas Reserve</p>
@@ -1218,6 +1171,95 @@ export function GridTradingDashboard() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4 sm:p-5">
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Grid Setup</h4>
+          <label className="mb-5 flex flex-col gap-2">
+            <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Pair</span>
+            <div ref={pairMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!pairLockedToStrategy) setPairMenuOpen((open) => !open);
+                }}
+                disabled={pairLockedToStrategy}
+                className={`flex h-12 w-full items-center justify-between rounded-xl border px-4 text-left transition-all disabled:cursor-not-allowed ${
+                  pairLockedToStrategy
+                    ? 'border-white/10 bg-black/20 opacity-80'
+                    : pairMenuOpen
+                      ? 'border-[#C2E812]/50 bg-[#C2E812]/[0.04] shadow-[0_0_0_1px_rgba(194,232,18,0.12)]'
+                      : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.06]'
+                }`}
+                aria-expanded={pairMenuOpen}
+                aria-haspopup="listbox"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <PairLogos pair={selectedPair} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
+                      {selectedPair?.label || 'Select Pair'}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                      {pairLockedToStrategy ? 'Locked to loaded strategy' : `${formatDisplayPrice(spotPrice, quoteSymbol)} per ${baseSymbol}`}
+                    </span>
+                  </span>
+                </span>
+                <ChevronDown
+                  size={16}
+                  className={`shrink-0 text-[#8B949E] transition-transform ${
+                    pairMenuOpen && !pairLockedToStrategy ? 'rotate-180 text-[#C2E812]' : ''
+                  }`}
+                />
+              </button>
+
+              {pairMenuOpen && !pairLockedToStrategy && (
+                <div
+                  role="listbox"
+                  className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#070B0E] p-2 shadow-2xl shadow-black/40 ring-1 ring-[#C2E812]/10"
+                >
+                  {pairs.length === 0 ? (
+                    <div className="rounded-lg px-3 py-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                      No pairs configured
+                    </div>
+                  ) : (
+                    pairs.map((pair) => {
+                      const active = pair.pairId === selectedPair?.pairId;
+                      return (
+                        <button
+                          key={pair.pairId}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          onClick={() => {
+                            setSelectedPairId(pair.pairId);
+                            setPairMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-left transition-all ${
+                            active
+                              ? 'border border-[#C2E812]/20 bg-[#C2E812]/10 text-[#F5F7FA]'
+                              : 'border border-transparent text-[#8B949E] hover:border-white/10 hover:bg-white/[0.05] hover:text-[#F5F7FA]'
+                          }`}
+                        >
+                          <span className="flex min-w-0 items-center gap-3">
+                            <PairLogos pair={pair} size="sm" />
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest">{pair.label}</span>
+                              <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                                Base {pair.baseSymbol} | Quote {pair.quoteSymbol}
+                              </span>
+                              {active ? (
+                                <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                                  {formatDisplayPrice(spotPrice, pair.quoteSymbol)} per {pair.baseSymbol}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                          {active ? <Check size={15} className="shrink-0 text-[#C2E812]" /> : null}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          </label>
           <p className="mb-5 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
             Price limits are {baseSymbol} price quoted in {quoteSymbol}. Current pool price: {formatDisplayPrice(spotPrice, quoteSymbol)}.
           </p>
@@ -1331,11 +1373,58 @@ export function GridTradingDashboard() {
                 placeholder="0x..."
               />
             </label>
-            <button className="ys-btn-secondary mt-3 h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
-              Load Strategy ID
-            </button>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
+                Load Strategy ID
+              </button>
+              <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel) || !strategyId} onClick={handleNewStrategy}>
+                New Strategy
+              </button>
+            </div>
             </div>
           </details>
+
+          {strategy ? (
+            <div className="mb-5 rounded-xl border border-[#C2E812]/20 bg-[#C2E812]/[0.04] p-4">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">Loaded Strategy</p>
+                  <p className="mt-1 truncate font-mono text-xs font-bold text-[#F5F7FA]">{strategyId}</p>
+                </div>
+                <span
+                  className={`w-fit rounded-lg px-3 py-1 text-[10px] font-mono font-bold uppercase tracking-widest ${
+                    currentStatus === 'Active'
+                      ? 'bg-[#00FFA3]/10 text-[#00FFA3]'
+                      : currentStatus === 'Paused' || currentStatus === 'GasPaused'
+                        ? 'bg-amber-300/10 text-amber-200'
+                        : 'bg-white/10 text-[#8B949E]'
+                  }`}
+                >
+                  {currentStatus}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold uppercase tracking-widest sm:grid-cols-4">
+                {strategySummaryRows.map(([label, value]) => (
+                  <div key={label} className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
+                    <p className="text-[#484F58]">{label}</p>
+                    <p className="mt-1 truncate text-[#F5F7FA]" title={value}>
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {activeStrategyInventoryWarning ? (
+                <div className="mt-3 rounded-lg border border-amber-300/15 bg-amber-300/[0.05] p-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-200">
+                  {activeStrategyInventoryWarning}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4 text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E]">
+              No strategy loaded. Create a strategy in Grid Setup or load an existing strategy id.
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-2">
               <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Trading Capital</span>
