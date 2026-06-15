@@ -1,8 +1,8 @@
 {
   "previousApr": 0.1,
   "apiFailureStreak": 0,
-  "lastDecisionReason": "executed",
-  "lastRunAt": 1778542165,
+  "lastDecisionReason": "run_started",
+  "lastRunAt": 1781500475,
   "lastExecutionAt": 1778542165,
   "suggestedNextCheckMs": 60000,
   "yieldIndexerCheckpointBlock": null,

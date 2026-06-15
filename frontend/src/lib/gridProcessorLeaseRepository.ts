@@ -3,7 +3,7 @@ import {
   type GridProcessorLease,
 } from './gridProcessorLease';
 import { eq } from 'drizzle-orm';
-import { db, gridProcessorLeases } from '../../../db';
+import { db, gridProcessorLeases } from '@/db';
 
 const globalForLeaseRepo = globalThis as typeof globalThis & {
   __yieldsenseGridProcessorLeases?: Map<string, GridProcessorLease>;

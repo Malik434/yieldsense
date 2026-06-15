@@ -1,6 +1,6 @@
 import { gridStore, type StoredGridStrategy } from './gridStore';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { db, gridStrategies, type GridStrategyRow } from '../../../db';
+import { db, gridStrategies, type GridStrategyRow } from '@/db';
 
 const globalForGridStrategyRepo = globalThis as typeof globalThis & {
   __yieldsenseGridStrategyCollections?: Map<number, StoredGridStrategy[]>;

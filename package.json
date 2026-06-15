@@ -20,7 +20,7 @@
     "upgrade:grid": "npx hardhat run scripts/upgradeGridMainnet.cjs --network baseMainnet",
     "enable:grid:acu": "npx hardhat run scripts/enableGridAcuMainnet.cjs --network baseMainnet",
     "dev": "node --env-file=.env dist/index.bundle.cjs",
-    "dev:processor": "node --env-file=.env dist/processor.bundle.cjs",
+    "dev:processor": "node --env-file=.env scripts/runProcessor.cjs",
     "rpc:relay": "node scripts/rpcRelay.cjs",
     "print:acurast-env": "node scripts/printAcurastConfigEnv.cjs",
     "verify:lp": "node scripts/verifyLpPosition.cjs"

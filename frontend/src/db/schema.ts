@@ -9,7 +9,7 @@ import {
   text,
   timestamp,
 } from 'drizzle-orm/pg-core';
-import type { GridProcessorLease } from '../frontend/src/lib/gridProcessorLease';
+import type { GridProcessorLease } from '@/lib/gridProcessorLease';
 
 export const gridStrategies = pgTable(
   'grid_strategies',
