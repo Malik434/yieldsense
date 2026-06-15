@@ -25,7 +25,7 @@ import {
   GRID_VAULT_ABI,
 } from '@/lib/contracts';
 import type { ExecutionJob, HexAddress } from '@/lib/gridTypes';
-import type { GridPairConfig } from '@/lib/gridStore';
+import type { GridPairConfig, StoredGridStrategy } from '@/lib/gridStore';
 
 type StrategyForm = {
   lowerPrice: string;
@@ -82,6 +82,10 @@ type PairConfig = readonly [
 
 type GridPairsResponse = {
   pairs?: GridPairConfig[];
+};
+
+type GridStrategiesResponse = {
+  strategies?: StoredGridStrategy[];
 };
 
 type ExecutionQueueResponse = {
@@ -163,6 +167,13 @@ function isConfigured(value: string | undefined): value is HexAddress {
 function short(value?: string) {
   if (!value) return 'Not set';
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function displayStrategyStatus(status: StoredGridStrategy['status']) {
+  return status
+    .split('_')
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function isStrategyId(value: string) {
@@ -314,6 +325,14 @@ async function fetchGridPairs(chainId: number) {
   return Array.isArray(body.pairs) ? body.pairs : [];
 }
 
+async function fetchWalletStrategies(owner: string | undefined, chainId: number) {
+  if (!owner) return [];
+  const res = await fetch(`/api/grid/strategies?owner=${owner}&chainId=${chainId}`);
+  if (!res.ok) throw new Error(`Failed to load grid strategies: ${res.status}`);
+  const body = (await res.json()) as GridStrategiesResponse;
+  return Array.isArray(body.strategies) ? body.strategies : [];
+}
+
 async function fetchExecutionQueue(strategyId: string) {
   if (!strategyId) return [];
   const res = await fetch(`/api/grid/execution-queue?strategyId=${strategyId}`);
@@ -378,6 +397,20 @@ export function GridTradingDashboard() {
     queryKey: ['grid-pairs', chainId],
     queryFn: () => fetchGridPairs(chainId),
   });
+  const normalizedAddress = address?.toLowerCase();
+  const { data: walletStrategies = [], refetch: refetchWalletStrategies } = useQuery({
+    queryKey: ['grid-strategies', normalizedAddress, chainId],
+    queryFn: () => fetchWalletStrategies(normalizedAddress, chainId),
+    enabled: Boolean(normalizedAddress),
+  });
+  const visibleWalletStrategies = useMemo(
+    () => walletStrategies.filter((strategy) => strategy.status !== 'closed' && strategy.status !== 'archived'),
+    [walletStrategies],
+  );
+  const pairById = useMemo(
+    () => new Map(pairs.map((pair) => [pair.pairId.toLowerCase(), pair])),
+    [pairs],
+  );
 
   const { data: strategyRaw, refetch: refetchStrategy } = useReadContract({
     address: strategyManager,
@@ -392,10 +425,10 @@ export function GridTradingDashboard() {
   const selectedPair = useMemo(() => {
     const selectedPairMatch = pairs.find((pair) => pair.pairId === selectedPairId);
     const strategyPair = strategyPairId
-      ? pairs.find((pair) => pair.pairId.toLowerCase() === strategyPairId.toLowerCase())
+      ? pairById.get(strategyPairId.toLowerCase())
       : undefined;
     return strategyPair ?? selectedPairMatch ?? pairs[0];
-  }, [pairs, selectedPairId, strategyPairId]);
+  }, [pairById, pairs, selectedPairId, strategyPairId]);
   const quoteToken = selectedPair?.quoteToken || strategy?.quoteToken || config.asset;
   const baseToken = selectedPair?.baseToken || strategy?.baseToken;
   const quoteSymbol = selectedPair?.quoteSymbol || 'USDC';
@@ -498,6 +531,7 @@ export function GridTradingDashboard() {
       refetchStrategy(),
       refetchPairConfig(),
       refetchTestingGasSubsidyMode(),
+      refetchWalletStrategies(),
     ]);
   }, [
     refetchAllowance,
@@ -507,6 +541,7 @@ export function GridTradingDashboard() {
     refetchStrategy,
     refetchTestingGasSubsidyMode,
     refetchTokenBalance,
+    refetchWalletStrategies,
   ]);
 
   const { data: queueJobs = [], refetch: refetchQueue } = useQuery({
@@ -560,6 +595,13 @@ export function GridTradingDashboard() {
       return;
     }
     setStrategyId(nextId);
+    if (address) localStorage.setItem(`ys_grid_strategy_${address}_${chainId}`, nextId);
+  };
+
+  const handleSelectWalletStrategy = (nextId: string) => {
+    setError('');
+    setStrategyId(nextId);
+    setImportStrategyId(nextId);
     if (address) localStorage.setItem(`ys_grid_strategy_${address}_${chainId}`, nextId);
   };
 
@@ -1361,26 +1403,73 @@ export function GridTradingDashboard() {
           <h4 className="mb-5 font-heading text-base font-bold text-[#F5F7FA]">Start & Manage</h4>
           <details className="mb-5 rounded-xl border border-white/10 bg-black/20 p-4">
             <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
-              Load existing strategy
+              Select wallet strategy
             </summary>
-            <div className="mt-4">
-            <label className="flex flex-col gap-2">
-              <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Load On-chain Strategy</span>
-              <input
-                value={importStrategyId}
-                onChange={(event) => setImportStrategyId(event.target.value)}
-                className="ys-input w-full font-mono text-xs"
-                placeholder="0x..."
-              />
-            </label>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
-                Load Strategy ID
-              </button>
-              <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel) || !strategyId} onClick={handleNewStrategy}>
-                New Strategy
-              </button>
-            </div>
+            <div className="mt-4 space-y-3">
+              {visibleWalletStrategies.length === 0 ? (
+                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                  No open strategies for this wallet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {visibleWalletStrategies.map((item) => {
+                    const active = item.strategyId.toLowerCase() === strategyId.toLowerCase();
+                    const itemPair = pairById.get(item.pairId.toLowerCase());
+                    return (
+                      <button
+                        key={item.strategyId}
+                        type="button"
+                        onClick={() => handleSelectWalletStrategy(item.strategyId)}
+                        disabled={Boolean(busyLabel)}
+                        className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                          active
+                            ? 'border-[#C2E812]/30 bg-[#C2E812]/10'
+                            : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-mono font-bold uppercase tracking-widest text-[#F5F7FA]">
+                            {itemPair?.label || short(item.pairId)}
+                          </span>
+                          <span className="mt-1 block truncate text-[10px] font-mono font-bold uppercase tracking-widest text-[#484F58]">
+                            {displayStrategyStatus(item.status)} | {short(item.strategyId)}
+                          </span>
+                        </span>
+                        {active ? <Check size={15} className="shrink-0 text-[#C2E812]" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel)} onClick={() => refetchWalletStrategies()}>
+                  Refresh Strategies
+                </button>
+                <button className="ys-btn-secondary h-11 w-full" disabled={Boolean(busyLabel) || !strategyId} onClick={handleNewStrategy}>
+                  New Strategy
+                </button>
+              </div>
+
+              <details className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <summary className="cursor-pointer list-none text-[10px] font-mono font-bold uppercase tracking-widest text-[#8B949E] transition-colors hover:text-[#F5F7FA]">
+                  Advanced: load by id
+                </summary>
+                <div className="mt-3">
+                  <label className="flex flex-col gap-2">
+                    <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">On-chain Strategy ID</span>
+                    <input
+                      value={importStrategyId}
+                      onChange={(event) => setImportStrategyId(event.target.value)}
+                      className="ys-input w-full font-mono text-xs"
+                      placeholder="0x..."
+                    />
+                  </label>
+                  <button className="ys-btn-secondary mt-3 h-11 w-full" disabled={Boolean(busyLabel)} onClick={handleLoadStrategy}>
+                    Load Strategy ID
+                  </button>
+                </div>
+              </details>
             </div>
           </details>
 
