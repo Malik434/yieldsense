@@ -15,6 +15,7 @@ import { TransactionHistory } from "@/components/TransactionHistory";
 import { WithdrawModule } from "@/components/WithdrawModule";
 import { PortfolioTicker } from "@/components/PortfolioTicker";
 import { TestingSuite } from "@/components/TestingSuite";
+import { YieldOrchestrationControl } from "@/components/YieldOrchestrationControl";
 import { Activity, Cpu, ArrowRight } from "lucide-react";
 
 const TOKEN_ICONS = {
@@ -384,6 +385,9 @@ export default function CommandCenter() {
                 </div>
               )}
             </div>
+          </div>
+          <div className="mt-5">
+            <YieldOrchestrationControl />
           </div>
         </div>
 

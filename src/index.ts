@@ -383,6 +383,14 @@ async function emitHardwareAddressReport(nowSec: number): Promise<void> {
     hwAddress,
     note: "Register this address on-chain via ExecutorRegistry.registerProcessor(hwAddress, YIELD_EXECUTOR, ...)",
   });
+  await emitTelemetry({
+    event: "yield_processor_identity",
+    timestamp: nowSec,
+    processorAddress: hwAddress,
+    deploymentId: process.env.ACURAST_DEPLOYMENT_ID || (globalThis as any).__ENV__?.ACURAST_DEPLOYMENT_ID,
+    leaseEpoch: Number(process.env.YIELD_PROCESSOR_LEASE_EPOCH || (globalThis as any).__ENV__?.YIELD_PROCESSOR_LEASE_EPOCH || 0) || undefined,
+    healthy: true,
+  }, true);
 }
 
 async function emitProcessorChainDiagnostics(

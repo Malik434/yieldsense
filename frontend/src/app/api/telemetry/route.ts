@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { applyTelemetryEvent } from '@/lib/stateStore';
 import { processGridProcessorTelemetry } from '@/lib/gridProcessorOrchestrator';
+import { processYieldProcessorTelemetry } from '@/lib/yieldProcessorOrchestrator';
 
 /**
  * POST /api/telemetry
@@ -94,6 +95,31 @@ export async function POST(request: Request) {
         processedCount++;
       } catch (error) {
         console.error('[telemetry] Error processing grid processor identity:', error);
+      }
+      continue;
+    }
+
+    if (event.event === 'yield_processor_identity' || event.event === 'hw_address_report') {
+      const processorAddress =
+        typeof event.processorAddress === 'string'
+          ? event.processorAddress
+          : typeof event.hwAddress === 'string'
+            ? event.hwAddress
+            : undefined;
+      const chainId = Number(event.chainId || event.CHAIN_ID || 8453);
+      try {
+        await processYieldProcessorTelemetry(chainId, {
+          deploymentId: typeof event.deploymentId === 'string' ? event.deploymentId : undefined,
+          processorAddress,
+          leaseEpoch: Number.isFinite(Number(event.leaseEpoch)) ? Number(event.leaseEpoch) : undefined,
+          healthy: event.healthy !== false,
+          timestamp: Number.isFinite(Number(event.timestamp)) ? Number(event.timestamp) : undefined,
+          deploymentHash: typeof event.deploymentHash === 'string' ? event.deploymentHash : undefined,
+          codeHash: typeof event.codeHash === 'string' ? event.codeHash : undefined,
+        });
+        processedCount++;
+      } catch (error) {
+        console.error('[telemetry] Error processing yield processor identity:', error);
       }
       continue;
     }

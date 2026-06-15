@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  boolean,
   doublePrecision,
   index,
   integer,
@@ -10,6 +11,7 @@ import {
   timestamp,
 } from 'drizzle-orm/pg-core';
 import type { GridProcessorLease } from '@/lib/gridProcessorLease';
+import type { YieldProcessorLease } from '@/lib/yieldProcessorLease';
 
 export const gridStrategies = pgTable(
   'grid_strategies',
@@ -61,6 +63,27 @@ export const gridProcessorLeases = pgTable(
   ]
 );
 
+export const yieldProcessorLeases = pgTable(
+  'yield_processor_leases',
+  {
+    chainId: integer('chain_id').primaryKey(),
+    version: integer('version').notNull().default(0),
+    enabled: boolean('enabled').notNull().default(false),
+    state: text('state').notNull(),
+    lease: jsonb('lease').$type<YieldProcessorLease>().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      'yield_processor_leases_state_check',
+      sql`${table.state} IN ('disabled', 'inactive', 'deploying', 'active', 'updating', 'handoff', 'failed')`
+    ),
+    index('yield_processor_leases_enabled_state_idx').on(table.enabled, table.state),
+    index('yield_processor_leases_updated_at_idx').on(table.updatedAt.desc()),
+  ]
+);
+
 export type GridStrategyRow = typeof gridStrategies.$inferSelect;
 export type NewGridStrategyRow = typeof gridStrategies.$inferInsert;
 export type GridProcessorLeaseRow = typeof gridProcessorLeases.$inferSelect;
+export type YieldProcessorLeaseRow = typeof yieldProcessorLeases.$inferSelect;
