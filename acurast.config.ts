@@ -31,7 +31,7 @@ interface AcurastProjectConfig {
   processorWhitelist: string[];
   mutability: "Immutable" | "Mutable";
   restartPolicy: "no" | "onFailure";
-  reuseKeysFrom: AcurastDeploymentRef | null;
+  reuseKeysFrom?: AcurastDeploymentRef;
 }
 
 interface AcurastConfig {
@@ -70,7 +70,6 @@ const config: AcurastConfig = {
       processorWhitelist: [],
       mutability: "Mutable",
       restartPolicy: "onFailure",
-      reuseKeysFrom: null,
     },
     YieldSenseGridExecutor: {
       projectName: "YieldSenseGridExecutor",
@@ -98,7 +97,6 @@ const config: AcurastConfig = {
       processorWhitelist: [],
       mutability: "Mutable",
       restartPolicy: "onFailure",
-      reuseKeysFrom: null,
     },
   },
 };
