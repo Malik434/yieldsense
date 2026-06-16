@@ -3,7 +3,7 @@
 //   npm run build:embed
 //
 // Source: dist/processor.bundle.cjs (354.4 KB uncompressed)
-// Generated: 2026-06-15T11:31:58.781Z
+// Generated: 2026-06-15T17:46:29.698Z
 //
 // Why this file exists:
 //   /api/deploy and the grid Acurast deployment adapter needs to upload a fully compiled Acurast processor

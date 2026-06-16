@@ -3,7 +3,7 @@
 //   npm run build:embed
 //
 // Source: dist/index.bundle.cjs (740.3 KB uncompressed)
-// Generated: 2026-06-15T11:31:58.799Z
+// Generated: 2026-06-15T17:46:29.737Z
 //
 // Why this file exists:
 //   the yield Acurast deployment adapter needs to upload a fully compiled Acurast processor
