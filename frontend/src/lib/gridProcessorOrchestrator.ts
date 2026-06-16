@@ -11,6 +11,7 @@ import {
   type GridProcessorLease,
   type GridProcessorTelemetry,
 } from './gridProcessorLease';
+import { deployAcurastProcessor, type AcurastDeploymentRequest } from './acurastDeploymentAdapter';
 import { getGridProcessorLease, saveGridProcessorLease } from './gridProcessorLeaseRepository';
 import { listActiveGridStrategyIds } from './gridStrategyRepository';
 
@@ -20,16 +21,6 @@ const EXECUTOR_REGISTRY_ABI = [
   'function revokeProcessor(address processor, bytes32 role) external',
   'function isAuthorized(address processor, bytes32 role) view returns (bool)',
 ];
-
-type DeploymentRequest = {
-  chainId: number;
-  leaseEpoch: number;
-  intervalInMs: number;
-  numberOfExecutions: number;
-  mutability: 'Mutable';
-  restartPolicy: 'onFailure';
-  reuseKeysFrom?: AcurastDeploymentRef;
-};
 
 type DeploymentResponse = {
   deploymentId: string;
@@ -57,7 +48,10 @@ function requireEnv(name: string) {
   return value;
 }
 
-async function requestAcurastDeployment(request: DeploymentRequest): Promise<DeploymentResponse | null> {
+async function requestAcurastDeployment(request: AcurastDeploymentRequest): Promise<DeploymentResponse | null> {
+  const directDeployment = await deployAcurastProcessor('grid', request);
+  if (directDeployment) return { deploymentId: directDeployment.deploymentId };
+
   const url = process.env.ACURAST_GRID_DEPLOYMENT_WEBHOOK_URL?.trim();
   if (!url) return null;
 
