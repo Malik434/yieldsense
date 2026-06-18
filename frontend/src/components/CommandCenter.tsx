@@ -16,6 +16,7 @@ import { WithdrawModule } from "@/components/WithdrawModule";
 import { PortfolioTicker } from "@/components/PortfolioTicker";
 import { TestingSuite } from "@/components/TestingSuite";
 import { YieldOrchestrationControl } from "@/components/YieldOrchestrationControl";
+import { DemoProcessorOutcome } from "@/components/DemoProcessorOutcome";
 import { Activity, Cpu, ArrowRight } from "lucide-react";
 
 const TOKEN_ICONS = {
@@ -179,6 +180,65 @@ function StartHerePanel() {
   );
 }
 
+function DemoGuidePanel() {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE !== "true") return null;
+
+  const steps = [
+    {
+      title: "1. Show vault allocation",
+      text: "Deposit USDC, explain yield checks, and show the active processor controls.",
+      href: "#command-center",
+    },
+    {
+      title: "2. Create a grid",
+      text: "Pick a pair, set limits, fund the strategy, then enable automation.",
+      href: "#grid-trading",
+    },
+    {
+      title: "3. Show orchestration",
+      text: "Processor leases, telemetry, and ExecutorRegistry authorization keep execution controlled.",
+      href: "#live-alpha",
+    },
+  ];
+
+  return (
+    <section className="pt-5 sm:pt-8">
+      <div className="rounded-[28px] border border-[#C2E812]/20 bg-[#C2E812]/[0.055] p-5 shadow-2xl shadow-[#C2E812]/5 sm:p-6">
+        <div className="grid gap-5 lg:grid-cols-[0.72fr_1.28fr] lg:items-center">
+          <div>
+            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.28em] text-[#C2E812]">
+              Local demo mode
+            </p>
+            <h2 className="mt-3 text-2xl font-heading font-bold tracking-tight text-[#F5F7FA] sm:text-3xl">
+              Two-minute walkthrough path
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#8B949E]">
+              Use this sequence for the recording: landing page, app launch,
+              yield vault, grid setup, then processor orchestration.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {steps.map((step) => (
+              <a
+                key={step.title}
+                href={step.href}
+                className="rounded-2xl border border-white/10 bg-black/20 p-4 transition-colors hover:border-[#C2E812]/35 hover:bg-[#C2E812]/[0.04]"
+              >
+                <h3 className="text-sm font-heading font-bold text-[#F5F7FA]">
+                  {step.title}
+                </h3>
+                <p className="mt-2 text-xs leading-relaxed text-[#8B949E]">
+                  {step.text}
+                </p>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function CommandCenter() {
   const { address } = useAccount();
   const { config, chainId } = useNetwork();
@@ -262,14 +322,14 @@ export default function CommandCenter() {
     query: { enabled: !!address && !!KEEPER_ADDRESS },
   });
 
-  const { data: totalSharesRaw } = useReadContract({
+  const { data: totalSharesRaw, refetch: refetchTotalShares } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: "totalSupply",
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
-  const { data: totalAssetsRaw } = useReadContract({
+  const { data: totalAssetsRaw, refetch: refetchTotalAssets } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: "totalAssets",
@@ -280,8 +340,28 @@ export default function CommandCenter() {
     if (blockNumber) {
       refetchUserData();
       refetchUserShares();
+      refetchTotalShares();
+      refetchTotalAssets();
     }
-  }, [blockNumber, refetchUserData, refetchUserShares]);
+  }, [blockNumber, refetchTotalAssets, refetchTotalShares, refetchUserData, refetchUserShares]);
+
+  const refreshVaultPosition = useCallback(async () => {
+    await Promise.all([
+      refetchUserData(),
+      refetchUserShares(),
+      refetchTotalShares(),
+      refetchTotalAssets(),
+      fetchVaultState(),
+      fetchOnchainAudit(),
+    ]);
+  }, [
+    fetchOnchainAudit,
+    fetchVaultState,
+    refetchTotalAssets,
+    refetchTotalShares,
+    refetchUserData,
+    refetchUserShares,
+  ]);
 
   const withdrawableBalance = maxWithdraw
     ? parseFloat(formatUnits(maxWithdraw as bigint, 6))
@@ -326,6 +406,8 @@ export default function CommandCenter() {
       <Header isHealthy={!!isHealthy} isWarning={!!isWarning} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-28 sm:pb-40">
+        <DemoGuidePanel />
+        <DemoProcessorOutcome />
         <StartHerePanel />
 
         <div className="pt-8 sm:pt-12 mb-10 sm:mb-16">
@@ -398,7 +480,7 @@ export default function CommandCenter() {
           align="center"
         />
         <div className="mx-auto max-w-xl mb-12 sm:mb-16 animate-fade-in">
-          <DepositModule />
+          <DepositModule onDepositConfirmed={refreshVaultPosition} />
         </div>
 
         <SectionHeading

@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.yieldsense.org";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "/app";
 
 const products = [
   {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAccount, useChainId, useWriteContract } from 'wagmi';
 import { parseUnits } from 'viem';
 import { baseSepolia } from 'wagmi/chains';
@@ -101,6 +101,33 @@ export function TestingSuite() {
   const [minting, setMinting] = useState(false);
   const [mintSuccess, setMintSuccess] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
+  const demoLogs = useMemo<HardwareLog[]>(() => {
+    const now = Date.now();
+    return [
+      {
+        timestamp: now - 180_000,
+        type: 'ATTESTATION',
+        message: 'Demo: yield processor identity reported and lease epoch accepted',
+      },
+      {
+        timestamp: now - 130_000,
+        type: 'EXECUTION',
+        message: 'Demo: vault APR checked, harvest not submitted because profit is below threshold',
+      },
+      {
+        timestamp: now - 80_000,
+        type: 'ATTESTATION',
+        message: 'Demo: grid processor authorized against ExecutorRegistry before evaluation',
+      },
+      {
+        timestamp: now - 35_000,
+        type: 'STORAGE_SYNC',
+        message: 'Demo: active strategy loaded from on-chain status, trade kept as dry run',
+      },
+    ];
+  }, []);
 
   const { writeContractAsync } = useWriteContract();
 
@@ -144,6 +171,8 @@ export function TestingSuite() {
       scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
     }
   }, [logs]);
+
+  const visibleLogs = isDemoMode && logs.length === 0 ? demoLogs : logs;
 
   const handleMint = async () => {
     if (!isConnected || minting) return;
@@ -268,7 +297,7 @@ export function TestingSuite() {
                     <span className="text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest md:hidden">Pixel 8 Portrait</span>
                     <span className="hidden text-[9px] font-mono font-bold text-[#484F58] uppercase tracking-widest md:inline">Pixel 8 Landscape</span>
                     <div className="h-4 w-px bg-white/10" />
-                    <span className="text-[9px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">{logs.length} events</span>
+                    <span className="text-[9px] font-mono font-bold text-[#8B949E] uppercase tracking-widest">{visibleLogs.length} events</span>
                     <Cpu size={14} className="text-[#484F58]" />
                   </div>
                 </div>
@@ -277,7 +306,7 @@ export function TestingSuite() {
                   ref={scrollContainerRef}
                   className="flex-1 space-y-3 overflow-y-auto p-4 font-mono text-[10px] sm:p-6 sm:text-[11px]"
                 >
-                  {logs.length === 0 ? (
+                  {visibleLogs.length === 0 ? (
                     <div className="flex h-full flex-col items-center justify-center gap-4 text-center text-[#484F58] uppercase tracking-[0.24em]">
                       <span className={telemetryStatus === 'loading' ? 'animate-pulse' : ''}>
                         {telemetryStatus === 'loading'
@@ -299,7 +328,7 @@ export function TestingSuite() {
                       </button>
                     </div>
                   ) : (
-                    logs.map((log, i) => (
+                    visibleLogs.map((log, i) => (
                       <div
                         key={`${log.timestamp}-${i}`}
                         className="flex flex-col gap-1.5 rounded-xl border border-white/[0.03] bg-white/[0.015] p-3 animate-slide-in-right sm:flex-row sm:items-start sm:gap-3 sm:border-0 sm:bg-transparent sm:p-0"

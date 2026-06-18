@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShieldCheck, ExternalLink, Zap, ArrowUpDown, Search, RefreshCw, Clock, LogOut } from 'lucide-react';
 import { usePublicClient } from 'wagmi';
 import { OPERATOR_ADDRESS, KEEPER_ABI } from '@/lib/contracts';
@@ -43,9 +43,40 @@ export function TransactionHistory() {
   const [txs, setTxs] = useState<TxEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const publicClient = usePublicClient({ chainId: activeChainId });
+  const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
+  const demoTxs = useMemo<TxEvent[]>(() => {
+    const now = Date.now();
+    return [
+      {
+        type: 'TRADE',
+        timestamp: now - 90_000,
+        txHash: '0xdemo000000000000000000000000000000000000000000000000000000000001',
+        pnlDelta: 0.38,
+        chainId: activeChainId,
+      },
+      {
+        type: 'HARVEST',
+        timestamp: now - 210_000,
+        txHash: '0xdemo000000000000000000000000000000000000000000000000000000000002',
+        amount: 0.24,
+        chainId: activeChainId,
+      },
+      {
+        type: 'DEPOSIT',
+        timestamp: now - 420_000,
+        txHash: '0xdemo000000000000000000000000000000000000000000000000000000000003',
+        amount: 1,
+        chainId: activeChainId,
+      },
+    ];
+  }, [activeChainId]);
 
   const fetchTxs = useCallback(async () => {
-    if (!publicClient) return;
+    if (!publicClient) {
+      setLoading(false);
+      return;
+    }
     
     try {
       const latestBlock = await publicClient.getBlockNumber();
@@ -138,13 +169,17 @@ export function TransactionHistory() {
   }, [activeChainId, config, publicClient]);
 
   useEffect(() => {
+    if (isDemoMode) setLoading(false);
     const initialFetch = setTimeout(fetchTxs, 0);
     const id = setInterval(fetchTxs, 60_000) // Poll every 60s;
     return () => {
       clearTimeout(initialFetch);
       clearInterval(id);
     };
-  }, [fetchTxs]);
+  }, [fetchTxs, isDemoMode]);
+
+  const visibleTxs = isDemoMode && txs.length === 0 ? demoTxs : txs;
+  const isShowingDemoTxs = isDemoMode && txs.length === 0;
 
   return (
     <div className="flex flex-col gap-6 mt-10 sm:mt-12 animate-fade-in">
@@ -159,7 +194,9 @@ export function TransactionHistory() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">Real-time sync</span>
+          <span className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-widest">
+            {isShowingDemoTxs ? 'Demo dry-run feed' : 'Real-time sync'}
+          </span>
           <div className="w-2 h-2 rounded-full bg-[#00FFA3] animate-pulse" />
         </div>
       </div>
@@ -178,7 +215,7 @@ export function TransactionHistory() {
             <div className="flex items-center justify-center py-24">
               <RefreshCw size={32} className="text-[#C2E812] animate-spin opacity-40" />
             </div>
-          ) : txs.length === 0 ? (
+          ) : visibleTxs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 gap-6 opacity-30 grayscale">
               <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
                 <Search size={32} className="text-[#484F58]" />
@@ -186,11 +223,12 @@ export function TransactionHistory() {
               <p className="text-[10px] font-mono font-bold text-[#484F58] uppercase tracking-[0.3em]">No execution history detected</p>
             </div>
           ) : (
-            txs.map((tx, i) => {
+            visibleTxs.map((tx, i) => {
               const cfg = TYPE_CONFIG[tx.type];
               const date = new Date(tx.timestamp);
               const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
               const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+              const isDemoTx = tx.txHash.startsWith('0xdemo');
               
               return (
                 <div 
@@ -225,11 +263,17 @@ export function TransactionHistory() {
                   <div className="flex flex-col gap-1.5 md:col-span-2">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       <span className="text-sm font-heading font-bold text-[#F5F7FA] break-words">
-                        {tx.type === 'TRADE'
-                          ? `Audit signal ${tx.pnlDelta?.toFixed(4)}`
-                          : tx.amount != null
-                            ? `Credited $${tx.amount.toFixed(4)}`
-                            : 'Optimization & Compounding'}
+                        {isDemoTx
+                          ? tx.type === 'TRADE'
+                            ? `Grid evaluation +$${tx.pnlDelta?.toFixed(2)}`
+                            : tx.type === 'DEPOSIT'
+                              ? `Deposit: $${tx.amount?.toFixed(2)}`
+                              : `harvest candidate: $${tx.amount?.toFixed(2)}`
+                          : tx.type === 'TRADE'
+                            ? `Audit signal ${tx.pnlDelta?.toFixed(4)}`
+                            : tx.amount != null
+                              ? `Credited $${tx.amount.toFixed(4)}`
+                              : 'Optimization & Compounding'}
                       </span>
                       <span className={`hidden sm:inline-flex w-fit text-[9px] font-mono font-bold px-2 py-0.5 rounded border uppercase tracking-widest ${tx.type === 'TRADE' ? 'bg-[#C2E812]/10 text-[#C2E812] border-[#C2E812]/20' : 'bg-[#00FFA3]/10 text-[#00FFA3] border-[#00FFA3]/20'}`}>
                         {cfg.label}
@@ -243,15 +287,21 @@ export function TransactionHistory() {
                   </div>
 
                     <div className="flex justify-end md:justify-end">
-                      <a 
-                        href={`${config.explorer}/tx/${tx.txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 p-2.5 rounded-xl bg-white/5 md:bg-white/0 hover:bg-white/5 border border-white/10 md:border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
-                      >
-                        <span className="text-[10px] font-mono font-bold uppercase tracking-widest md:hidden">Receipt</span>
-                        <ExternalLink size={16} className="group-hover/link:scale-110 transition-transform" />
-                      </a>
+                      {isDemoTx ? (
+                        <span className="inline-flex items-center gap-2 rounded-xl border border-[#C2E812]/20 bg-[#C2E812]/10 px-3 py-2 text-[10px] font-mono font-bold uppercase tracking-widest text-[#C2E812]">
+                          Dry run
+                        </span>
+                      ) : (
+                        <a 
+                          href={`${config.explorer}/tx/${tx.txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 p-2.5 rounded-xl bg-white/5 md:bg-white/0 hover:bg-white/5 border border-white/10 md:border-transparent hover:border-white/10 text-[#484F58] hover:text-[#C2E812] transition-all group/link"
+                        >
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-widest md:hidden">Receipt</span>
+                          <ExternalLink size={16} className="group-hover/link:scale-110 transition-transform" />
+                        </a>
+                      )}
                     </div>
                 </div>
               );

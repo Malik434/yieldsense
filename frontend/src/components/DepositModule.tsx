@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useReadContract, useWriteContract } from 'wagmi';
+import { useAccount, usePublicClient, useReadContract, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { ERC20_ABI, KEEPER_ABI, BUILDER_CODE_SUFFIX } from '@/lib/contracts';
 import { Loader2, CheckCircle2, Wallet, Info } from 'lucide-react';
@@ -26,11 +26,16 @@ function tryParseUsdc(value: string) {
   }
 }
 
-export function DepositModule() {
+interface DepositModuleProps {
+  onDepositConfirmed?: () => void | Promise<void>;
+}
+
+export function DepositModule({ onDepositConfirmed }: DepositModuleProps) {
   const { address, isConnected } = useAccount();
   const { config } = useNetwork();
   const KEEPER_ADDRESS = config.keeper;
   const ASSET_ADDRESS = config.asset;
+  const publicClient = usePublicClient();
 
   const [depositAmount, setDepositAmount] = useState('');
   const [txState, setTxState] = useState<'idle' | 'approving' | 'depositing' | 'success'>('idle');
@@ -51,7 +56,7 @@ export function DepositModule() {
     query: { enabled: !!address && !!actualAssetAddress && !!KEEPER_ADDRESS },
   });
 
-  const { data: assetBalance } = useReadContract({
+  const { data: assetBalance, refetch: refetchAssetBalance } = useReadContract({
     address: actualAssetAddress,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
@@ -59,7 +64,7 @@ export function DepositModule() {
     query: { enabled: !!address && !!actualAssetAddress },
   });
 
-  const { data: totalAssets } = useReadContract({
+  const { data: totalAssets, refetch: refetchTotalAssets } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'totalAssets',
@@ -73,7 +78,7 @@ export function DepositModule() {
     query: { enabled: !!KEEPER_ADDRESS },
   });
 
-  const { data: maxDepositRaw } = useReadContract({
+  const { data: maxDepositRaw, refetch: refetchMaxDeposit } = useReadContract({
     address: KEEPER_ADDRESS,
     abi: KEEPER_ABI,
     functionName: 'maxDeposit',
@@ -145,13 +150,16 @@ export function DepositModule() {
     if (depositError) return;
     setTxState('approving');
     try {
-      await writeContractAsync({
+      const hash = await writeContractAsync({
         address: actualAssetAddress,
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [KEEPER_ADDRESS, depositAmountParsed],
         dataSuffix: BUILDER_CODE_SUFFIX,
       });
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash });
+      }
       await refetchAllowance();
       setTxState('idle');
     } catch (e) {
@@ -169,17 +177,26 @@ export function DepositModule() {
         await handleApprove();
         return;
       }
-      await writeContractAsync({
+      const hash = await writeContractAsync({
         address: KEEPER_ADDRESS,
         abi: KEEPER_ABI,
         functionName: 'deposit',
         args: [depositAmountParsed, address],
         dataSuffix: BUILDER_CODE_SUFFIX,
       });
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash });
+      }
+      await Promise.all([
+        refetchAllowance(),
+        refetchAssetBalance(),
+        refetchTotalAssets(),
+        refetchMaxDeposit(),
+        onDepositConfirmed?.(),
+      ]);
       setTxState('success');
       setDepositAmount('');
       setTimeout(() => setTxState('idle'), 3000);
-      await refetchAllowance();
     } catch (e) {
       console.error(e);
       setTxState('idle');
