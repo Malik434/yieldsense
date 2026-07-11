@@ -11,8 +11,8 @@ import {
   type YieldProcessorLease,
   type YieldProcessorTelemetry,
 } from './yieldProcessorLease';
-import { deployAcurastProcessor, type AcurastDeploymentRequest } from './acurastDeploymentAdapter';
 import { getYieldProcessorLease, saveYieldProcessorLease } from './yieldProcessorLeaseRepository';
+import type { AcurastDeploymentRef } from './gridProcessorLease';
 
 const EXECUTOR_REGISTRY_ABI = [
   'function YIELD_EXECUTOR() view returns (bytes32)',
@@ -20,6 +20,16 @@ const EXECUTOR_REGISTRY_ABI = [
   'function revokeProcessor(address processor, bytes32 role) external',
   'function isAuthorized(address processor, bytes32 role) view returns (bool)',
 ];
+
+type DeploymentRequest = {
+  chainId: number;
+  leaseEpoch: number;
+  intervalInMs: number;
+  numberOfExecutions: number;
+  mutability: 'Mutable';
+  restartPolicy: 'onFailure';
+  reuseKeysFrom?: AcurastDeploymentRef;
+};
 
 type DeploymentResponse = {
   deploymentId: string;
@@ -47,10 +57,7 @@ function requireEnv(name: string) {
   return value;
 }
 
-async function requestAcurastDeployment(request: AcurastDeploymentRequest): Promise<DeploymentResponse | null> {
-  const directDeployment = await deployAcurastProcessor('yield', request);
-  if (directDeployment) return { deploymentId: directDeployment.deploymentId };
-
+async function requestAcurastDeployment(request: DeploymentRequest): Promise<DeploymentResponse | null> {
   const url = process.env.ACURAST_YIELD_DEPLOYMENT_WEBHOOK_URL?.trim();
   if (!url) return null;
 
